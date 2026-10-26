@@ -42,11 +42,19 @@ func isCatastrophic(severity string) bool {
 // this card the SRE room hears of an S0 only minutes later, or not at all
 // when nobody is rostered.
 //
-// None for any other severity, or for a case whose account has no SRE team:
-// such a case pages the teamless rooms, which its rung cards already reach.
+// A case whose account has no SRE team gets it in the teamless rooms, where
+// its rung cards go. None for any other severity.
 func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, severity, sreGroup string) []string {
-	if !isCatastrophic(severity) || strings.TrimSpace(sreGroup) == "" {
+	if !isCatastrophic(severity) {
 		return nil
+	}
+	if strings.TrimSpace(sreGroup) == "" {
+		audiences := notifications.TeamlessAudiences(d.incidentRoutes, d.googleChat.HasAudienceSpace)
+		if len(audiences) == 0 {
+			slog.InfoContext(ctx, "dispatch: S0 case has no SRE team and there is no teamless or shared SRE room, no SRE room card",
+				"type", string(t), "caseId", caseID)
+		}
+		return audiences
 	}
 	audiences, fallback := notifications.IncidentAudiences(d.incidentRoutes, d.incidentChatFanout, sreGroup, d.googleChat.HasAudienceSpace)
 	switch {

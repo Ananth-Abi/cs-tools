@@ -47,6 +47,41 @@ const IncidentFallbackAudience = IncidentAudiencePrefix + "#unmapped"
 type IncidentRoutes struct {
 	mu     sync.RWMutex
 	fanout map[string][]string
+	// teamless is the sre.teamlessChats team keys with a room: where an S0
+	// case whose account has no SRE team gets its card (TeamlessAudiences).
+	teamless []string
+}
+
+// SetTeamless replaces the teamless rooms' team keys.
+func (r *IncidentRoutes) SetTeamless(keys []string) {
+	r.mu.Lock()
+	r.teamless = slices.Clone(keys)
+	r.mu.Unlock()
+}
+
+// TeamlessAudiences is the audiences, each with a space, of the teamless
+// rooms: where an S0 case whose account has no SRE team gets its card, and
+// its SRE paging replies under it -- the rooms its rung cards always went
+// to. Else IncidentFallbackAudience when has knows it, else none. The
+// dispatcher and the paging engine both use it, so the card and the replies
+// pick the same rooms.
+func TeamlessAudiences(routes *IncidentRoutes, has func(string) bool) []string {
+	var keys []string
+	if routes != nil {
+		routes.mu.RLock()
+		keys = slices.Clone(routes.teamless)
+		routes.mu.RUnlock()
+	}
+	var audiences []string
+	for _, k := range keys {
+		if audience := IncidentAudience(k); has(audience) && !slices.Contains(audiences, audience) {
+			audiences = append(audiences, audience)
+		}
+	}
+	if len(audiences) == 0 && has(IncidentFallbackAudience) {
+		return []string{IncidentFallbackAudience}
+	}
+	return audiences
 }
 
 // Set replaces the routed fan-out (assignment group -> groups or team keys).

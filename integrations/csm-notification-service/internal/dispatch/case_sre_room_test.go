@@ -61,6 +61,7 @@ func roomAudiences(chat *mockGoogleChatSender) []string {
 func sreRoomDispatcher(chat googleChatSender) *Dispatcher {
 	routes := &notifications.IncidentRoutes{}
 	routes.Set(map[string][]string{"Default SRE Group": {"apollo", "artemis"}})
+	routes.SetTeamless([]string{"apollo", "artemis"})
 	return NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, true, false, nil, true, "", nil).
 		WithIncidentRoutes(routes)
 }
@@ -76,7 +77,8 @@ func TestDispatcher_S0CaseCardGoesToItsSRERoom(t *testing.T) {
 			[]string{notifications.IncidentAudience("WSO2 IaaS Team")}},
 		{"an S0 on an unmapped SRE group goes to the shared SRE room", "CATASTROPHIC", "U2 SRE Group",
 			[]string{notifications.IncidentFallbackAudience}},
-		{"an S0 on an account with no SRE team gets no room card", "CATASTROPHIC", "", nil},
+		{"an S0 on an account with no SRE team goes to the teamless rooms", "CATASTROPHIC", "",
+			[]string{notifications.IncidentAudience("apollo"), notifications.IncidentAudience("artemis")}},
 		{"an S1 gets no room card", "CRITICAL", "WSO2 IaaS Team", nil},
 	}
 	for _, tc := range cases {

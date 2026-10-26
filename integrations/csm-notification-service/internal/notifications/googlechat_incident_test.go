@@ -276,3 +276,20 @@ func TestSendIncidentCreatedAlert_CaseForm(t *testing.T) {
 		t.Errorf("thread = %+v", msg.Thread)
 	}
 }
+
+func TestTeamlessAudiences(t *testing.T) {
+	has := func(a string) bool { return a != IncidentAudience("iaas") && a != IncidentFallbackAudience }
+	routes := &IncidentRoutes{}
+	routes.SetTeamless([]string{"apollo", "iaas", "artemis"})
+	got := TeamlessAudiences(routes, has)
+	if want := []string{IncidentAudience("apollo"), IncidentAudience("artemis")}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("TeamlessAudiences = %v; want %v (a room with no space left out)", got, want)
+	}
+	withShared := func(a string) bool { return a == IncidentFallbackAudience }
+	if got := TeamlessAudiences(&IncidentRoutes{}, withShared); strings.Join(got, ",") != IncidentFallbackAudience {
+		t.Errorf("no teamless room: %v; want the shared SRE room", got)
+	}
+	if got := TeamlessAudiences(nil, func(string) bool { return false }); len(got) != 0 {
+		t.Errorf("nothing configured: %v; want none", got)
+	}
+}

@@ -91,9 +91,9 @@ func (t Trigger) smeIncident() bool { return t.Routing.Ladder == LadderSME && !t
 // threadedIncident reports whether the ladder's own space gets a parent incident card with its messages as replies under it.
 func (t Trigger) threadedIncident() bool { return t.sreIncident() || t.smeIncident() }
 
-// sreCaseCard reports whether a case on the SRE ladder has a card of its own to reply under: an S0 whose account has an SRE team, whose card the dispatcher posted to that team's rooms (caseSRERooms). A case on any other ladder never has one.
+// sreCaseCard reports whether a case has a card of its own to reply under: an S0 on the SRE ladder, whose card the dispatcher posted to its account SRE team's rooms, or the teamless rooms when it has none (caseSRERooms). A case on the CRE ladder never has one.
 func (t Trigger) sreCaseCard() bool {
-	return t.isCase() && t.Routing.Ladder == LadderSRE && strings.TrimSpace(t.Routing.SRETeam) != ""
+	return t.isCase() && t.Routing.Ladder == LadderSRE
 }
 
 // chatThreadKey puts an incident's paging messages, and an SRE case's (sreCaseCard), under its "Reported" card; any other case has no such card.

@@ -579,7 +579,7 @@ func (e *Engine) threadReplies(t Trigger) bool {
 
 // incidentRooms is the rooms an incident's card went to: its SRE team's room from the Alert Settings
 // mapping, else its INCIDENT_CHAT_SPACES space, else the shared SRE room (IncidentFallbackAudience).
-// An S0 case on the SRE ladder uses its account SRE group the same way (sreCaseCard).
+// An S0 case on the SRE ladder uses its account SRE group the same way, or the teamless rooms when it has none (sreCaseCard).
 // Any other case, or an incident with none of these, keeps the ladder's own spaces.
 func (e *Engine) incidentRooms(t Trigger) []chatRoom {
 	if e.incidentChat == nil {
@@ -587,7 +587,7 @@ func (e *Engine) incidentRooms(t Trigger) []chatRoom {
 	}
 	group := t.Team
 	if t.isCase() {
-		// Only the SRE engine's S0 case with an account SRE team has a card (sreCaseCard); every other case, CRE's included, keeps the ladder's own spaces.
+		// Only the SRE engine's S0 case has a card (sreCaseCard); every other case, CRE's included, keeps the ladder's own spaces.
 		if e.cfg.Kind != LadderSRE || !t.sreCaseCard() {
 			return nil
 		}
@@ -602,7 +602,13 @@ func (e *Engine) incidentRooms(t Trigger) []chatRoom {
 			return audience != notifications.IncidentFallbackAudience && e.incidentChat.HasAudienceSpace(audience)
 		}
 	}
-	audiences, _ := notifications.IncidentAudiences(e.cfg.IncidentRoutes, e.cfg.IncidentChatFanout, group, has)
+	var audiences []string
+	if t.isCase() && strings.TrimSpace(group) == "" {
+		// An S0 case whose account has no SRE team: its card went to the teamless rooms.
+		audiences = notifications.TeamlessAudiences(e.cfg.IncidentRoutes, has)
+	} else {
+		audiences, _ = notifications.IncidentAudiences(e.cfg.IncidentRoutes, e.cfg.IncidentChatFanout, group, has)
+	}
 	var rooms []chatRoom
 	for _, audience := range audiences {
 		rooms = append(rooms, chatRoom{chat: e.incidentChat, room: audience, reply: true})

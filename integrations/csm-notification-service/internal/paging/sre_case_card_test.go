@@ -17,6 +17,7 @@
 package paging
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -42,14 +43,33 @@ func TestSRECaseRung_RepliesUnderItsCardInTheSRERoom(t *testing.T) {
 	}
 }
 
-// A case with no account SRE team has no card to reply under: it keeps the
-// ladder's own full card, as before.
-func TestSRECaseRung_NoSRETeamKeepsTheLaddersOwnCard(t *testing.T) {
+// A case with no account SRE team replies under its card in the teamless
+// rooms, where the dispatcher posted it.
+func TestSRECaseRung_NoSRETeamRepliesInTheTeamlessRooms(t *testing.T) {
+	chat := &fakeChat{}
+	e := incidentSpaceEngine(chat)
+	routes := &notifications.IncidentRoutes{}
+	routes.SetTeamless([]string{"apollo", "artemis"})
+	e.cfg.IncidentRoutes = routes
+	deliverFirstRung(t, e, sreCase(""))
+	if len(chat.posted) != 2 {
+		t.Fatalf("posted %+v; want one reply in each teamless room", chat.posted)
+	}
+	for i, want := range []string{"apollo", "artemis"} {
+		got := chat.posted[i]
+		if got.Audience != notifications.IncidentAudience(want) || !got.Reply || got.ThreadKey != notifications.IncidentThreadKey("case-1") {
+			t.Errorf("card to %q reply=%v thread=%q; want a reply under the case card in %s's room", got.Audience, got.Reply, got.ThreadKey, want)
+		}
+	}
+}
+
+// With no teamless room and no shared SRE room, nothing was carded, so the
+// ladder keeps its own full card.
+func TestSRECaseRung_NoRoomAtAllKeepsTheLaddersOwnCard(t *testing.T) {
 	chat := &fakeChat{}
 	deliverFirstRung(t, incidentSpaceEngine(chat), sreCase(""))
-	if len(chat.posted) != 1 || chat.posted[0].Audience != "SRE Case Paging" || chat.posted[0].Reply ||
-		chat.posted[0].ThreadKey != "incident-escalation-case-1" {
-		t.Fatalf("posted %+v; want the ladder's own full card, unthreaded", chat.posted)
+	if len(chat.posted) != 1 || chat.posted[0].Audience != "SRE Case Paging" || chat.posted[0].Reply {
+		t.Fatalf("posted %+v; want the ladder's own full card", chat.posted)
 	}
 }
 
@@ -70,5 +90,18 @@ func TestSRECaseRung_CRELadderUnchanged(t *testing.T) {
 	// Even an SRE-ladder trigger is never routed to SRE rooms by the CRE engine.
 	if rooms := e.incidentRooms(sreCase("MS/PC SRE Group")); len(rooms) != 0 {
 		t.Errorf("CRE engine rooms for an SRE case = %+v; want none", rooms)
+	}
+}
+
+// The route table carries the teamless rooms that have a space, for an S0
+// case whose account has no SRE team.
+func TestBuildIncidentRoutes_Teamless(t *testing.T) {
+	l := LadderConfig{
+		TeamChats:     map[string]Chat{"apollo": {Audience: "Apollo SRE"}, "iaas": {Audience: "IaaS SRE"}},
+		TeamlessChats: []string{"apollo", "artemis", "iaas"},
+	}
+	table := BuildIncidentRoutes(l, func(c Chat) (string, bool) { return "https://chat.example/" + c.Audience, c.Audience != "" })
+	if got := strings.Join(table.Teamless, ","); got != "apollo,iaas" {
+		t.Errorf("Teamless = %q; want apollo,iaas (artemis has no room)", got)
 	}
 }
