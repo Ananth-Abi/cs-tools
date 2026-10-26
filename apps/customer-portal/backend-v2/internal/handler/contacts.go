@@ -145,6 +145,12 @@ func NewContactHandler(entityClient entityProjectResolver, contactsClient contac
 	}
 }
 
+// PortalContactsEnabled reports the handler's effective mode: true only when
+// the flag is on and an entity-service memberships client was supplied. In that
+// mode every write handler calls requireProjectAdmin before touching anything,
+// so the route middleware may defer the authorization decision to it.
+func (h *ContactHandler) PortalContactsEnabled() bool { return h.portalContactsEnabled }
+
 // GetProjectContacts handles GET /projects/{id}/contacts.
 func (h *ContactHandler) GetProjectContacts(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
