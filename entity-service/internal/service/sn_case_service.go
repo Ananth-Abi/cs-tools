@@ -1727,24 +1727,57 @@ func (s *snCaseService) reviseCaseSLAClocks(ctx context.Context, caseID string, 
 // role. Skips entirely, rather than guessing, when s.customerRoles is empty
 // (unconfigured — see config.Config.CustomerRoles' own doc comment).
 func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, req domain.CreateCaseCommentRequest, commentID string) {
-	if req.Type != domain.CommentTypeComment || len(s.customerRoles) == 0 {
+	if req.Type != domain.CommentTypeComment {
+		return
+	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, req.CaseID, "customer reply", func(ctx context.Context) *domain.UserReference {
+		return s.resolveCommentAuthor(ctx, req.CaseID, commentID)
+	})
+}
+
+// applyCustomerAttachmentStateTransition is the attachment counterpart of
+// applyCustomerReplyStateTransition: a customer who uploads a file to a case
+// that is Awaiting Info or Solution Proposed has answered WSO2's request just
+// as surely as one who comments, so the case moves to Waiting on WSO2 the
+// same way (the shared moveToWaitingOnWSO2OnCustomerActivity). Only an
+// attachment on the case itself counts; deployment, incident, change request
+// and conversation attachments never move a case. Best-effort: called after
+// the upload has succeeded, and never fails it.
+func (s *snCaseService) applyCustomerAttachmentStateTransition(ctx context.Context, req domain.CreateAttachmentRequest, attachmentID string) {
+	if req.ReferenceType != domain.ReferenceTypeCase {
+		return
+	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, req.ReferenceID, "customer attachment", func(ctx context.Context) *domain.UserReference {
+		return s.resolveAttachmentAuthor(ctx, req.ReferenceID, attachmentID)
+	})
+}
+
+// moveToWaitingOnWSO2OnCustomerActivity is the rule shared by a customer's
+// comment and a customer's attachment: when the case is Awaiting Info or
+// Solution Proposed and the activity's author holds one of s.customerRoles,
+// the case moves to Waiting on WSO2. activity ("customer reply" or "customer attachment") is
+// only used to label log lines. resolveAuthor is called only after the cheap
+// state check passes, so a case in any other state costs one GetCaseByID.
+// Skips entirely, rather than guessing, when s.customerRoles is empty.
+func (s *snCaseService) moveToWaitingOnWSO2OnCustomerActivity(ctx context.Context, caseID, activity string, resolveAuthor func(context.Context) *domain.UserReference) {
+	if len(s.customerRoles) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, applyCustomerReplyTimeout)
 	defer cancel()
 
-	cv, err := s.GetCaseByID(ctx, req.CaseID)
+	cv, err := s.GetCaseByID(ctx, caseID)
 	if err != nil {
-		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, get case failed", "caseId", req.CaseID)
+		slog.ErrorContext(ctx, "sn "+activity+" state transition not evaluated, get case failed", "caseId", caseID)
 		return
 	}
 	if derefState(cv.State) != domain.CaseStateAwaitingInfo && derefState(cv.State) != domain.CaseStateSolutionProposed {
 		return
 	}
 
-	author := s.resolveCommentAuthor(ctx, req.CaseID, commentID)
+	author := resolveAuthor(ctx)
 	if author == nil || author.Email == "" {
-		slog.InfoContext(ctx, "sn create comment: customer reply state transition not evaluated, could not resolve comment author's email", "caseId", req.CaseID)
+		slog.InfoContext(ctx, "sn "+activity+" state transition not evaluated, could not resolve author's email", "caseId", caseID)
 		return
 	}
 
@@ -1753,7 +1786,7 @@ func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, r
 		Filters:    domain.SearchUsersFilters{Emails: []string{author.Email}},
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, user role lookup failed", "caseId", req.CaseID)
+		slog.ErrorContext(ctx, "sn "+activity+" state transition not evaluated, user role lookup failed", "caseId", caseID)
 		return
 	}
 
@@ -1769,9 +1802,32 @@ func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, r
 	}
 
 	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
-	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &waitingOnWSO2}); err != nil {
-		slog.ErrorContext(ctx, "sn create comment: move case to waiting on wso2 after customer reply failed", "caseId", req.CaseID)
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: caseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "sn move case to waiting on wso2 after "+activity+" failed", "caseId", caseID)
 	}
+}
+
+// resolveAttachmentAuthor looks up attachmentID's resolved uploader on the
+// case via SearchCaseAttachments, the attachment twin of resolveCommentAuthor
+// (the create response carries only a raw, unresolved CreatedBy string, and
+// the same bounded-window reasoning applies). Returns nil when the
+// attachment isn't found in the first resolveCommentAuthorSearchLimit results
+// or the search fails.
+func (s *snCaseService) resolveAttachmentAuthor(ctx context.Context, caseID, attachmentID string) *domain.UserReference {
+	resp, err := s.SearchCaseAttachments(ctx, domain.SearchAttachmentsRequest{
+		ReferenceID:   caseID,
+		ReferenceType: domain.ReferenceTypeCase,
+		Pagination:    domain.Pagination{Limit: resolveCommentAuthorSearchLimit},
+	})
+	if err != nil {
+		return nil
+	}
+	for _, a := range resp.Attachments {
+		if a.ID == attachmentID && a.CreatedBy != nil {
+			return a.CreatedBy
+		}
+	}
+	return nil
 }
 
 // publishStatusChanged best-effort publishes a case.status_changed event
@@ -4118,7 +4174,23 @@ type snCreateAttachmentResponse struct {
 
 const maxAttachmentBytes = 10 * 1024 * 1024 // 10 MB decoded
 
+// CreateCaseAttachment uploads the file via createAttachment, then, for an
+// attachment on a case, runs applyCustomerAttachmentStateTransition
+// (best-effort, after the upload has succeeded).
 func (s *snCaseService) CreateCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
+	resp, err := s.CreateBareCaseAttachment(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	s.applyCustomerAttachmentStateTransition(ctx, req, resp.Attachment.ID)
+	return resp, nil
+}
+
+// CreateBareCaseAttachment uploads the file with none of CreateCaseAttachment's
+// side effects, for callers that own the resulting state decision themselves
+// (the dual-write attachment service, where Postgres decides the case's state
+// move and mirrors it, exactly as CreateBareCaseComment does for comments).
+func (s *snCaseService) CreateBareCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
 	if req.Name == "" {
 		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "name is required"}
 	}
