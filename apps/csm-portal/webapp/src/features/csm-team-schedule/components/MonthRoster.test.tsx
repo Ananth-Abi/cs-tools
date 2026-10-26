@@ -151,15 +151,25 @@ describe("MonthRoster: what the grid says", () => {
     expect(container.querySelector("tbody td.clash")).toBeNull();
   });
 
-  it("shows leave on the weekend inside it, as it is stored", () => {
-    // Friday to Monday is four days away, not two with a weekend back at
-    // work in the middle.
+  it("leaves the weekend inside a leave span blank", () => {
+    // Leave is not taken on a weekend: Friday to Monday reads as two days.
     const { container } = renderRoster({
       assignments: [],
       absences: [absence({ name: "Asela", startsOn: "2026-09-25", endsOn: "2026-09-28" })],
     });
     const grid = container.querySelector("table") as HTMLElement;
-    expect(within(grid).getAllByText("AL")).toHaveLength(4);
+    expect(within(grid).getAllByText("AL")).toHaveLength(2);
+  });
+
+  it("leaves the weekend inside an allocation blank too", () => {
+    // Allocations are working-day time, like leave: Friday to Monday is two days.
+    const { container } = renderRoster({
+      assignments: [],
+      absences: [absence({ name: "Asela", startsOn: "2026-09-25", endsOn: "2026-09-28", kindCode: RND.code })],
+      absenceKinds: [ANNUAL_LEAVE, RND],
+    });
+    const grid = container.querySelector("table") as HTMLElement;
+    expect(within(grid).getAllByText(RND.shortCode)).toHaveLength(2);
   });
 
   it("marks the week the reader is in, its two ends included", () => {

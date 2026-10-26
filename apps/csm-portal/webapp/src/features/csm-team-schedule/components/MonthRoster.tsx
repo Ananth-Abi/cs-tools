@@ -509,12 +509,11 @@ export default function MonthRoster({
       const end = ab.endsOn ?? toIsoDate(days[days.length - 1]);
       for (const d of days) {
         const iso = toIsoDate(d);
-        // Leave covers the whole span, the weekend inside it included: it is
-        // stored that way, the picker marks it that way, and somebody away
-        // Friday to Monday is not back for two days in the middle. Leaving the
-        // Saturday blank read as "working", and hid a weekend turn the person
-        // could not do. (Leave still cannot *start* on a weekend -- the picker
-        // says so.)
+        // Leave is not taken on a weekend, so it is not drawn on one (the week
+        // views already leave it off): a Friday-to-Monday span reads as two
+        // days of leave, not four. The span is still stored whole and still
+        // keeps them off the rota those days -- a weekend turn inside it stays
+        // flagged as the clash it is, so nothing the lead must cover is hidden.
         const weekendDay = d.getDay() === 0 || d.getDay() === 6;
         // Days on the team this row is: only a row under the team the span
         // moved them to has moved days; on their own team's row they are the
@@ -584,6 +583,12 @@ export default function MonthRoster({
             });
             continue;
           }
+          if (kind?.bucket === "LEAVE" && weekendDay && !holdsTurn(row, iso)) continue;
+          // An allocation (Allo-INT, Allo-EXT, ...) is working-day time given
+          // to someone else, so it is not drawn on a weekend either; a weekend
+          // turn that day shows on its own. Moves to another team are not
+          // allocations here and keep their own rule above.
+          if (kind?.bucket === "ALLOCATION" && !kind.movesToTeamKey && weekendDay) continue;
           const target =
             kind?.bucket === "ALLOCATION" && holdsTurn(row, iso) ? row.allocs : row.days;
           if (kind?.bucket === "LEAVE" && iso >= ab.startsOn && !row.clash.has(iso)) {
