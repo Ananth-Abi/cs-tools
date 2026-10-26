@@ -24,21 +24,22 @@ import (
 )
 
 type fakeWork struct {
-	due        map[string][]Candidate // by stage
-	listErr    map[string]error
-	advanceErr map[string]error // by ticket id
-	outcome    map[string]Outcome
-	listed     []CandidatesRequest
-	advanced   []string // "stage:id"
-	advanceReq []AdvanceRequest
+	due         map[string][]Candidate // by stage
+	listErr     map[string]error
+	quarantined map[string]int   // by stage, what the listing reports as left out
+	advanceErr  map[string]error // by ticket id
+	outcome     map[string]Outcome
+	listed      []CandidatesRequest
+	advanced    []string // "stage:id"
+	advanceReq  []AdvanceRequest
 }
 
-func (f *fakeWork) Candidates(_ context.Context, req CandidatesRequest) ([]Candidate, error) {
+func (f *fakeWork) Candidates(_ context.Context, req CandidatesRequest) ([]Candidate, int, error) {
 	f.listed = append(f.listed, req)
 	if err := f.listErr[req.Stage]; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return f.due[req.Stage], nil
+	return f.due[req.Stage], f.quarantined[req.Stage], nil
 }
 
 func (f *fakeWork) Advance(_ context.Context, id string, req AdvanceRequest) (Outcome, error) {
@@ -200,10 +201,10 @@ type limitedWork struct {
 	outcome  Outcome
 }
 
-func (l *limitedWork) Candidates(_ context.Context, req CandidatesRequest) ([]Candidate, error) {
+func (l *limitedWork) Candidates(_ context.Context, req CandidatesRequest) ([]Candidate, int, error) {
 	l.listed = append(l.listed, req)
 	if req.Stage != StageFirstReminder {
-		return nil, nil
+		return nil, 0, nil
 	}
 	n := req.Limit
 	if n <= 0 {
@@ -213,7 +214,7 @@ func (l *limitedWork) Candidates(_ context.Context, req CandidatesRequest) ([]Ca
 	if n > len(l.all) {
 		n = len(l.all)
 	}
-	return l.all[:n], nil
+	return l.all[:n], 0, nil
 }
 
 func (l *limitedWork) Advance(_ context.Context, id string, req AdvanceRequest) (Outcome, error) {
@@ -301,5 +302,30 @@ func TestRunConfigValidate(t *testing.T) {
 		if err := tc.cfg.Validate(); (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.ok)
 		}
+	}
+}
+
+// Tickets left out for failing repeatedly are reported in the run summary but
+// must not fail the run: an error would alert, and be retried and alerted
+// again, on every tick for as long as they stay out.
+func TestRun_QuarantinedTicketsDoNotFailTheRun(t *testing.T) {
+	f := &fakeWork{
+		due:         map[string][]Candidate{StageClose: ids("c", "c1")},
+		quarantined: map[string]int{StageClose: 3, StageFirstReminder: 1},
+	}
+	if err := Run(f, RunConfig{})(context.Background()); err != nil {
+		t.Fatalf("err = %v, want none: quarantined tickets are reported, not failed", err)
+	}
+	if len(f.advanced) != 1 {
+		t.Errorf("advanced %v, want the due ticket still handled", f.advanced)
+	}
+}
+
+func TestRunConfigValidate_DailyLimitCeiling(t *testing.T) {
+	if err := (RunConfig{DailyLimit: 50000}).Validate(); err != nil {
+		t.Errorf("50000 is entity-service's maximum: %v", err)
+	}
+	if err := (RunConfig{DailyLimit: 50001}).Validate(); err == nil {
+		t.Error("a daily limit above what entity-service accepts must refuse to start")
 	}
 }

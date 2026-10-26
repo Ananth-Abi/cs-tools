@@ -3593,7 +3593,7 @@ has neither column, so a hold on one is a 400, never a silent no-op.
 Tickets that sit in **Awaiting Info** or **Solution Proposed** with no activity are reminded twice and
 then closed. This is native to this service (Postgres only): nothing in it reads or writes ServiceNow,
 and it replaces ServiceNow's "Auto Close Resolved Cases" flow rather than mirroring it. It is **off**
-until `AUTOCLOSURE_SYSTEM_USER_EMAIL` is set (the two routes are not registered without it) **and `DATA_SOURCE=postgres`**: under dual-write the close would be mirrored to ServiceNow, which runs its own auto-closure, so the routes are left unregistered there too (a warning is logged when the email is set but the data source is not plain Postgres). It is driven
+until `AUTOCLOSURE_SYSTEM_USER_EMAIL` is set, and needs the Postgres case tables: it runs on `DATA_SOURCE=postgres` **and on `postgres-servicenow-dual-write`** (which is how production runs until the cutover). The two routes are always registered; where the feature cannot run (no system user email, or `DATA_SOURCE=servicenow`) they answer an explicit `503` naming the reason, so an enabled scheduler fails with that sentence in its alert instead of a bare 404. See "Dual-write rollout" below. It is driven
 by `operations/csm-scheduled-tasks`'s `case_autoclosure` task (see that component's CLAUDE.md).
 
 | Env var | Meaning |
@@ -3694,12 +3694,12 @@ concurrent run when the budget runs out can still complete, so the overshoot is 
 **Dry run.** `AutoclosureAdvanceRequest.DryRun` runs the whole decision (still due? within the limit?), records a
 `DRY_RUN` audit row and answers outcome `dry_run`; it posts nothing, claims nothing, closes nothing and queues
 nothing. `DRY_RUN` rows are not counted by the daily limit. The scheduled task sets it from `AUTOCLOSURE_DRY_RUN`
-and forces it for a `TRYOUT_TASK` of this task.
+and forces it for a `TRYOUT_TASK` of this task. A dry run claims nothing, so it can only preview what is due *now* (first reminders for tickets at `DEFAULT`, and later stages only for tickets already carrying a step); a clean dry run on a fresh backlog is therefore **not** sign-off on the close stage.
 
 **A ticket that keeps failing is left out for a while.** A ticket with 3 `FAILED` events for the same stage in the
 last 7 days (`autoclosureMaxFailures`, `autoclosureFailureWindowDays`) is dropped from the listing and the
 per-ticket re-check, so one permanently bad ticket (a refused close, for example) does not raise the same alert on
-every run. Only refusals that will repeat (validation, conflict such as an open child, forbidden, not found) are recorded as `FAILED`; a cancelled request, timeout or outage is recorded as `FAILED_TRANSIENT`, which the cap ignores, so a short outage cannot hide healthy tickets for a week. The listing logs how many it left out (`CountQuarantined`). The rows age out of the window by themselves.
+every run. `FAILED` is the default: an error nobody has classified (a constraint violation, a wrapped internal error) repeats every run and must end up quarantined. Only errors that say nothing about the ticket are `FAILED_TRANSIENT`, which the cap ignores (a cancelled request or deadline, an unavailable dependency, a network or dropped-connection error, a database connection / resource / shutdown error), so a short outage cannot hide healthy tickets for a week. The listing returns the count it left out as `quarantined` (the scheduled task reports it in its run summary) and logs it. The rows age out of the window by themselves.
 
 **Failure and crash handling.** A step is claimed before the action. If the action fails, or the request is
 cancelled or times out, the claim is restored and the audit row written on a **detached context with its own 15 s
@@ -3707,6 +3707,13 @@ bound** (`cleanupContext`), so a client that gave up cannot leave the ticket mar
 window this cannot close is a hard process kill between the claim and the comment: the ticket is then marked
 reminded without having been. It is rare, visible in the audit table (no `ADVANCED` row for the new step), and a
 sweep that re-opens such tickets is the follow-up if it is ever seen.
+
+**Dual-write rollout (`postgres-servicenow-dual-write`).** What the code does there, verified by tests with the dual-write case service wired in (`TestAutoclosureIntegration_DualWrite*`):
+- **Order and failure.** `caseService` writes Postgres first and mirrors to ServiceNow asynchronously, best effort: a failed mirror is recorded in `sn_writeback_failures` for replay and never fails or repeats a stage. So `Advance` is never half-applied against ServiceNow, a retry after a mirror failure is `skipped` (no second reminder), and Postgres is the record.
+- **What the mirror is handed.** A close carries `resolutionCode`, `cause` (defaulted to Unknown when the ticket has none) and `closeNotes`, which the dual-write validation requires of an internal caller; the closure comment is mirrored as a bare comment. A Solution Proposed ticket with no stored resolution code is refused by that validation (a `FAILED`, quarantined after 3).
+- **Who ServiceNow sees.** The scheduled task has no user token, so the mirrored close and comments reach ServiceNow as the integration's own M2M user, **not** as the system user. The Postgres rows carry the system user.
+- **Dry run** is honoured in this mode (it never reaches the case service at all).
+**Not verifiable from this repository, and needed before enabling it here** (they depend on ServiceNow and `csm-sync-service`, whose source is not in this checkout): (1) how ServiceNow's own "Auto Close Resolved Cases" flow is switched off, per state, so the two do not both remind or close the same ticket (roll out Solution Proposed first with `AUTOCLOSURE_STATES`); (2) whether ServiceNow accepts the mirrored Awaiting Info -> Closed move (a refusal lands in `sn_writeback_failures`, Postgres stays closed); (3) whether the sync writes `u_autoclosure_step` / `u_autoclosure_state_time` back into `autoclosure_step` / `autoclosure_state_on`, which could overwrite a claimed step.
 
 **Comment text** lives in `autoclosureDefaultTemplates` (`awaiting_info.` / `solution_proposed.` x
 `first_reminder` / `second_reminder` / `closure`). A caller may send overrides by key in `templates`; the

@@ -71,8 +71,8 @@ func (c RunConfig) Validate() error {
 	if c.IntervalDays < 0 || c.IntervalDays > 365 {
 		return fmt.Errorf("interval days %d is outside 0-365 (0 uses entity-service's default of 7)", c.IntervalDays)
 	}
-	if c.DailyLimit < 0 {
-		return fmt.Errorf("daily limit %d is negative", c.DailyLimit)
+	if c.DailyLimit < 0 || c.DailyLimit > maxDailyLimit {
+		return fmt.Errorf("daily limit %d must be between 0 and %d", c.DailyLimit, maxDailyLimit)
 	}
 	for _, s := range c.States {
 		if s != "awaiting_info" && s != "solution_proposed" {
@@ -83,19 +83,27 @@ func (c RunConfig) Validate() error {
 }
 
 type workClient interface {
-	Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, error)
+	Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, int, error)
 	Advance(ctx context.Context, id string, req AdvanceRequest) (Outcome, error)
 }
 
 const (
 	// pageSize is how many new tickets each listing pass asks for, on top of
-	// the ones already attempted this run.
+	// the ones already attempted this run. (entity-service clamps a listing to
+	// the day's remaining budget, so near the end of the budget a pass can come
+	// back with only already-attempted tickets and the loop stops early; the
+	// budget is nearly spent by then.)
 	pageSize = 500
 	// entityListMax is the most entity-service returns for one listing.
 	entityListMax = 5000
 	// maxPasses bounds the listing loop per stage, so a misbehaving listing can
-	// never keep a run alive: 20 passes of 500 is 10,000 tickets per stage.
+	// never keep a run alive. The real ceiling is the smaller of this and the
+	// listing cap: 20 passes of 500 would be 10,000, but a listing never returns
+	// more than entityListMax, so at most 5,000 tickets are attempted per stage.
 	maxPasses = 20
+	// maxDailyLimit is the largest daily limit entity-service accepts
+	// (5,000 x 10); a bigger value would fail every listing, every day.
+	maxDailyLimit = entityListMax * 10
 )
 
 // maxErrorsReported bounds the failure alert email: a run that fails for
@@ -118,6 +126,10 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 			errs                                           []error
 			evaluated, reminded, closed, released, skipped int
 			failed, wouldAct                               int
+			// quarantined is the most any listing reported for a stage this run: due
+			// tickets entity-service left out for failing repeatedly. They cause no
+			// error (that would alert on every retry), so the summary is where they show.
+			quarantined int
 			// spent counts the budget this run has used itself in a dry run (a real
 			// run's use is in entity-service's audit table, which it subtracts).
 			spent int
@@ -139,7 +151,7 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 						break // the budget a real run would have is used up
 					}
 				}
-				candidates, err := client.Candidates(ctx, CandidatesRequest{
+				candidates, held, err := client.Candidates(ctx, CandidatesRequest{
 					Stage: stage, IntervalDays: cfg.IntervalDays, Limit: limit, DailyLimit: daily, States: cfg.States,
 				})
 				if err != nil {
@@ -147,6 +159,7 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 					errs = append(errs, fmt.Errorf("list tickets due for %s: %w", stage, err))
 					break
 				}
+				quarantined = max(quarantined, held)
 				fresh := 0
 				for _, c := range candidates {
 					if attempted[c.ID] {
@@ -195,7 +208,12 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 
 		slog.InfoContext(ctx, "autoclosure: run complete", "dryRun", cfg.DryRun,
 			"evaluated", evaluated, "reminded", reminded, "closed", closed,
-			"holdsReleased", released, "wouldAdvance", wouldAct, "skipped", skipped, "failed", failed)
+			"holdsReleased", released, "wouldAdvance", wouldAct, "skipped", skipped, "failed", failed,
+			"quarantined", quarantined)
+		if quarantined > 0 {
+			slog.WarnContext(ctx, "autoclosure: tickets are being left out after failing repeatedly and will not be reminded or closed until someone looks at them",
+				"tickets", quarantined, "see", "case_autoclosure_event, outcome FAILED")
+		}
 
 		if len(errs) == 0 {
 			return nil

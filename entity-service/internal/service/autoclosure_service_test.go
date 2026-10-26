@@ -20,10 +20,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -256,8 +259,8 @@ func TestAutoclosureAdvance_AFailedActionPutsTheStepBack(t *testing.T) {
 	if repo.restores != 1 {
 		t.Errorf("restores = %d, want 1: a ticket marked reminded that never was would never be reminded", repo.restores)
 	}
-	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED_TRANSIENT" {
-		t.Errorf("audit = %+v, want one FAILED_TRANSIENT row (a cancelled request says nothing about the ticket, so it must not count toward the failure cap)", repo.events)
+	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED" {
+		t.Errorf("audit = %+v, want one FAILED row (an unclassified error repeats, so it counts toward the failure cap)", repo.events)
 	}
 }
 
@@ -683,7 +686,7 @@ func TestAutoclosureAdvance_RecheckAppliesTheFailureCapToo(t *testing.T) {
 	}
 }
 
-func TestFailureOutcome_OnlyRepeatingRefusalsCountTowardTheCap(t *testing.T) {
+func TestFailureOutcome_UnclassifiedErrorsCountTowardTheCap(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -694,10 +697,18 @@ func TestFailureOutcome_OnlyRepeatingRefusalsCountTowardTheCap(t *testing.T) {
 		{"forbidden", &apierror.ForbiddenError{Msg: "no"}, "FAILED"},
 		{"not found", &apierror.NotFoundError{Msg: "gone"}, "FAILED"},
 		{"wrapped refusal", fmt.Errorf("close: %w", &apierror.ConflictError{Msg: "open child"}), "FAILED"},
+		// Untyped: a constraint violation or an internal error repeats every run.
+		{"unclassified", errors.New("close ticket: something broke"), "FAILED"},
+		{"constraint violation", &pgconn.PgError{Code: "23514"}, "FAILED"},
+		{"wrapped constraint violation", fmt.Errorf("close ticket: %w", &pgconn.PgError{Code: "23503"}), "FAILED"},
 		{"cancelled", context.Canceled, "FAILED_TRANSIENT"},
-		{"timeout", context.DeadlineExceeded, "FAILED_TRANSIENT"},
+		{"wrapped timeout", fmt.Errorf("close ticket: %w", context.DeadlineExceeded), "FAILED_TRANSIENT"},
 		{"outage", &apierror.ServiceUnavailableError{Msg: "down"}, "FAILED_TRANSIENT"},
-		{"unknown", errors.New("connection reset"), "FAILED_TRANSIENT"},
+		{"dropped connection", io.ErrUnexpectedEOF, "FAILED_TRANSIENT"},
+		{"network", &net.OpError{Op: "dial", Err: errors.New("refused")}, "FAILED_TRANSIENT"},
+		{"db connection exception", &pgconn.PgError{Code: "08006"}, "FAILED_TRANSIENT"},
+		{"db shutting down", &pgconn.PgError{Code: "57P01"}, "FAILED_TRANSIENT"},
+		{"db out of connections", &pgconn.PgError{Code: "53300"}, "FAILED_TRANSIENT"},
 	} {
 		if got := failureOutcome(tc.err); got != tc.want {
 			t.Errorf("%s: outcome = %s, want %s", tc.name, got, tc.want)

@@ -1344,30 +1344,35 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	activeCaseSvc = service.WithServiceRequestCatalog(activeCaseSvc, activeCatalogSvc)
 
 	// Case auto-closure (reminders and automatic closure of Awaiting Info /
-	// Solution Proposed tickets). Off until AUTOCLOSURE_SYSTEM_USER_EMAIL names
-	// the system user it acts as, and Postgres-only: the workflow's position
-	// lives on the case-like tables. Driven by operations/csm-scheduled-tasks.
-	var autoclosureHandler *handler.AutoclosureHandler
-	// Plain Postgres only. In postgres-servicenow-dual-write mode activeCaseSvc
-	// mirrors every case update to ServiceNow, so an automatic close would be
-	// written there too (and ServiceNow's own flow may still be closing the same
-	// tickets); in servicenow mode there is no Postgres position to work from.
-	// Refused with a log line rather than silently, until the dual-write cutover
-	// behaviour is defined.
-	if cfg.AutoclosureSystemUserEmail != "" && cfg.DataSource != config.DataSourcePostgres {
-		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure is only available with DATA_SOURCE=postgres; it is not enabled",
+	// Solution Proposed tickets). Needs the system user it acts as
+	// (AUTOCLOSURE_SYSTEM_USER_EMAIL) and the Postgres case tables, so it runs on
+	// DATA_SOURCE=postgres and on postgres-servicenow-dual-write, where activeCaseSvc
+	// writes Postgres first and mirrors to ServiceNow asynchronously (a mirror
+	// failure is recorded for replay and never fails or repeats a stage). Driven
+	// by operations/csm-scheduled-tasks.
+	//
+	// The routes are always registered. When the feature cannot run here they
+	// answer an explicit 503 naming the reason, so a scheduler that was enabled
+	// against an entity-service that cannot serve it fails with that sentence in
+	// its alert, rather than a bare 404 explained only by a log line here.
+	var autoclosureSvc service.AutoclosureService
+	switch {
+	case cfg.AutoclosureSystemUserEmail == "":
+		autoclosureSvc = service.NewUnavailableAutoclosureService("case auto-closure is not enabled on this entity-service: AUTOCLOSURE_SYSTEM_USER_EMAIL is not set")
+	case db == nil || cfg.DataSource == config.DataSourceServiceNow:
+		autoclosureSvc = service.NewUnavailableAutoclosureService("case auto-closure needs the Postgres case tables: DATA_SOURCE must be postgres or postgres-servicenow-dual-write")
+		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure needs DATA_SOURCE=postgres or postgres-servicenow-dual-write; it is not enabled",
 			"dataSource", string(cfg.DataSource))
-	}
-	if db != nil && cfg.AutoclosureSystemUserEmail != "" && cfg.DataSource == config.DataSourcePostgres {
-		autoclosureSvc := service.NewAutoclosureService(
+	default:
+		autoclosureSvc = service.NewAutoclosureService(
 			repository.NewAutoclosureRepository(repository.NewScoped(db)),
 			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
 		// A case closed for inactivity is queued for the customer's own
 		// verification (the Pending Verification feature) where the project
 		// has that turned on.
 		service.WithPendingVerificationQueue(autoclosureSvc, repository.NewPendingVerificationRepository(repository.NewScoped(db)))
-		autoclosureHandler = handler.NewAutoclosureHandler(autoclosureSvc)
 	}
+	autoclosureHandler := handler.NewAutoclosureHandler(autoclosureSvc)
 
 	// Case feedback (CSAT submissions): the ServiceNow data source reads it
 	// from the backing system; both Postgres data sources read
@@ -1909,7 +1914,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("GET /reports/query-hours", internalOnly(accessSvc, queryHourHandler.GetWeeklyReport))
 		mux.HandleFunc("POST /query-hours/recompute", internalOnly(accessSvc, queryHourHandler.RecomputeQueryHours))
 	}
-	if autoclosureHandler != nil {
+	{
 		mux.HandleFunc("POST /autoclosure/candidates", internalOnly(accessSvc, autoclosureHandler.FindCandidates))
 		mux.HandleFunc("POST /autoclosure/cases/{id}/advance", internalOnly(accessSvc, autoclosureHandler.Advance))
 	}

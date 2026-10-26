@@ -81,6 +81,10 @@ type AutoclosureCandidate struct {
 // AutoclosureCandidatesResponse lists the tickets due for a stage.
 type AutoclosureCandidatesResponse struct {
 	Candidates []AutoclosureCandidate `json:"candidates"`
+	// Quarantined is how many tickets this stage left out because they failed it
+	// repeatedly (3 FAILED events in 7 days). They are due but will not be tried
+	// again until those failures age out, so someone should look at them.
+	Quarantined int `json:"quarantined"`
 }
 
 // AutoclosureAdvanceRequest performs one stage on one ticket. The caller does

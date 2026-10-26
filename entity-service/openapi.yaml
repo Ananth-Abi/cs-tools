@@ -2086,6 +2086,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: >-
+            Case auto-closure is not available on this entity-service: the system
+            user (AUTOCLOSURE_SYSTEM_USER_EMAIL) is not configured, or the data
+            source is servicenow. The message says which.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
@@ -2130,6 +2139,15 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "403":
           description: Caller is not internal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: >-
+            Case auto-closure is not available on this entity-service: the system
+            user (AUTOCLOSURE_SYSTEM_USER_EMAIL) is not configured, or the data
+            source is servicenow. The message says which.
           content:
             application/json:
               schema:
@@ -34458,6 +34476,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AutoclosureCandidate'
+        quarantined:
+          type: integer
+          description: >-
+            Tickets this stage left out because they failed it repeatedly (3
+            FAILED events in 7 days). Due, but not retried until those failures
+            age out.
     AutoclosureAdvanceRequest:
       type: object
       required: [stage]

@@ -20,10 +20,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -91,6 +94,24 @@ type autoclosureService struct {
 // attributed to.
 func NewAutoclosureService(repo repository.AutoclosureRepository, cases CaseService, access AccessService, systemEmail string) AutoclosureService {
 	return &autoclosureService{repo: repo, cases: cases, access: access, systemEmail: systemEmail, now: time.Now}
+}
+
+// unavailableAutoclosureService stands in where the workflow cannot run, so the
+// routes answer an explicit 503 with the reason instead of a bare 404.
+type unavailableAutoclosureService struct{ reason string }
+
+// NewUnavailableAutoclosureService returns a service whose every call answers
+// a 503 carrying reason.
+func NewUnavailableAutoclosureService(reason string) AutoclosureService {
+	return unavailableAutoclosureService{reason: reason}
+}
+
+func (u unavailableAutoclosureService) FindCandidates(context.Context, domain.AutoclosureCandidatesRequest) (domain.AutoclosureCandidatesResponse, error) {
+	return domain.AutoclosureCandidatesResponse{}, &apierror.ServiceUnavailableError{Msg: u.reason}
+}
+
+func (u unavailableAutoclosureService) Advance(context.Context, string, domain.AutoclosureAdvanceRequest) (domain.AutoclosureAdvanceResponse, error) {
+	return domain.AutoclosureAdvanceResponse{}, &apierror.ServiceUnavailableError{Msg: u.reason}
 }
 
 // WithPendingVerificationQueue makes the workflow queue every case it
@@ -223,11 +244,18 @@ func (s *autoclosureService) FindCandidates(ctx context.Context, req domain.Auto
 	}
 	// Make the skipping visible: a ticket left out for repeated failures is
 	// otherwise silent.
-	if n, qErr := s.repo.CountQuarantined(ctx, req.Stage, now, autoclosureFailureWindowDays, autoclosureMaxFailures); qErr == nil && n > 0 {
-		slog.WarnContext(ctx, "autoclosure: tickets left out of the list after repeated failures; see case_autoclosure_event",
-			"stage", req.Stage, "tickets", n, "failures", autoclosureMaxFailures, "windowDays", autoclosureFailureWindowDays)
+	// The count goes back to the caller (the scheduled task reports it in its run
+	// summary) as well as to the log. A failed count is logged, not swallowed.
+	quarantined, qErr := s.repo.CountQuarantined(ctx, req.Stage, now, autoclosureFailureWindowDays, autoclosureMaxFailures)
+	if qErr != nil {
+		slog.WarnContext(ctx, "autoclosure: could not count the tickets left out after repeated failures", "stage", req.Stage, "error", qErr)
+		quarantined = 0
 	}
-	out := domain.AutoclosureCandidatesResponse{Candidates: make([]domain.AutoclosureCandidate, 0, len(rows))}
+	if quarantined > 0 {
+		slog.WarnContext(ctx, "autoclosure: tickets left out of the list after repeated failures; see case_autoclosure_event",
+			"stage", req.Stage, "tickets", quarantined, "failures", autoclosureMaxFailures, "windowDays", autoclosureFailureWindowDays)
+	}
+	out := domain.AutoclosureCandidatesResponse{Candidates: make([]domain.AutoclosureCandidate, 0, len(rows)), Quarantined: quarantined}
 	for _, r := range rows {
 		out.Candidates = append(out.Candidates, r.AutoclosureCandidate)
 	}
@@ -350,22 +378,41 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 
 // failureOutcome decides which audit outcome a failed action is recorded as.
 // Only FAILED counts toward the failure cap that leaves a ticket out of the
-// listing, so it is kept for refusals that will repeat (validation, a conflict
-// such as an open child, a forbidden or missing record). A cancelled request, a
-// timeout or a temporary outage of the comment or close path says nothing about
-// the ticket and must not hide healthy tickets for a week: those are recorded as
-// FAILED_TRANSIENT, which the cap ignores.
+// listing. The default is FAILED: an error nobody has classified (a constraint
+// violation, a wrapped internal error from UpdateCase) repeats every run, and
+// must end up quarantined rather than alerting daily for ever. Only errors that
+// say nothing about the ticket are FAILED_TRANSIENT, which the cap ignores so a
+// short outage cannot hide healthy tickets for a week: a cancelled request or
+// deadline, an unavailable dependency, a network or dropped-connection error, and
+// a database connection / resource / shutdown error.
 func failureOutcome(err error) string {
-	var (
-		validation *apierror.ValidationError
-		conflict   *apierror.ConflictError
-		forbidden  *apierror.ForbiddenError
-		notFound   *apierror.NotFoundError
-	)
-	if errors.As(err, &validation) || errors.As(err, &conflict) || errors.As(err, &forbidden) || errors.As(err, &notFound) {
-		return "FAILED"
+	if isTransientFailure(err) {
+		return "FAILED_TRANSIENT"
 	}
-	return "FAILED_TRANSIENT"
+	return "FAILED"
+}
+
+func isTransientFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var unavailable *apierror.ServiceUnavailableError
+	if errors.As(err, &unavailable) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && len(pgErr.Code) >= 2 {
+		switch pgErr.Code[:2] {
+		case "08", "53", "57": // connection exception, insufficient resources, operator intervention
+			return true
+		}
+	}
+	return pgconn.SafeToRetry(err)
 }
 
 // dryRunDetail says what a real run would have done to the ticket, for the

@@ -156,15 +156,17 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	return nil
 }
 
-// Candidates returns the tickets due for a stage, oldest first.
-func (c *Client) Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, error) {
+// Candidates returns the tickets due for a stage, oldest first, and how many
+// more entity-service left out because they failed the stage repeatedly.
+func (c *Client) Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, int, error) {
 	var resp struct {
-		Candidates []Candidate `json:"candidates"`
+		Candidates  []Candidate `json:"candidates"`
+		Quarantined int         `json:"quarantined"`
 	}
 	if err := c.post(ctx, "/autoclosure/candidates", req, &resp); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return resp.Candidates, nil
+	return resp.Candidates, resp.Quarantined, nil
 }
 
 // Advance performs a stage on one ticket and reports what happened.
