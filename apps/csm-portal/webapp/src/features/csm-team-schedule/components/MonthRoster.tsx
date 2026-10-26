@@ -493,6 +493,13 @@ export default function MonthRoster({
         const held = row.zoned.get(key);
         if (!held) {
           row.zoned.set(key, made);
+        } else if (Boolean(made.filedUnder) !== Boolean(held.filedUnder) && made.isRotation === held.isRotation) {
+          // One of the two is filed under a team the person has left: neither
+          // may hide the other. The stale one is the cell, so it can be found
+          // and cleared; the person's own sits under it.
+          const stale = made.filedUnder ? made : held;
+          row.zoned.set(key, stale);
+          row.zonedBase.set(key, stale === made ? held : made);
         } else if (made.isRotation && !held.isRotation) {
           // A turn arriving over the zone's regular hours: the turn is the
           // cell, the regular hours sit under it.
@@ -503,6 +510,15 @@ export default function MonthRoster({
         } else if (a.tier) {
           row.zoned.set(key, made);
         }
+        continue;
+      }
+      if (existing && Boolean(made.filedUnder) !== Boolean(existing.filedUnder)) {
+        // A whole day holding both the person's own entry and a turn filed
+        // under a team they have left: the stale turn is the cell, so it can
+        // be found and cleared, and their own entry is kept beside it.
+        const stale = made.filedUnder ? made : existing;
+        row.days.set(a.rotaDate, stale);
+        if (!row.allocs.has(a.rotaDate)) row.allocs.set(a.rotaDate, stale === made ? existing : made);
         continue;
       }
       if (!existing || a.tier) row.days.set(a.rotaDate, made);

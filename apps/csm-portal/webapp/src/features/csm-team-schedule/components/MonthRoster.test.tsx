@@ -705,6 +705,26 @@ describe("MonthRoster: every team member has a row", () => {
     expect(onEditCell.mock.calls[0][0]).toMatchObject({ teamKey: "bravo", shiftCode: EVENING.code });
   });
 
+  it.each([
+    ["own entry first", true],
+    ["stale turn first", false],
+  ])("keeps both a stale turn and the person's own entry on the same day (%s)", (_label, ownFirst) => {
+    const own = assignment({ name: "Asela", rotaDate: "2026-09-22", shiftCode: REGULAR.code, teamKey: "alpha" });
+    const stale = assignment({ name: "Asela", rotaDate: "2026-09-22", shiftCode: EVENING.code, teamKey: "bravo" });
+    const { container } = renderRoster({
+      teamKey: "",
+      teams: ["alpha", "bravo"],
+      assignments: ownFirst ? [own, stale] : [stale, own],
+      teamMembers: { alpha: [member("u-Asela", "Asela", "engineer")], bravo: [] },
+      ownTeams: new Map([["u-Asela", ["alpha"]]]),
+    });
+    const rows = [...container.querySelectorAll("tbody tr")];
+    expect(rows).toHaveLength(1);
+    const cell = within(rows[0] as HTMLElement).getByText(EVENING.shortCode).closest("td")!;
+    expect(within(cell).getByText(REGULAR.shortCode)).toBeInTheDocument();
+    expect(cell.getAttribute("title")).toContain("filed under Bravo");
+  });
+
   it("leaves a turn on a team the person has left off a view of that team alone", () => {
     const { container } = renderRoster({
       teamKey: "bravo",
