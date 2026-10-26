@@ -62,18 +62,40 @@ func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, se
 	return audiences
 }
 
-// sendCaseSRERoomCard posts an S0 case's card to its SRE rooms, best effort:
-// a failure is logged, never returned. The Incident Monitor card and the
-// emails of the same record are its must-deliver parts; returning this card's
-// error would retry the record, and once the retries run out the dead-letter
-// tier would send those parts a second time. The SRE ladder's rung cards
-// still reach the room.
-func (d *Dispatcher) sendCaseSRERoomCard(ctx context.Context, t events.Type, caseID string, rooms []string, send func(audience string) error) {
-	if err := d.sendToEachIncidentSpace(ctx, t, caseID, rooms, send); err != nil {
-		slog.WarnContext(ctx, "dispatch: S0 case card did not reach its SRE room",
-			"type", string(t), "caseId", caseID, "rooms", rooms, "errSummary", chatErrSummary(err))
-	}
+// startCaseSRERoomCard posts an S0 case's card to its SRE rooms on its own
+// goroutine and returns a channel that closes when it is done. It runs beside
+// the rest of the record so it delays nothing there (the SLA clocks, emails
+// and Incident Monitor card), and it is best effort: a failure is logged,
+// never returned, so it cannot retry the record and resend those. The caller
+// waits on the channel before releasing the record's keys.
+//
+// The rooms are posted one after another, not at once: two rooms can share a
+// Chat space (the teamless rooms often do), and Chat answers a burst to one
+// space with 429.
+func (d *Dispatcher) startCaseSRERoomCard(ctx context.Context, t events.Type, caseID string, rooms []string, card notifications.IncidentCreatedAlert) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var errs []error
+		for _, room := range rooms {
+			if err := d.googleChat.SendIncidentCreatedAlert(ctx, room, card); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			slog.WarnContext(ctx, "dispatch: S0 case card did not reach every SRE room",
+				"type", string(t), "caseId", caseID, "rooms", rooms, "errSummary", chatErrSummary(err))
+		}
+	}()
+	return done
 }
+
+// closedDone is a done channel for a record with no SRE room card to wait on.
+var closedDone = func() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}()
 
 // caseSRERoomCard is the card an S0 case posts to its SRE rooms: the
 // incident's "Reported" card in its case form, keyed by the case id so the
