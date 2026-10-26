@@ -31,7 +31,11 @@ import (
 )
 
 func caseCreatedWith(priority, sreGroup string) eventbus.Record {
-	return eventbus.Record{Value: []byte(fmt.Sprintf(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","caseType":"CASE","priority":%q,"product":"api-manager","team":"Phoenix","sreTeamName":%q,"createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`, priority, sreGroup))}
+	return caseCreatedOfType("CASE", priority, sreGroup)
+}
+
+func caseCreatedOfType(caseType, priority, sreGroup string) eventbus.Record {
+	return eventbus.Record{Value: []byte(fmt.Sprintf(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1001","caseTitle":"Something broke","caseType":%q,"priority":%q,"product":"api-manager","team":"Phoenix","sreTeamName":%q,"createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`, caseType, priority, sreGroup))}
 }
 
 // caseCardAudiences is where the Incident Monitor "Case Reported" card went.
@@ -64,6 +68,8 @@ func sreRoomDispatcher(chat googleChatSender) *Dispatcher {
 	routes := &notifications.IncidentRoutes{}
 	routes.Set(map[string][]string{"Default SRE Group": {"apollo", "artemis"}})
 	routes.SetTeamless([]string{"apollo", "artemis"})
+	// WSO2 IaaS Team is the one known SRE team; U2 SRE Group is not one.
+	routes.SetKnownSRETeam(func(group string) bool { return strings.EqualFold(group, "WSO2 IaaS Team") })
 	return NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, true, false, nil, true, "", nil).
 		WithIncidentRoutes(routes)
 }
@@ -77,8 +83,8 @@ func TestDispatcher_S0CaseCardGoesToItsSRERoom(t *testing.T) {
 	}{
 		{"an S0 on a mapped SRE group goes to its team's room", "CATASTROPHIC", "WSO2 IaaS Team",
 			[]string{notifications.IncidentAudience("WSO2 IaaS Team")}},
-		{"an S0 on an unmapped SRE group goes to the shared SRE room", "CATASTROPHIC", "U2 SRE Group",
-			[]string{notifications.IncidentFallbackAudience}},
+		{"an S0 on an SRE group the ladder does not know goes to the teamless rooms, where it is paged", "CATASTROPHIC", "U2 SRE Group",
+			[]string{notifications.IncidentAudience("apollo"), notifications.IncidentAudience("artemis")}},
 		{"an S0 on an account with no SRE team goes to the teamless rooms", "CATASTROPHIC", "",
 			[]string{notifications.IncidentAudience("apollo"), notifications.IncidentAudience("artemis")}},
 		{"an S1 gets no room card", "CRITICAL", "WSO2 IaaS Team", nil},
@@ -111,8 +117,9 @@ func TestDispatcher_S0CaseRoomCardIsTheIncidentCardInCaseForm(t *testing.T) {
 	}
 	a := cards[0].alert
 	// IncidentID is the case id, so the SRE ladder's rung cards (thread incident-<caseId>) reply under it.
-	if !a.Case || a.IncidentID != "CASE-1" || a.Number != "CS0001001" || a.Team != "WSO2 IaaS Team" ||
-		a.Priority != "CATASTROPHIC" || a.ShortDescription != "Something broke" || a.Service != "api-manager" {
+	// Number is the WSO2 case ID, as the SRE ladder's replies name the case (Trigger.caseRef).
+	if !a.Case || a.IncidentID != "CASE-1" || a.Number != "WSO2-1001" || a.Team != "WSO2 IaaS Team" ||
+		a.Priority != "CATASTROPHIC" || a.ShortDescription != "Something broke" || a.Service != "api-manager" || a.Project != "Proj" {
 		t.Errorf("room card = %+v; want the case form of the incident card for CASE-1", a)
 	}
 }
@@ -176,5 +183,29 @@ func TestChatErrSummary_NeverCarriesTheResponseBody(t *testing.T) {
 	}
 	if strings.Contains(got, "Customer 3") {
 		t.Errorf("chatErrSummary leaked the response body: %q", got)
+	}
+}
+
+// The SRE room card has its own gate, not the Incident Monitor branch's: only
+// a customer case is paged, so only it is carded in an SRE room.
+func TestDispatcher_S0RoomCardOnlyForCustomerCases(t *testing.T) {
+	for _, tc := range []struct {
+		caseType string
+		rooms    int
+	}{
+		{"CASE", 1},
+		{"case", 1},
+		{"service_request", 0},
+		{"security_report_analysis", 0},
+	} {
+		t.Run(tc.caseType, func(t *testing.T) {
+			chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+			if err := sreRoomDispatcher(chat).Handle(context.Background(), caseCreatedOfType(tc.caseType, "CATASTROPHIC", "WSO2 IaaS Team")); err != nil {
+				t.Fatalf("Handle error = %v", err)
+			}
+			if got := len(roomCards(chat)); got != tc.rooms {
+				t.Errorf("room cards = %d; want %d", got, tc.rooms)
+			}
+		})
 	}
 }

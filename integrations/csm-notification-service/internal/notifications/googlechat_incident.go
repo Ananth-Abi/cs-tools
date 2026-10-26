@@ -50,6 +50,36 @@ type IncidentRoutes struct {
 	// teamless is the sre.teamlessChats team keys with a room: where an S0
 	// case whose account has no SRE team gets its card (TeamlessAudiences).
 	teamless []string
+	// knownSRETeam reports whether a group is an SRE team of its own on the
+	// SRE ladder (paging.KnownSRETeam); nil until the paging configuration is
+	// loaded, when every group counts as unknown.
+	knownSRETeam func(group string) bool
+}
+
+// SetKnownSRETeam sets the SRE ladder's known-team check (paging.KnownSRETeam).
+func (r *IncidentRoutes) SetKnownSRETeam(known func(group string) bool) {
+	r.mu.Lock()
+	r.knownSRETeam = known
+	r.mu.Unlock()
+}
+
+// CaseSREAudiences is where an S0 case's card, and its SRE paging replies,
+// go: the rooms of its account SRE group (IncidentAudiences) when that group
+// is an SRE team of its own, else the teamless rooms (TeamlessAudiences) --
+// a case with no SRE team, or one the SRE ladder does not know and so pages
+// like a teamless case. The dispatcher and the paging engine both call it, so
+// the card, the replies and the calls agree.
+func CaseSREAudiences(routes *IncidentRoutes, env map[string][]string, sreGroup string, has func(string) bool) []string {
+	if strings.TrimSpace(sreGroup) != "" && routes != nil {
+		routes.mu.RLock()
+		known := routes.knownSRETeam
+		routes.mu.RUnlock()
+		if known != nil && known(sreGroup) {
+			audiences, _ := IncidentAudiences(routes, env, sreGroup, has)
+			return audiences
+		}
+	}
+	return TeamlessAudiences(routes, has)
 }
 
 // SetTeamless replaces the teamless rooms' team keys.
@@ -171,6 +201,9 @@ type IncidentCreatedAlert struct {
 	// "Case Reported", "View Case", "Case Details" and the case severity. An
 	// incident leaves it false and gets the card exactly as before.
 	Case bool
+	// Project is the case's project, shown in Case Details in place of State
+	// (a case card carries no state); left out when empty. Case only.
+	Project string
 }
 
 // casePriorityLabels renders a case severity on the card when Case is set.
@@ -238,7 +271,12 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 	details := []string{
 		caseAlertLine(`<b>Category:</b> %s`, orEmDash(strings.ToLower(a.Category))),
 		caseAlertLine(`<b>Priority:</b> %s`, orEmDash(priority.label)),
-		caseAlertLine(`<b>State:</b> %s`, orEmDash(humanizeEnumLabel(a.State))),
+	}
+	switch {
+	case !a.Case:
+		details = append(details, caseAlertLine(`<b>State:</b> %s`, orEmDash(humanizeEnumLabel(a.State))))
+	case strings.TrimSpace(a.Project) != "":
+		details = append(details, caseAlertLine(`<b>Project:</b> %s`, strings.TrimSpace(a.Project)))
 	}
 	sections := []chatCardSection{
 		{Widgets: summary},

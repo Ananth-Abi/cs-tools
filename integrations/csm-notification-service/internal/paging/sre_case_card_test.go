@@ -33,7 +33,11 @@ func sreCase(sreGroup string) Trigger {
 // posted to that team's room, as an incident's rungs do.
 func TestSRECaseRung_RepliesUnderItsCardInTheSRERoom(t *testing.T) {
 	chat := &fakeChat{}
-	deliverFirstRung(t, incidentSpaceEngine(chat), sreCase("MS/PC SRE Group"))
+	e := incidentSpaceEngine(chat)
+	routes := &notifications.IncidentRoutes{}
+	routes.SetKnownSRETeam(func(group string) bool { return group == "MS/PC SRE Group" })
+	e.cfg.IncidentRoutes = routes
+	deliverFirstRung(t, e, sreCase("MS/PC SRE Group"))
 	if len(chat.posted) != 1 {
 		t.Fatalf("posted %d cards; want 1", len(chat.posted))
 	}
@@ -103,5 +107,41 @@ func TestBuildIncidentRoutes_Teamless(t *testing.T) {
 	table := BuildIncidentRoutes(l, func(c Chat) (string, bool) { return "https://chat.example/" + c.Audience, c.Audience != "" })
 	if got := strings.Join(table.Teamless, ","); got != "apollo,iaas" {
 		t.Errorf("Teamless = %q; want apollo,iaas (artemis has no room)", got)
+	}
+}
+
+// An SRE group the ladder does not know is paged like a case with no SRE
+// team, so its replies go to the teamless rooms with its calls.
+func TestSRECaseRung_UnknownSREGroupRepliesInTheTeamlessRooms(t *testing.T) {
+	chat := &fakeChat{}
+	e := incidentSpaceEngine(chat)
+	routes := &notifications.IncidentRoutes{}
+	routes.SetTeamless([]string{"apollo"})
+	routes.SetKnownSRETeam(func(string) bool { return false })
+	e.cfg.IncidentRoutes = routes
+	deliverFirstRung(t, e, sreCase("U2 SRE Group"))
+	if len(chat.posted) != 1 || chat.posted[0].Audience != notifications.IncidentAudience("apollo") || !chat.posted[0].Reply {
+		t.Fatalf("posted %+v; want one reply in the teamless room", chat.posted)
+	}
+}
+
+// KnownSRETeam is the engine's own known-team check (hasOwnSRETeam).
+func TestKnownSRETeam(t *testing.T) {
+	l := LadderConfig{Teams: TeamKeys{
+		ABTs:          []string{"apollo_abt_sre_team", "iaas"},
+		Aliases:       map[string]string{"MS/PC SRE Group": "apollo_abt_sre_team", "Choreo SRE Team": "iaas", "Old Group": "ms/pc sre group"},
+		DefaultGroups: []string{"Default SRE Group"},
+	}}
+	for group, want := range map[string]bool{
+		"MS/PC SRE Group":   true,  // alias to a team in abts
+		"choreo sre team":   true,  // alias, any case
+		"U2 SRE Group":      false, // no alias, not in abts
+		"Old Group":         false, // alias to a key not in abts
+		"Default SRE Group": false, // a default group
+		"":                  false,
+	} {
+		if got := KnownSRETeam(l, group); got != want {
+			t.Errorf("KnownSRETeam(%q) = %v; want %v", group, got, want)
+		}
 	}
 }

@@ -38,34 +38,25 @@ func isCatastrophic(severity string) bool {
 	return false
 }
 
-// caseSRERooms is where an S0 case's card goes besides Incident Monitor: the
-// rooms its account's SRE group maps to on the Alert Settings tab, the same
-// rooms an incident of that group gets its "Incident Reported" card in. The
-// SRE ladder posts nothing until a rung finds someone to page, so without
-// this card the SRE room hears of an S0 only minutes later, or not at all
-// when nobody is rostered.
-//
-// A case whose account has no SRE team gets it in the teamless rooms, where
-// its rung cards go. None for any other severity.
+// isCustomerCase reports whether a case type is a customer case, the only
+// type the paging ladders page (paging/cases.go makes the same check).
+func isCustomerCase(caseType string) bool {
+	return strings.EqualFold(strings.TrimSpace(caseType), "case")
+}
+
+// caseSRERooms is where an S0 case's SRE room card goes: its account SRE
+// group's rooms when that group is a known SRE team, else the teamless rooms
+// (notifications.CaseSREAudiences, which the SRE ladder's replies use too).
+// The SRE ladder posts nothing until a rung finds someone to page, so without
+// this card the SRE room hears of an S0 only minutes later. None for any
+// other severity.
 func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, severity, sreGroup string) []string {
 	if !isCatastrophic(severity) {
 		return nil
 	}
-	if strings.TrimSpace(sreGroup) == "" {
-		audiences := notifications.TeamlessAudiences(d.incidentRoutes, d.googleChat.HasAudienceSpace)
-		if len(audiences) == 0 {
-			slog.InfoContext(ctx, "dispatch: S0 case has no SRE team and there is no teamless or shared SRE room, no SRE room card",
-				"type", string(t), "caseId", caseID)
-		}
-		return audiences
-	}
-	audiences, fallback := notifications.IncidentAudiences(d.incidentRoutes, d.incidentChatFanout, sreGroup, d.googleChat.HasAudienceSpace)
-	switch {
-	case fallback:
-		slog.InfoContext(ctx, "dispatch: S0 case's SRE group maps to no SRE team room; card goes to the shared SRE room",
-			"type", string(t), "caseId", caseID, "sreGroup", sreGroup)
-	case len(audiences) == 0:
-		slog.InfoContext(ctx, "dispatch: S0 case's SRE group has no chat space, no SRE room card",
+	audiences := notifications.CaseSREAudiences(d.incidentRoutes, d.incidentChatFanout, sreGroup, d.googleChat.HasAudienceSpace)
+	if len(audiences) == 0 {
+		slog.InfoContext(ctx, "dispatch: S0 case has no SRE room (no team room, teamless room or shared SRE room), no SRE room card",
 			"type", string(t), "caseId", caseID, "sreGroup", sreGroup)
 	}
 	return audiences
@@ -88,10 +79,17 @@ func (d *Dispatcher) sendCaseSRERoomCard(ctx context.Context, t events.Type, cas
 // incident's "Reported" card in its case form, keyed by the case id so the
 // SRE ladder's rung cards reply under it (paging's sreCaseCard), as an
 // incident's do.
-func caseSRERoomCard(caseID, caseNumber, sreGroup, severity, title, product, caseLink string) notifications.IncidentCreatedAlert {
+//
+// The case is named as the SRE ladder's replies name it (paging's
+// Trigger.caseRef): the WSO2 case ID, else the case number.
+func caseSRERoomCard(caseID, caseNumber, wso2CaseID, sreGroup, severity, title, product, project, caseLink string) notifications.IncidentCreatedAlert {
+	ref := strings.TrimSpace(wso2CaseID)
+	if ref == "" {
+		ref = displayCaseRef(caseNumber, caseID)
+	}
 	return notifications.IncidentCreatedAlert{
 		IncidentID:       caseID,
-		Number:           displayCaseRef(caseNumber, caseID),
+		Number:           ref,
 		Team:             sreGroup,
 		Priority:         severity,
 		ShortDescription: truncateTitle(title, maxChatTitleLength),
@@ -99,6 +97,7 @@ func caseSRERoomCard(caseID, caseNumber, sreGroup, severity, title, product, cas
 		Category:         "case",
 		IncidentLink:     caseLink,
 		Case:             true,
+		Project:          project,
 	}
 }
 

@@ -975,9 +975,14 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 				d.forget(chatKey)
 			}
 		}
-		// An S0 also goes straight to its account SRE team's room (caseSRERooms).
+	}
+
+	// The SRE room card is its own step, gated on its own: only a customer
+	// case (the type paging/cases.go pages) at S0, whatever the Incident
+	// Monitor branch above decided.
+	if isCustomerCase(p.CaseType) {
 		if rooms := d.caseSRERooms(ctx, events.TypeCaseCreated, p.CaseID, p.Priority, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
-			card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.SRETeamName, p.Priority, p.CaseTitle, p.Product, d.links.CSMLink(p.CaseID))
+			card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.WSO2CaseID, p.SRETeamName, p.Priority, p.CaseTitle, p.Product, p.ProjectName, d.links.CSMLink(p.CaseID))
 			d.sendCaseSRERoomCard(ctx, events.TypeCaseCreated, p.CaseID, rooms, func(audience string) error {
 				return d.googleChat.SendIncidentCreatedAlert(ctx, audience, card)
 			})
@@ -1531,7 +1536,7 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 	}
 	// An S0 also goes straight to its account SRE team's room (caseSRERooms).
 	if rooms := d.caseSRERooms(ctx, events.TypeSeverityChanged, p.CaseID, p.NewSeverity, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
-		card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.SRETeamName, p.NewSeverity, p.CaseTitle, p.Product, d.links.CSMLink(p.CaseID))
+		card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.WSO2CaseID, p.SRETeamName, p.NewSeverity, p.CaseTitle, p.Product, "", d.links.CSMLink(p.CaseID))
 		d.sendCaseSRERoomCard(ctx, events.TypeSeverityChanged, p.CaseID, rooms, func(audience string) error {
 			return d.googleChat.SendIncidentCreatedAlert(ctx, audience, card)
 		})

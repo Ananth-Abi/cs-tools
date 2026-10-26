@@ -293,3 +293,35 @@ func TestTeamlessAudiences(t *testing.T) {
 		t.Errorf("nothing configured: %v; want none", got)
 	}
 }
+
+func TestCaseSREAudiences(t *testing.T) {
+	has := func(a string) bool { return a != IncidentFallbackAudience }
+	routes := &IncidentRoutes{}
+	routes.SetTeamless([]string{"apollo", "artemis"})
+	routes.SetKnownSRETeam(func(g string) bool { return g == "Known Group" })
+	teamless := IncidentAudience("apollo") + "," + IncidentAudience("artemis")
+	for group, want := range map[string]string{
+		"Known Group":   IncidentAudience("Known Group"),
+		"Unknown Group": teamless,
+		"":              teamless,
+	} {
+		if got := strings.Join(CaseSREAudiences(routes, nil, group, has), ","); got != want {
+			t.Errorf("CaseSREAudiences(%q) = %q; want %q", group, got, want)
+		}
+	}
+}
+
+// A case card shows its project in place of the State a case never has.
+func TestSendIncidentCreatedAlert_CaseFormShowsProjectNotState(t *testing.T) {
+	c, got := captureIncidentCard(t)
+	if err := c.SendIncidentCreatedAlert(context.Background(), IncidentAudience("artemis sre group"), IncidentCreatedAlert{
+		IncidentID: "case-1", Number: "WSO2-1", Priority: "CATASTROPHIC", Category: "case", Project: "Customer 3 Project", Case: true,
+	}); err != nil {
+		t.Fatalf("SendIncidentCreatedAlert: %v", err)
+	}
+	msg, _, _ := got()
+	text := sectionText(msg.CardsV2[0].Card.Sections[1])
+	if !strings.Contains(text, "<b>Project:</b> Customer 3 Project") || strings.Contains(text, "State") {
+		t.Errorf("details = %q; want the project and no State", text)
+	}
+}
