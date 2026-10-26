@@ -72,6 +72,11 @@ func TestRotaAccess_LeadManagesOwnTeamsMarkers(t *testing.T) {
 	wantForbidden(t, svc.GrantRotaMarker(ctx, "castor", someoneID), "a lead naming another team's marker")
 	wantForbidden(t, svc.GrantRotaMarker(ctx, "apollo", someoneID), "a lead naming another family's marker")
 	wantForbidden(t, svc.GrantRotaAdmin(ctx, "cre", someoneID), "a lead granting rota admin")
+	if len(got.CanManage.MemberFamilies) != 0 {
+		t.Fatalf("a lead got memberFamilies %v, want none", got.CanManage.MemberFamilies)
+	}
+	wantForbidden(t, svc.AddTeamMember(ctx, "vega", someoneID), "a lead adding a member to their own team")
+	wantForbidden(t, svc.RemoveTeamMember(ctx, "vega", someoneID), "a lead removing a member from their own team")
 }
 
 // Somebody who leads nothing and holds no role still sees an empty tab.

@@ -355,7 +355,8 @@ ticker, with Redis as its only durable state — the same `REDIS_URL`/
   sets (on/off, channel, safety caps, phones.source, `ackChat`), shown read-only on the
   tab; allowed numbers are counted, never listed. CRE's also carries the rung emails
   (`email.enabled`, `email.teamLists` counted, `email.creTeamList`/`email.csTeamList`
-  as set or not, never an address), `rules.custom` and `timing` (`creChainTiming`:
+  as set or not, never an address; the tab hides that row now that the four are
+  tab values, which `running` reports with their addresses, like a head's), `rules.custom` and `timing` (`creChainTiming`:
   severity to the minutes each step L0-L4 is called, from `DefaultPolicy`, so the
   tab cannot drift from the code), so every CRE setting shows on the tab. `SmallFilePlusSavedIsTheFullFile` pins that
   `paging-alert.minimal.yaml` plus everything copied from the full file pages
@@ -469,12 +470,25 @@ instant: a ladder reported at 13:25 opens L2 at 13:30, inside TZ2, and asked
 at 13:25 it called TZ1's L2 after they had gone home, or nobody when TZ1 had
 no holder for the tier. `BuildPlan` sets `RoutingContext.At` to the rung's
 opening time for the SRE ladder only; the CRE ladder keeps the report instant,
-its rungs being fixed by the shift the incident arrived in. Picked in this order: the
-incident's own SRE team; then the zone whose L1 block is live -- weekdays
+its rungs being fixed by the shift the incident arrived in. **An SRE team's
+incident reaches only its own team** (`tierPicks`): by day another team's
+holder never answers, so an Apollo L1 on leave or off the rota leaves the L1
+rung empty and the ladder goes on to Apollo's L2 (it used to borrow Artemis's
+L1). The exception is the shared night crew, `sharedCrewZone` (TZ3, 21:00-06:00
+IST, weekends included), whose holders answer either SaaS team. **When nobody
+holds L1, L2 or L3, the L3 rung calls the team lead** (one of them), at the L3
+slot; an incident with no SRE team of its own (a default group, a CRE P0 with
+no SRE team) calls one lead of every team on its rota instead (both SaaS
+teams). A missing tier with somebody on another one is just an empty rung. An
+incident with no SRE team of its own still takes whoever holds the tier.
+Picked in this order: on-leave holders only when nobody else in the team holds
+the tier; then the zone whose L1 block is live -- weekdays
 12:00-15:00 IST the TZ1 and TZ2 escalation windows are both live, and the SRE
 team confirmed only one person is called; then `sre.teams.abts` order; then
 email. The rota has no L4 tier, so L4 is the lead of the answering team -- the
-incident's own, or for a CRE P0 the team of whoever took L1. An assumption.
+incident's own, or for an incident with no SRE team of its own (a CRE P0) the
+team of the first tier somebody holds, L1, then L2, then L3 -- and it calls
+nobody when the leads were already called on the L3 rung. An assumption.
 
 **"Default" group** (`sre.teams.defaultGroups`, opt-in): an incident whose
 assignment group is listed (the alert flow's "Default") is an SRE incident
@@ -551,7 +565,9 @@ when a severity or priority change replaces the chain -- "Severity changed to
 X: paging restarts". It lists who was paged and how many calls were
 cancelled. Posted only from the first stop (a retried stop finds `Cancelled`
 set) and only once a rung has gone out with sending on, so a room never hears
-about a chain it did not see. A hand-off to the SMEs posts nothing here; its
+about a chain it did not see; before any rung, a room the incident card
+reached (`IncidentCards`, e.g. an SME ladder whose L1 was empty) counts as
+having seen it. A hand-off to the SMEs posts nothing here; its
 own message says it. The SRE setting covers the SME ladders. Best effort.
 
 **Stops on** (an SRE incident): `incident.assigned` (an engineer set as the
@@ -618,7 +634,16 @@ file's `sme.enabled`:
   uncomments it and checks each team gets its own space). Unset, every team's
   cards go to `sme.chat`, as before. Set, a listed team's cards go to its own space and
   a team not listed uses `sme.chat`, never no card (a room saved on the Alert
-  Settings tab counts as listed). `Engine.smeNotifiersFor` picks by `Routing.SMETeam`. At the start a work note says who
+  Settings tab counts as listed). `Engine.smeNotifiersFor` picks by `Routing.SMETeam`.
+- **The "Incident Escalated" card is the escalation's, not L1's** (since
+  2026-10-23): `postSMEIncidentCard` posts it to the SME team's spaces when the
+  alert is handled, with chat in `sme.channel` and sending on, whoever is on
+  call. Nobody rostered on any tier: the card still goes out ("Nobody
+  rostered") and no ladder starts. L1 empty: the card goes out at once rather
+  than with L2, and names the first rostered tier and when it is called
+  ("Nobody rostered before L2", then the L2 and the time). The rooms it reached are saved on the ladder (`IncidentCards`)
+  before any rung is scheduled, so the first rung posts only its reply; a room
+  the card missed gets it from the first rung, as before. At the start a work note says who
   L1 is, or why nobody can be paged (`NO_RECIPIENTS`, `NO_NUMBER`,
   `NUMBER_NOT_ALLOWED`, `NO_CHANNEL`); a rung with nobody is logged ("SME rung
   cannot be called") and skipped; the usual execution summary is written when
@@ -860,11 +885,17 @@ state and response SLA remaining time is <t>" ("...was breached <t> ago" once
 past it), counted from the chain's start against the `response` clock of the
 SLA duration policy the SLA engine fetches at startup (`RungEmailSending.SLADurations`),
 else WSO2's published defaults (S0 15m, S1 1h, S2 4h, S3 6h, S4 24h, as migration
-0192 seeds them). `cre.email` lives in the file -- both `paging-alert.yaml` and
-`paging-alert.minimal.yaml` -- never on the Alert Settings tab: it is a switch
-and a few addresses, and `MergeCaseAlertSettings` keeps it as the file has it
-(`TestRungEmail_ConfigSurvivesSavedSettings`). Leave its lists out rather than
-empty in the shipped files, so the two load alike.
+0192 seeds them). `cre.email` is set on the Alert Settings tab like any other
+CRE value, so no new setting goes into the mounted file: `email.enabled`,
+`email.teamLists` (team key -> address), `email.creTeamList`,
+`email.csTeamList` (`caseAlertKeys`, `caseAlertValueSpecs` in entity-service).
+A saved key replaces the file's, an unsaved one keeps it
+(`TestRungEmail_SavedSettingsReplaceTheFile`); the three list keys log
+"changed", never an address. A list for a team that is neither in
+`teams.abts` nor `teams.americas` is dropped with a change line before
+`Config.validate` (`dropUnknownEmailTeamLists`), so one stale list cannot
+refuse the whole merge. A file that still has the block keeps working. Leave
+its lists out rather than empty in the shipped files, so the two load alike.
 
 **Not built**: the two
 erroneous-scenario emails (section 12.0), LEVEL_0 availability filtering
