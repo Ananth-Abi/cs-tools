@@ -173,8 +173,12 @@ emails" below.
 `internal/rotareminder`, registered as **`rota_weekday_reminder`**, **`rota_weekend_notice`**,
 **`rota_weekend_reminder`** and **`rota_manual_reminder`** (the Rota Access card's "Send now" and
 "Send a test to me"), emails the people rostered on a rotation shift in the Team Schedule, with a
-calendar invitation for their window. **Registered only when `ROTA_REMINDERS_ENABLED=true`**
-(default false): they email real staff from the real rota.
+calendar invitation for their window. **Turned on and off only on the Rota Access tab** (the
+"CRE rota reminders" card): nothing in this component's configuration switches them on. The tasks
+are registered whenever `EMAIL_BASE_URL` is set, so Send now and "Send a test to me" work without
+a redeploy; a family that has never saved the card gets no scheduled reminder
+(`rotareminder.withSettings`), and the card's weekday and weekend switches apply from the next run.
+`ROTA_REMINDERS_ENABLED` is no longer read.
 
 | Task | Default schedule | Announces |
 |---|---|---|
@@ -219,8 +223,10 @@ schedules assume `TZ=UTC` like every other here.
   `windows` override `ROTA_REMINDER_WEEKEND_REQUIRED` / `ROTA_REMINDER_WINDOWS` code by code
   (a code the saved settings do not name keeps the configured value; the card saves a code
   only once somebody changes it there), and `copyTo` is copied on top of the configured copy
-  list. So saving one field never replaces a deployment setting nobody changed. Nothing saved (a 404, also from an entity-service without the
-  route) keeps the environment's values. A failed read fails the run, so it is retried
+  list. So saving one field never replaces a deployment setting nobody changed. **Nothing
+  saved (a 404, also from an entity-service without the route) sends no scheduled reminder**:
+  only the card's switches turn them on. Send now still goes out, with the environment's values.
+  A failed read fails the run, so it is retried
   rather than sent with settings somebody turned off. Not on the card, on purpose: the
   send times, `ROTA_REMINDER_REDIRECT_TO`, the family, the shift codes and names, and the
   email service settings.
@@ -304,7 +310,8 @@ schedules assume `TZ=UTC` like every other here.
 - **`ROTA_REMINDER_REDIRECT_TO`** sends every reminder to a test inbox instead, naming the intended
   recipients in its first line. Use it in any environment that holds the real rota but must not mail
   people. `ALERTS_ENABLED=false` silences these like every other email here.
-- Turning the tasks on with `EMAIL_BASE_URL` unset refuses to start.
+- With `EMAIL_BASE_URL` unset the rota tasks are not registered (logged at startup): nothing
+  could be sent.
 - **Not built**: a "your shift changed" email when a lead edits the rota after the reminder went
   out (Friday's reminder is the only re-send; it needs entity-service to announce rota changes,
   see "Future: events"), SRE and SME rotas (set
@@ -451,7 +458,6 @@ report emails" below for why that's not a generic engine feature.
 | `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself |
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
 | `SUB_CRON_RECIPIENTS` | No | JSON object `{"<task.Name>": {"to": [...], "cc": [...], "debug": [...]}}` giving a registered task its own extra failure-alert audience, on top of `ALERT_RECIPIENTS` — or, for a report-style task, its report's actual recipients (see "Alerting" above for which tasks work which way). `debug` on a report task is debug mail mode for that report alone (`notify.ForReport`): it goes to that list only, `[Test copy]`-prefixed, with the intended To/Cc named in the body; startup warns naming every such task. A task not mentioned gets no per-task recipients |
-| `ROTA_REMINDERS_ENABLED` | No (default `false`) | Registers the two rota reminder tasks — see "Rota reminders" above |
 | `ROTA_REMINDER_REDIRECT_TO` | No | Comma-separated test inbox(es) that receive every rota reminder instead of the people on the shift |
 | `ROTA_REMINDER_SCHEDULE_URL` | No | Link to the CSM portal's Team Schedule page, shown in every reminder |
 | `ROTA_REMINDER_COPY_TASK_RECIPIENTS` | No (default `false`) | Also copies each task's `SUB_CRON_RECIPIENTS` on every reminder |
