@@ -27,10 +27,8 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -588,107 +586,31 @@ func TestAutoclosureIntegration_DryRunLeavesTheTicketAloneAndIsNotCounted(t *tes
 	}
 }
 
-// Under postgres-servicenow-dual-write the workflow runs on the dual-write case
-// service: Postgres is written first and ServiceNow is mirrored asynchronously,
-// best effort. These tests wire that service in (a recording stand-in for the
-// ServiceNow side) and pin what the rollout depends on.
-type acMirror struct {
-	mu       sync.Mutex
-	failWith error
-	patches  []acMirrorPatch
-	comments []string
-	*stubMirrorCaseService
-}
-
-type acMirrorPatch struct {
-	state        domain.CaseState
-	resolution   *caseResolutionFields
-	asSystemUser bool
-}
-
-func (e *acEnv) useDualWrite(failWith error) (*acMirror, *recordingSNWritebackFailures) {
-	e.t.Helper()
-	m := &acMirror{failWith: failWith, stubMirrorCaseService: &stubMirrorCaseService{}}
-	m.patchCaseFieldsFn = func(_ context.Context, _ string, state *domain.CaseState, _ *domain.CaseSeverity, _ *domain.CaseWorkState, _ *bool, res *caseResolutionFields, sys bool) (domain.UpdatedCase, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if state != nil {
-			m.patches = append(m.patches, acMirrorPatch{state: *state, resolution: res, asSystemUser: sys})
-		}
-		return domain.UpdatedCase{}, m.failWith
-	}
-	m.createBareCaseComment = func(_ context.Context, _ string, _ domain.CommentType, content string) (domain.CaseCommentDetail, error) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.failWith == nil {
-			m.comments = append(m.comments, content)
-		}
-		return domain.CaseCommentDetail{}, m.failWith
-	}
-	failures := &recordingSNWritebackFailures{}
+// The workflow never writes ServiceNow, even when the deployment runs the
+// dual-write data source: routes.go gives it a case service built exactly like
+// this one, with no mirror and no write-back dispatcher. With a mirror that
+// would fail the test if it were ever called, the close must still get through
+// on Postgres alone (no resolutionCode/cause/closeNotes rule of the dual-write
+// path applies to it) and nothing may be mirrored.
+func TestAutoclosureIntegration_NeverMirrorsToServiceNow(t *testing.T) {
+	e := newACEnv(t)
 	userRepo := repository.NewUserRepository(e.pool)
-	caseSvc := NewCaseServiceWithSNWriteback(repository.NewCaseRepository(e.scoped), userRepo, nil, ctxIdentityAccess{}, nil,
-		NewSNWritebackDispatcher(failures), m, nil, "")
+	caseSvc := NewCaseServiceWithSNWriteback(repository.NewCaseRepository(e.scoped), userRepo, nil, ctxIdentityAccess{}, nil, nil, nil, nil, "")
 	e.svc = NewAutoclosureService(repository.NewAutoclosureRepository(e.scoped), caseSvc, ctxIdentityAccess{}, acSysEmail)
 	WithPendingVerificationQueue(e.svc, repository.NewPendingVerificationRepository(e.scoped))
-	return m, failures
-}
 
-func (m *acMirror) snapshot() ([]acMirrorPatch, []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]acMirrorPatch(nil), m.patches...), append([]string(nil), m.comments...)
-}
-
-// The close must get through the dual-write validation (an internal caller
-// closing needs resolutionCode, cause and closeNotes), and the mirror must be
-// handed all three, as the integration's own ServiceNow user (no user token).
-func TestAutoclosureIntegration_DualWriteCloseCarriesWhatTheMirrorRequires(t *testing.T) {
-	e := newACEnv(t)
-	mirror, failures := e.useDualWrite(nil)
 	id := e.ticket(41, "AWAITING_INFO", 0, ptrOf("SECOND_COMMENT"), ptrTime(e.ago(8)))
 	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, id, acProjectOn)
-
 	if got := e.advance(id, domain.AutoclosureStageClose); got.Outcome != domain.AutoclosureOutcomeAdvanced {
-		t.Fatalf("close under dual-write = %q (%s), want advanced", got.Outcome, got.Reason)
+		t.Fatalf("close = %q (%s), want advanced", got.Outcome, got.Reason)
 	}
 	if r := e.row(id); r.state != "CLOSED" || r.resolution != "ABRUPTLY_CLOSED_DUE_TO_NON_RESPONSIVENESS_THROUGH_AUTO_CLOSURE" {
 		t.Fatalf("Postgres row = %+v, want closed with the non-responsiveness code", r)
 	}
-	waitFor(t, func() bool { p, c := mirror.snapshot(); return len(p) == 1 && len(c) == 1 })
-	patches, comments := mirror.snapshot()
-	p := patches[0]
-	if p.state != domain.CaseStateClosed || p.resolution == nil || p.resolution.Code == nil || p.resolution.Cause == nil || p.resolution.CloseNotes == nil {
-		t.Errorf("mirror patch = %+v, want closed with resolutionCode, cause and closeNotes", p)
-	}
-	if p.asSystemUser {
-		t.Errorf("an internal close is mirrored under the caller's own identity (here no user token, so the integration's own ServiceNow user)")
-	}
-	if len(comments) != 1 {
-		t.Errorf("mirrored comments = %v, want the closure comment", comments)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if failures.count() != 0 {
-		t.Errorf("writeback failures = %d, want none", failures.count())
-	}
-}
-
-// A mirror that fails must not fail the stage, and the retry must not post a
-// second reminder: Postgres is the record, the failure is queued for replay.
-func TestAutoclosureIntegration_DualWriteMirrorFailureNeitherFailsNorRepeatsAStage(t *testing.T) {
-	e := newACEnv(t)
-	_, failures := e.useDualWrite(errors.New("servicenow is down"))
-	id := e.ticket(42, "AWAITING_INFO", 0, ptrOf("FIRST_COMMENT"), ptrTime(e.ago(8)))
-	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, id, acProjectOn)
-
-	if got := e.advance(id, domain.AutoclosureStageSecondReminder); got.Outcome != domain.AutoclosureOutcomeAdvanced {
-		t.Fatalf("second reminder with the mirror down = %q (%s), want advanced", got.Outcome, got.Reason)
-	}
-	if got := e.advance(id, domain.AutoclosureStageSecondReminder); got.Outcome != domain.AutoclosureOutcomeSkipped {
-		t.Fatalf("a retry after the mirror failed = %q, want skipped (no second reminder)", got.Outcome)
-	}
 	if n := len(e.systemComments(id)); n != 1 {
-		t.Errorf("system comments in Postgres = %d, want exactly one reminder", n)
+		t.Errorf("system comments = %d, want the closure comment", n)
 	}
-	waitFor(t, func() bool { return failures.count() >= 1 })
+	if cs, ok := caseSvc.(*caseService); !ok || cs.snWriteback != nil || cs.snMirror != nil {
+		t.Errorf("the auto-closure case service must have no ServiceNow mirror or dispatcher")
+	}
 }

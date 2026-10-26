@@ -1345,28 +1345,33 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 
 	// Case auto-closure (reminders and automatic closure of Awaiting Info /
 	// Solution Proposed tickets). Needs the system user it acts as
-	// (AUTOCLOSURE_SYSTEM_USER_EMAIL) and the Postgres case tables, so it runs on
-	// DATA_SOURCE=postgres and on postgres-servicenow-dual-write, where activeCaseSvc
-	// writes Postgres first and mirrors to ServiceNow asynchronously (a mirror
-	// failure is recorded for replay and never fails or repeats a stage). Driven
-	// by operations/csm-scheduled-tasks.
+	// (AUTOCLOSURE_SYSTEM_USER_EMAIL) and the Postgres case tables. Driven by
+	// operations/csm-scheduled-tasks.
 	//
-	// The routes are always registered. When the feature cannot run here they
-	// answer an explicit 503 naming the reason, so a scheduler that was enabled
-	// against an entity-service that cannot serve it fails with that sentence in
-	// its alert, rather than a bare 404 explained only by a log line here.
+	// It never touches ServiceNow, whatever DATA_SOURCE says. It is given its own
+	// case service with no ServiceNow mirror and no write-back dispatcher, not
+	// activeCaseSvc (which mirrors every update to ServiceNow under dual-write): a
+	// reminder or a close is written to Postgres only. Events, SLA effects and the
+	// activity entry are the ones every Postgres close produces.
+	//
+	// The routes are always registered. Where the feature cannot run (no system
+	// user, or DATA_SOURCE=servicenow, which has no Postgres case tables to work
+	// from) they answer an explicit 503 naming the reason, so an enabled scheduler
+	// fails with that sentence in its alert instead of a bare 404.
 	var autoclosureSvc service.AutoclosureService
 	switch {
 	case cfg.AutoclosureSystemUserEmail == "":
 		autoclosureSvc = service.NewUnavailableAutoclosureService("case auto-closure is not enabled on this entity-service: AUTOCLOSURE_SYSTEM_USER_EMAIL is not set")
 	case db == nil || cfg.DataSource == config.DataSourceServiceNow:
 		autoclosureSvc = service.NewUnavailableAutoclosureService("case auto-closure needs the Postgres case tables: DATA_SOURCE must be postgres or postgres-servicenow-dual-write")
-		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure needs DATA_SOURCE=postgres or postgres-servicenow-dual-write; it is not enabled",
+		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure needs a Postgres data source; it is not enabled",
 			"dataSource", string(cfg.DataSource))
 	default:
+		autoclosureCaseSvc := service.NewCaseServiceWithSNWriteback(caseRepo, userRepo, eventPublisher, accessSvc, projectContactRepo,
+			nil, nil, slaEngineSvc, cfg.CSEngineerRole)
 		autoclosureSvc = service.NewAutoclosureService(
 			repository.NewAutoclosureRepository(repository.NewScoped(db)),
-			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
+			autoclosureCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
 		// A case closed for inactivity is queued for the customer's own
 		// verification (the Pending Verification feature) where the project
 		// has that turned on.
