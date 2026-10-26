@@ -57,7 +57,7 @@ export function useAllWidgetCases({
     // Same leading slots as `useWidgetData`'s key, so `invalidateWidgetQueries`
     // refreshes this too.
     queryKey: [ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA, widgetId, resourceType, "all", filters],
-    queryFn: async (): Promise<AllWidgetCases> => {
+    queryFn: async ({ signal }): Promise<AllWidgetCases> => {
       if (!config) throw new Error(`Unsupported widget resourceType: ${resourceType}`);
       const items: Record<string, unknown>[] = [];
       let total = 0;
@@ -65,6 +65,7 @@ export function useAllWidgetCases({
         const res = await api.post<Record<string, unknown>, Record<string, unknown>>(
           config.searchEndpoint,
           { filters, pagination: { offset: items.length, limit: BE_MAX_PAGE_LIMIT } },
+          { signal },
         );
         total = typeof res.total === "number" ? res.total : 0;
         const raw = res[config.itemsKey];

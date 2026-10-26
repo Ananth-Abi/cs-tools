@@ -1008,6 +1008,7 @@ describe("DashboardWidgetPreviewPage — grouped by account", () => {
     expect(postMock).toHaveBeenCalledWith(
       "/cases/search",
       { filters: { filters }, pagination: { offset: 0, limit: 50 } },
+      { signal: expect.any(AbortSignal) },
     );
     expect(screen.queryByRole("combobox", { name: "Severity" })).not.toBeInTheDocument();
   });
