@@ -224,6 +224,27 @@ builds on it and updates it after a successful PATCH.
 covers both orders. As with `alreadyClosed`, don't fix this with a live
 re-fetch: the backend isn't read-after-write consistent.
 
+**A renewal resets a track's saved state to `open`** (`resetToOpen`,
+`sweep.go`). Legacy recomputed each track's `event_type` from its date on
+every run and saved it, so a date more than 90 days away saved `open` and
+the next term's reminders started over. This port only wrote when a notice
+fired, so a project renewed after its 30-day reminder kept
+`30_days_notice` and silently skipped its next 90, 60 and 30-day reminders.
+Now, when a track doesn't fire and has a notice recorded, its section is
+saved as `{"event_type":"open"}` if:
+
+- end date: the end date is more than 90 days away;
+- invoice: there is no due invoice (paid), the account is a Partner without
+  a primary partner, or the suspend date is more than 90 days away.
+
+Only a dimension that is still `Open` is reset. A suspended project keeps
+its record until someone reopens it (CSM closure state and Salesforce
+State), which stays manual; once reopened, the next run resets the record.
+This also keeps the ServiceNow mirror harmless: an `open` section never
+reaches a project that is still suspended. A failed invoice lookup is not
+"no due invoice" and never resets. The reset sends no email, writes nothing
+in a dry run, and logs `state reset to open`. Tests: `renewal_test.go`.
+
 ## End-date suspension writes "Closed", invoice suspension "Suspended"
 
 `suspend` (`sweep.go`) writes `endDateClosureState: "Closed"`; `suspendInvoice`
