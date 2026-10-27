@@ -289,15 +289,17 @@ func main() {
 	}
 
 	// Rota reminders: emails to the people rostered on a rotation shift in the
-	// Team Schedule. *** OFF UNLESS ROTA_REMINDERS_ENABLED=true. *** They
-	// email real staff from the real rota, so an environment that holds the
-	// rota but must not mail people turns them on only with
-	// ROTA_REMINDER_REDIRECT_TO set. Registered only when enabled, like
-	// cloud_status_webhooks, so the ledger shows no run for a task that is off.
-	rotaRemindersEnabled := envBool("ROTA_REMINDERS_ENABLED", false)
+	// Team Schedule. They are turned on and off only on the Team Schedule's
+	// Rota Access tab ("CRE rota reminders"): nothing in this component's
+	// configuration switches them on, and a family that has never saved the
+	// card gets no scheduled reminder (rotareminder.withSettings). The tasks
+	// are registered whenever there is an email service to send through, so
+	// Send now and "Send a test to me" work without a redeploy; with no
+	// EMAIL_BASE_URL nothing could be sent and they are left out.
+	rotaRemindersAvailable := strings.TrimSpace(os.Getenv("EMAIL_BASE_URL")) != ""
 	var teamScheduleClient *teamschedule.Client
 	rotaZone := time.UTC
-	if rotaRemindersEnabled {
+	if rotaRemindersAvailable {
 		teamScheduleClient, err = teamschedule.NewClient(teamschedule.Config{
 			BaseURL:      entityServiceBaseURL,
 			TokenURL:     oauthTokenURL,
@@ -314,10 +316,8 @@ func main() {
 			slog.Error("ROTA_REMINDER_TIME_ZONE is not a known time zone", "err", err)
 			os.Exit(1)
 		}
-		if u := os.Getenv("ROTA_REMINDER_SCHEDULE_URL"); u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
-			slog.Error("ROTA_REMINDER_SCHEDULE_URL must be an http(s) URL", "value", u)
-			os.Exit(1)
-		}
+	} else {
+		slog.Info("rota reminders are not registered: EMAIL_BASE_URL is not set, so no reminder could be sent")
 	}
 
 	// Global kill switch for every failure alert email — see
@@ -758,7 +758,7 @@ func main() {
 	//     summary again, the invitations as updates, and cancellations.
 	// A task's SUB_CRON_RECIPIENTS to/cc get its failure alerts; they are
 	// copied on its emails only with ROTA_REMINDER_COPY_TASK_RECIPIENTS=true.
-	if rotaRemindersEnabled {
+	if rotaRemindersAvailable {
 		family := envString("ROTA_REMINDER_FAMILY", "CRE")
 		copyTaskRecipients := envBool("ROTA_REMINDER_COPY_TASK_RECIPIENTS", false)
 		// Invitations need an organizer: the address the emails come from.
@@ -879,12 +879,6 @@ func main() {
 	// just the standing ALERT_RECIPIENTS audience. Skipped entirely when
 	// ALERTS_ENABLED=false — no email will ever be sent in that case, so an
 	// unset EMAIL_BASE_URL isn't a misconfiguration.
-	// Rota reminders always have recipients (the people on the shift), so
-	// turning them on with email unconfigured is the same misconfiguration.
-	if alertsEnabled && emailBaseURL == "" && rotaRemindersEnabled {
-		slog.Error("ROTA_REMINDERS_ENABLED is true but EMAIL_BASE_URL is not set; refusing to start since no reminder could be sent")
-		os.Exit(1)
-	}
 	// The product regression reports keep their audience out of task.To (see
 	// their registration above), so it is checked here by name instead.
 	if alertsEnabled && emailBaseURL == "" && (len(alertRecipients) > 0 || len(tasksWithRecipients) > 0 || len(regressionTasksWithRecipients) > 0) {
