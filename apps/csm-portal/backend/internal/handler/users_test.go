@@ -1403,6 +1403,13 @@ func TestGrantUserRoles(t *testing.T) {
 		if len(resp.Granted) != 0 || len(resp.Failed) != 1 {
 			t.Errorf("response = %+v, want zero granted and one failed", resp)
 		}
+		// Unmarshaling "granted":null into []string also gives len 0, so the
+		// assertion above can't tell a correct empty array apart from the
+		// schema-breaking null json.Marshal produces for a nil slice -- check
+		// the raw wire bytes directly.
+		if strings.Contains(w.Body.String(), `"granted":null`) {
+			t.Errorf("response body = %s, want \"granted\":[] (a required array), not null", w.Body.String())
+		}
 	})
 
 	t.Run("reports 207 and still attempts every role on a partial failure", func(t *testing.T) {

@@ -926,7 +926,14 @@ func (h *UsersHandler) GrantUserRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var granted, failed []string
+	// granted starts as a non-nil empty slice (not var granted []string) so
+	// json.Marshal writes "granted":[] rather than "granted":null on a total
+	// failure -- openapi.yaml declares it a required array with no "nullable",
+	// and a client that iterates it on a 502 would otherwise get null. failed
+	// stays nil on purpose: its own omitempty tag then drops it entirely on a
+	// full success, matching the schema's "omitted on full success" contract.
+	granted := []string{}
+	var failed []string
 	for _, key := range req.Roles {
 		if err := h.scim.AddRoleMembers(r.Context(), roleIDs[key], []string{targetUser.Email}); err != nil {
 			slog.ErrorContext(r.Context(), "GrantUserRoles: scim AddRoleMembers failed", "userID", user.UserID, "targetID", id, "role", key, "err", err)
