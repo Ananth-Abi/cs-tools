@@ -1206,8 +1206,10 @@ func TestScheduleIntegration_CreateAbsenceKindJoinsTheEndOfItsBucket(t *testing.
 	}, nil, schedLeadEmail); !errors.As(err, &conflict) {
 		t.Fatalf("the same label again: want ConflictError, got %v", err)
 	}
+	// Annual/Casual leave reads AL/CL since migration 0249; the clash is
+	// case-insensitive, so the lower-case spelling must still be refused.
 	if _, err := repo.CreateAbsenceKind(ctx, "SOMETHING_ELSE", domain.CreateScheduleAbsenceKindRequest{
-		ShortCode: "al", Label: "Something else", Bucket: "LEAVE", ColourToken: "AL",
+		ShortCode: "al/cl", Label: "Something else", Bucket: "LEAVE", ColourToken: "AL",
 	}, nil, schedLeadEmail); !errors.As(err, &conflict) {
 		t.Fatalf("annual leave's short code: want ConflictError, got %v", err)
 	}
