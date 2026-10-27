@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
@@ -62,6 +63,15 @@ func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, se
 	return audiences
 }
 
+// caseSRERoomCardBudget bounds the whole SRE room step, every room together.
+// The handler waits for the step before it releases the record's keys, and a
+// Kafka partition takes its next record only after that, which may be another
+// case's CRE event. Without a bound, a hanging webhook would hold the
+// partition for the Chat client's 10 s timeout per room (about 30 s for three
+// teamless rooms). Normally a room takes about a second. A variable so a test
+// can shorten it.
+var caseSRERoomCardBudget = 6 * time.Second
+
 // startCaseSRERoomCard posts an S0 case's card to its SRE rooms on its own
 // goroutine and returns a channel that closes when it is done. It runs beside
 // the rest of the record so it delays nothing there (the SLA clocks, emails
@@ -71,11 +81,14 @@ func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, se
 //
 // The rooms are posted one after another, not at once: two rooms can share a
 // Chat space (the teamless rooms often do), and Chat answers a burst to one
-// space with 429.
+// space with 429. The whole step has caseSRERoomCardBudget; a room not reached
+// by then is left out and logged, like any other failed room.
 func (d *Dispatcher) startCaseSRERoomCard(ctx context.Context, t events.Type, caseID string, rooms []string, card notifications.IncidentCreatedAlert) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		ctx, cancel := context.WithTimeout(ctx, caseSRERoomCardBudget)
+		defer cancel()
 		var errs []error
 		for _, room := range rooms {
 			if err := d.googleChat.SendIncidentCreatedAlert(ctx, room, card); err != nil {
