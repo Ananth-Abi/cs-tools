@@ -9699,7 +9699,9 @@ requester's email and recorded nothing.
   through `PATCH /deployments/{id}`, whose detail-vs-deactivate rules and ServiceNow write-back do not
   apply to it. `updated_by` is the x-user-id-token's email when present, else `internal-client`.
 - Entity-service only knows internal vs customer callers; restricting it to a staff group is the
-  portal backend's job.
+  portal backend's job. The CSM portal does this: its backend exposes the same
+  `PUT /deployments/{id}/air-gapped` behind `PermWrite` (cs_engineer, admin), and the project's
+  Deployments tab sets or clears it from a deployment's action menu.
 - Read back as `airGapped` on `POST /deployments/search` results (`DeploymentView.AirGapped`, null
   under `DATA_SOURCE=servicenow`), which is where PCS reads it from.
 
