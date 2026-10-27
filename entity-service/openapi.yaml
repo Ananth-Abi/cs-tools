@@ -4012,8 +4012,6 @@ paths:
             writes, errorCode salesforce_sync_pending means the invitation's Salesforce write
             is still in progress (try again later) and, for a role change, salesforce_sync_failed
             means it failed or was never handed over (remove the contact and invite again).
-            Removing a contact whose deferred write failed is allowed: it runs locally and the
-            pending write is cancelled.
           content:
             application/json:
               schema:
@@ -4089,10 +4087,9 @@ paths:
             yet (a generic "please contact WSO2 support" message; the missing id is logged,
             not returned). Nothing is written to either system. With deferred Salesforce
             writes, errorCode salesforce_sync_pending means the invitation's Salesforce write
-            is still in progress (try again later) and, for a role change, salesforce_sync_failed
-            means it failed or was never handed over (remove the contact and invite again).
-            Removing a contact whose deferred write failed is allowed: it runs locally and the
-            pending write is cancelled.
+            is still in progress (try again later). A contact whose deferred write failed or
+            was never handed over is NOT refused: it is deactivated locally, the pending write
+            is cancelled, and this operation returns 204.
           content:
             application/json:
               schema:
@@ -19883,7 +19880,8 @@ components:
           description: >
             Omitted for a membership that is in Salesforce. PENDING while the invitation's
             Salesforce write is still owed (it was deferred because sales-entity-service was
-            unavailable); FAILED when that deferred write gave up. See ProjectMembership.salesforceSync.
+            unavailable and the command was handed over); FAILED when that deferred write gave
+            up or the command was never handed over. See ProjectMembership.salesforceSync.
 
     CreateProjectMembershipRequest:
       type: object
@@ -20015,9 +20013,11 @@ components:
             sales-entity-service was unavailable (SALESFORCE_DEFERRED_WRITES_ENABLED). PENDING:
             the membership exists in CSM and is queued for Salesforce; the invitation e-mail is
             sent once that write lands. FAILED: the deferred write gave up (Salesforce refused it
-            or every retry was exhausted) and needs attention. Role changes, deactivation and
+            or every retry was exhausted, or the command was never handed to sales-entity-service
+            because the publish failed) and needs attention. Role changes, deactivation and
             resend answer 409 with errorCode salesforce_sync_pending while PENDING; once FAILED,
-            role changes and resend answer 409 salesforce_sync_failed and removal runs locally.
+            role changes and resend answer 409 salesforce_sync_failed and removal runs locally
+            (DELETE returns 204 and cancels the pending write).
         userId:
           type: string
           format: uuid

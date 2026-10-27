@@ -1923,7 +1923,10 @@ this service keeps the decision, the ledger and both CSM transactions.
    half to undo), closing the request as CANCELLED so nothing picks it up. A
    row with no id and no request keeps the generic missing-id refusal.
    `salesforce_write_request.retryable` tells a FAILED row's two causes apart
-   (retries exhausted vs. refused). The contact reads
+   (retries exhausted vs. refused). A PENDING request that was never
+   published (the command publish failed) reads as FAILED everywhere -- the
+   contact lists, the refusals and the local removal -- since nothing will
+   consume it without a re-publish. The contact reads
    (`POST /projects/{id}/contacts/search`, `GET …/{contactId}`) carry
    `salesforceSync: PENDING | FAILED` from the latest request row, read
    best-effort through `WithProjectContactSalesforceSync`.

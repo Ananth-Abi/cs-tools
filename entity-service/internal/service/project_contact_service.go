@@ -50,8 +50,10 @@ func WithProjectContactSalesforceSync(svc ProjectContactService, writes reposito
 }
 
 // attachSalesforceSync fills SalesforceSync for the contacts that have a
-// deferred write recorded. Best-effort: a ledger read failure is logged and
-// the list is served without the field rather than not at all.
+// deferred write recorded: PENDING for a request Sales Entity is working on,
+// FAILED for one that gave up or was never handed over (the same reading the
+// writes use). Best-effort: a ledger read failure is logged and the list is
+// served without the field rather than not at all.
 func (s *projectContactService) attachSalesforceSync(ctx context.Context, rows []repository.ProjectContactRow, contacts []domain.ProjectContact) {
 	if s.writes == nil || len(rows) == 0 {
 		return

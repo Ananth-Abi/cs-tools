@@ -140,9 +140,14 @@ func (r *salesforceWriteRequestRepo) SyncStatusForProjectContacts(ctx context.Co
 		return out, nil
 	}
 	// The latest request per membership row decides: an open one is PENDING,
-	// a failed one FAILED, a succeeded one says nothing (omitted).
+	// a failed one FAILED, a succeeded one says nothing (omitted). A PENDING
+	// request that was never published (the command publish failed) reads
+	// as FAILED: nothing will consume it, and the writes already treat it
+	// that way (see service.deferredWrite), so the list must not say
+	// "still syncing" for a row the actions say to remove and re-invite.
 	rows, err := r.db.Query(ctx, `
-		SELECT DISTINCT ON (project_contact_id) project_contact_id, status
+		SELECT DISTINCT ON (project_contact_id) project_contact_id,
+		       CASE WHEN status = 'PENDING' AND published_on IS NULL THEN 'FAILED' ELSE status END
 		FROM salesforce_write_request
 		WHERE project_contact_id = ANY($1::uuid[])
 		ORDER BY project_contact_id, created_on DESC`, projectContactIDs)
