@@ -236,6 +236,10 @@ const (
 	SkillOutcomeNameTaken
 	// SkillOutcomeLevelsInUse: the level scale cannot change while people hold levels of it.
 	SkillOutcomeLevelsInUse
+	// SkillOutcomeLevelNotInScale: when the write took its lock, the level was not
+	// on the skill's scale. The service checked it just before, so the scale was
+	// changed in between.
+	SkillOutcomeLevelNotInScale
 )
 
 // SkillWriteResult is a skill write's outcome and, for a profile write, the

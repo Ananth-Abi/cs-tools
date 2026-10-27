@@ -451,3 +451,61 @@ func TestCatalogueReadsAreForInternalCallersOnly(t *testing.T) {
 	_, err = svc.SearchSkills(ctx, domain.SearchSkillsRequest{Pagination: domain.Pagination{Limit: 500}})
 	wantInvalid(t, err, "a page over the cap")
 }
+
+// A client may send a UUID in upper case. What reaches the repository is the
+// lower-case form the database returns, so a comparison against the stored
+// scale (UpdateSkill's "is it changing?") and the per-skill lock key agree.
+func TestCatalogueWritesStoreIdsInLowerCase(t *testing.T) {
+	repo := newFakeSkillRepo()
+	svc := newSkillSvc(repo)
+	admin := asCaller(skEmail, "cs_admin")
+	upper := strings.ToUpper(skScaleA)
+	upperCat := strings.ToUpper(skCategory)
+
+	if _, err := svc.CreateSkill(admin, domain.CreateSkillRequest{Name: "Go", LevelTypeID: upper, CategoryIDs: []string{upperCat}}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if repo.lastCreate.LevelTypeID != skScaleA {
+		t.Fatalf("create stored levelTypeId %q, want %q", repo.lastCreate.LevelTypeID, skScaleA)
+	}
+	if got := repo.lastCreate.CategoryIDs; len(got) != 1 || got[0] != skCategory {
+		t.Fatalf("create stored categoryIds %v", got)
+	}
+
+	req := domain.UpdateSkillRequest{LevelTypeID: &upper}
+	if _, err := svc.UpdateSkill(admin, strings.ToUpper(skSkillID), req); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if repo.lastUpdate.LevelTypeID == nil || *repo.lastUpdate.LevelTypeID != skScaleA {
+		t.Fatalf("update stored levelTypeId %v, want %q", repo.lastUpdate.LevelTypeID, skScaleA)
+	}
+	if want := "update:" + skSkillID + ":"; !strings.HasPrefix(repo.writes[len(repo.writes)-1], want) {
+		t.Fatalf("update id reached the repository as %q, want it lower-case", repo.writes[len(repo.writes)-1])
+	}
+
+	// Removal keys a lock on the skill id, so it must be the canonical text.
+	if err := svc.RemoveMySkill(asCaller(skEmail), strings.ToUpper(skSkillID)); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if want := "remove:" + skUserID + ":" + skSkillID + ":"; !strings.HasPrefix(repo.writes[len(repo.writes)-1], want) {
+		t.Fatalf("remove reached the repository as %q", repo.writes[len(repo.writes)-1])
+	}
+}
+
+// The scale can be swapped between the service's check and the write; the
+// repository then refuses, and the caller gets a 409 (not-found: 404).
+func TestOwnProfileMapsAScaleSwappedUnderTheWrite(t *testing.T) {
+	repo := newFakeSkillRepo()
+	svc := newSkillSvc(repo)
+	ctx := asCaller(skEmail)
+
+	repo.addOutcome = domain.SkillOutcomeLevelNotInScale
+	_, err := svc.AddMySkill(ctx, domain.AddMySkillRequest{SkillID: skSkillID, LevelID: skLevelA1})
+	wantConflictErr(t, err, "add after the scale was swapped")
+	repo.setOutcome = domain.SkillOutcomeLevelNotInScale
+	_, err = svc.SetMySkillLevel(ctx, skSkillID, domain.SetMySkillLevelRequest{LevelID: skLevelA1})
+	wantConflictErr(t, err, "change after the scale was swapped")
+	repo.setOutcome = domain.SkillOutcomeNotFound
+	_, err = svc.SetMySkillLevel(ctx, skSkillID, domain.SetMySkillLevelRequest{LevelID: skLevelA1})
+	wantNotFoundErr(t, err, "change of a skill deleted under the write")
+}

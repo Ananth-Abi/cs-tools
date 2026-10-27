@@ -30,6 +30,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -327,6 +328,134 @@ func TestSkillIntegration_ConcurrentAddsMakeOneRow(t *testing.T) {
 	}
 	if n := len(skHistory(t, pool, skJane, skGo)); n != 1 {
 		t.Fatalf("history rows = %d, want 1", n)
+	}
+}
+
+// swapScaleUnderWrite plays the admin's scale change racing a profile write,
+// with the interleaving fixed rather than left to timing: a transaction takes
+// the skill row's lock and moves the skill to scale B (as UpdateSkill does when
+// nobody holds a level yet), then the profile write starts and must queue behind
+// it, and only then does the admin commit. The write's own pre-check, done
+// earlier against scale A, is not part of this: the repository has to catch the
+// swap by itself.
+func swapScaleUnderWrite(t *testing.T, pool *pgxpool.Pool, write func() (domain.SkillWriteResult, error)) domain.SkillWriteResult {
+	t.Helper()
+	ctx := context.Background()
+	admin, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = admin.Rollback(ctx) }()
+	if _, err := admin.Exec(ctx, `SELECT 1 FROM skill WHERE id = $1 FOR UPDATE`, skGo); err != nil {
+		t.Fatalf("lock skill: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE skill SET level_type_id = $2 WHERE id = $1`, skGo, skScaleB); err != nil {
+		t.Fatalf("swap scale: %v", err)
+	}
+	type result struct {
+		res domain.SkillWriteResult
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := write()
+		done <- result{res, err}
+	}()
+	// The write must be waiting on the skill row, not finished.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if skCount(t, pool, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%FROM skill WHERE id%FOR SHARE%'`) > 0 {
+			break
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("the write finished (%+v, %v) without waiting for the skill row lock", r.res, r.err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the write never waited on the skill row lock")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := admin.Commit(ctx); err != nil {
+		t.Fatalf("commit swap: %v", err)
+	}
+	r := <-done
+	if r.err != nil {
+		t.Fatalf("write: %v", r.err)
+	}
+	return r.res
+}
+
+func TestSkillIntegration_AddRacingAScaleChangeLeavesNoLevelOffTheScale(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	res := swapScaleUnderWrite(t, pool, func() (domain.SkillWriteResult, error) {
+		return repo.AddUserSkill(context.Background(), skJane, skGo, skLvlA20, skActor)
+	})
+	if res.Outcome != domain.SkillOutcomeLevelNotInScale {
+		t.Fatalf("outcome = %v, want LevelNotInScale", res.Outcome)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM user_skill WHERE user_id = $1 AND skill_id = $2`, skJane, skGo); n != 0 {
+		t.Fatalf("user_skill rows = %d, want 0", n)
+	}
+	if n := len(skHistory(t, pool, skJane, skGo)); n != 0 {
+		t.Fatalf("history rows = %d, want 0", n)
+	}
+	// No user_skill level may sit outside its skill's scale.
+	if n := skCount(t, pool, `
+		SELECT count(*) FROM user_skill us
+		  JOIN skill s ON s.id = us.skill_id
+		  JOIN skill_level sl ON sl.id = us.skill_level_id
+		 WHERE us.skill_id = $1 AND sl.level_type_id <> s.level_type_id`, skGo); n != 0 {
+		t.Fatalf("%d levels off the scale", n)
+	}
+}
+
+func TestSkillIntegration_ReviveRacingAScaleChangeLeavesTheInactiveRowAlone(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	skExec(t, pool, `INSERT INTO user_skill (created_on, updated_on, user_id, skill_id, skill_level_id, active, inherited) VALUES (NOW(), NOW(), $1, $2, $3, false, false)`, skJane, skGo, skLvlA20)
+	res := swapScaleUnderWrite(t, pool, func() (domain.SkillWriteResult, error) {
+		return repo.AddUserSkill(context.Background(), skJane, skGo, skLvlA50, skActor)
+	})
+	if res.Outcome != domain.SkillOutcomeLevelNotInScale {
+		t.Fatalf("outcome = %v, want LevelNotInScale", res.Outcome)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM user_skill WHERE user_id = $1 AND skill_id = $2 AND NOT active AND skill_level_id = $3`, skJane, skGo, skLvlA20); n != 1 {
+		t.Fatalf("the inactive row was changed")
+	}
+}
+
+func TestSkillIntegration_SetLevelRacingAScaleChangeKeepsTheHeldLevel(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	skExec(t, pool, `INSERT INTO user_skill (created_on, updated_on, user_id, skill_id, skill_level_id, active, inherited) VALUES (NOW(), NOW(), $1, $2, $3, true, false)`, skJane, skGo, skLvlA20)
+	res := swapScaleUnderWrite(t, pool, func() (domain.SkillWriteResult, error) {
+		return repo.SetUserSkillLevel(context.Background(), skJane, skGo, skLvlA50, skActor)
+	})
+	if res.Outcome != domain.SkillOutcomeLevelNotInScale {
+		t.Fatalf("outcome = %v, want LevelNotInScale", res.Outcome)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM user_skill WHERE user_id = $1 AND skill_id = $2 AND skill_level_id = $3`, skJane, skGo, skLvlA20); n != 1 {
+		t.Fatal("the held level was changed")
+	}
+	if n := len(skHistory(t, pool, skJane, skGo)); n != 0 {
+		t.Fatalf("history rows = %d, want 0", n)
+	}
+}
+
+// The other order: a write in flight holds the skill row, so a scale change
+// waits for it and then finds the level it wrote.
+func TestSkillIntegration_ScaleChangeAfterAnAddIsRefusedAsInUse(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	ctx := context.Background()
+	if res, err := repo.AddUserSkill(ctx, skJane, skGo, skLvlA20, skActor); err != nil || res.Outcome != domain.SkillOutcomeDone {
+		t.Fatalf("add = %+v, %v", res, err)
+	}
+	upd, err := repo.UpdateSkill(ctx, skGo, domain.UpdateSkillRequest{LevelTypeID: ptr(skScaleB)}, skActor)
+	if err != nil || upd.Outcome != domain.SkillOutcomeLevelsInUse {
+		t.Fatalf("UpdateSkill = %+v, %v", upd, err)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM skill WHERE id = $1 AND level_type_id = $2`, skGo, skScaleA); n != 1 {
+		t.Fatal("the scale was changed")
 	}
 }
 

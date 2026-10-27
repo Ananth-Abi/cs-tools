@@ -312,6 +312,8 @@ func (s *skillService) AddMySkill(ctx context.Context, req domain.AddMySkillRequ
 		return domain.UserSkill{}, &apierror.ConflictError{Msg: "this skill is already on your profile: change its level instead"}
 	case domain.SkillOutcomeInherited:
 		return domain.UserSkill{}, &apierror.ConflictError{Msg: inheritedRefusal}
+	case domain.SkillOutcomeLevelNotInScale, domain.SkillOutcomeNotFound:
+		return domain.UserSkill{}, levelScaleRaceError(res.Outcome)
 	}
 	return rowOrError(res)
 }
@@ -346,8 +348,21 @@ func (s *skillService) SetMySkillLevel(ctx context.Context, skillID string, req 
 		return domain.UserSkill{}, &apierror.NotFoundError{Msg: "this skill is not on your profile"}
 	case domain.SkillOutcomeInherited:
 		return domain.UserSkill{}, &apierror.ConflictError{Msg: inheritedRefusal}
+	case domain.SkillOutcomeLevelNotInScale, domain.SkillOutcomeNotFound:
+		return domain.UserSkill{}, levelScaleRaceError(res.Outcome)
 	}
 	return rowOrError(res)
+}
+
+// levelScaleRaceError answers the refusals only the write's own transaction can
+// find, because the skill changed after the request was checked: its scale was
+// swapped (409: the request was valid, the state it assumed is gone, and asking
+// again with a level of the new scale can succeed), or the skill is gone (404).
+func levelScaleRaceError(o domain.SkillOutcome) error {
+	if o == domain.SkillOutcomeNotFound {
+		return &apierror.NotFoundError{Msg: "skill not found"}
+	}
+	return &apierror.ConflictError{Msg: "this skill's level scale changed while the request was running: choose a level of its current scale"}
 }
 
 // rowOrError is the profile row a successful write returns.
@@ -367,6 +382,7 @@ func (s *skillService) RemoveMySkill(ctx context.Context, skillID string) error 
 	if err := validateUUIDs("skillId", []string{skillID}); err != nil {
 		return err
 	}
+	skillID = strings.ToLower(skillID)
 	res, err := s.repo.RemoveUserSkill(ctx, userID, skillID, actor)
 	if err != nil {
 		return err
@@ -543,6 +559,7 @@ func (s *skillService) CreateSkill(ctx context.Context, req domain.CreateSkillRe
 	if err := s.requireLevelType(ctx, req.LevelTypeID); err != nil {
 		return domain.Skill{}, err
 	}
+	req.LevelTypeID = strings.ToLower(req.LevelTypeID)
 	if req.CategoryIDs, err = s.cleanCategoryIDs(ctx, req.CategoryIDs); err != nil {
 		return domain.Skill{}, err
 	}
@@ -567,6 +584,7 @@ func (s *skillService) UpdateSkill(ctx context.Context, id string, req domain.Up
 	if err := validateUUIDs("id", []string{id}); err != nil {
 		return domain.Skill{}, err
 	}
+	id = strings.ToLower(id)
 	if req.Name == nil && req.Description == nil && req.Keywords == nil && req.Active == nil &&
 		req.LevelTypeID == nil && req.CategoryIDs == nil {
 		return domain.Skill{}, &apierror.ValidationError{Msg: "give at least one field to change"}
@@ -588,6 +606,8 @@ func (s *skillService) UpdateSkill(ctx context.Context, id string, req domain.Up
 		if err := s.requireLevelType(ctx, *req.LevelTypeID); err != nil {
 			return domain.Skill{}, err
 		}
+		lt := strings.ToLower(*req.LevelTypeID)
+		req.LevelTypeID = &lt
 	}
 	if req.CategoryIDs != nil {
 		ids, err := s.cleanCategoryIDs(ctx, *req.CategoryIDs)
