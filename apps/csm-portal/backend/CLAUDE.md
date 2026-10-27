@@ -275,6 +275,15 @@ exactly which roles were granted and which weren't (`grantUserRolesResponse{Gran
 whatever email entity-service's own `UserDetail.Email` returns — a caller cannot grant a role to an
 email of their own choosing that doesn't match the `{id}` they named.
 
+**Refused with a 400 when the target isn't a `@wso2.com` account** (`isWso2Email`,
+`internal/handler/user_external_account.go`) — a portal role only ever resolves back to anything on
+the read side for a wso2.com account (`withPortalRoles`' own identical gate), so granting one to any
+other target would silently add them to a SCIM role in the wrong org with no way for this portal to
+ever display or act on it again; a mistaken grant like that would have looked like it worked (a 200
+from SCIM) while doing nothing anyone could observe. `CreateUser`'s own `grantRoles` field got the
+identical guard at the same time, for the same reason — it had none before either, despite sharing
+the exact same `GrantableRole`/SCIM mechanism.
+
 ## Provisioning a "user" row on demand (`ensureUserProvisioned`)
 
 A `worknote_creator`- or `escalator`-only caller reaches `POST /cases/{id}/comments`

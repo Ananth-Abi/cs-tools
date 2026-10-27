@@ -746,6 +746,16 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "creating an external-type user is not available at this time")
 		return
 	}
+	// A portal (Asgardeo) role only ever resolves for a wso2.com account (see
+	// withPortalRoles' own isWso2Email gate on the read side) -- granting one
+	// to a non-wso2.com target via grantRoles would add them to a SCIM role in
+	// the wrong org with no way for this portal to ever display or act on it
+	// again. Checked up front, before anything is created, so the mistake is
+	// caught with a clear 400 instead of a silent no-op grant.
+	if len(req.GrantRoles) > 0 && !isWso2Email(req.Email) {
+		writeError(w, http.StatusBadRequest, "grantRoles can only be granted to a "+wso2EmailDomain+" account")
+		return
+	}
 
 	// Resolved up front, before anything is created, so an unknown grantRoles
 	// key fails fast with a 400 rather than after the entity service user
@@ -859,6 +869,12 @@ type grantUserRolesResponse struct {
 // own grantRoles field sits behind, since granting a role is exactly as
 // sensitive whether it happens at creation time or afterward.
 //
+// Refused with a 400 when the target's email isn't a wso2.com address (see
+// the isWso2Email check below) -- same guard CreateUser's own grantRoles
+// field has, for the same reason: a portal role is meaningless for an
+// account outside the wso2.com SCIM org, so granting one there would be a
+// silent no-op the admin would have no way to notice.
+//
 // Unlike CreateUser's own grant step, a SCIM failure here is never swallowed
 // as best-effort: granting the role is this endpoint's entire purpose, so a
 // caller that asked for it must be told whether it actually happened rather
@@ -923,6 +939,16 @@ func (h *UsersHandler) GrantUserRoles(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(target, &targetUser); err != nil || targetUser.Email == "" {
 		slog.ErrorContext(r.Context(), "GrantUserRoles: parse target user failed", "userID", user.UserID, "targetID", id, "err", err)
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		return
+	}
+
+	// Same guard as CreateUser's own grantRoles field: a portal role only
+	// ever resolves for a wso2.com account (withPortalRoles' isWso2Email
+	// gate), so granting one to a non-wso2.com target would add them to a
+	// SCIM role in the wrong org with no way for this portal to ever display
+	// or act on it again.
+	if !isWso2Email(targetUser.Email) {
+		writeError(w, http.StatusBadRequest, "portal roles can only be granted to a "+wso2EmailDomain+" account")
 		return
 	}
 

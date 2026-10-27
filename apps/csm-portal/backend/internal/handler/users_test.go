@@ -1112,6 +1112,52 @@ func TestCreateUser(t *testing.T) {
 		})
 	})
 
+	t.Run("rejects grantRoles for a non-wso2.com email, before reaching upstream", func(t *testing.T) {
+		called := false
+		entityClient := &mockEntityUserClient{
+			createUserFn: func(context.Context, []byte) ([]byte, error) {
+				called = true
+				return []byte(`{}`), nil
+			},
+		}
+		h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t), false, nil)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users",
+			strings.NewReader(`{"firstName":"Jane","email":"jane@example.com","grantRoles":["cs_engineer"]}`)))
+		w := httptest.NewRecorder()
+		h.CreateUser(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		if called {
+			t.Fatal("entity service must not be called when grantRoles is requested for a non-wso2.com email")
+		}
+	})
+
+	t.Run("allows grantRoles for a wso2.com email", func(t *testing.T) {
+		var grantedRoleID string
+		var grantedEmails []string
+		entityClient := &mockEntityUserClient{
+			createUserFn: func(context.Context, []byte) ([]byte, error) {
+				return []byte(`{"id":"u-1","email":"jane@wso2.com"}`), nil
+			},
+		}
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(_ context.Context, roleID string, emails []string) error {
+				grantedRoleID = roleID
+				grantedEmails = emails
+				return nil
+			},
+		}
+		h := NewUsersHandler(scimClient, entityClient, testDirectory(t), false, nil).
+			WithGrantableRoles([]GrantableRole{{Key: "cs_engineer", RoleID: "role-1"}})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users",
+			strings.NewReader(`{"firstName":"Jane","email":"jane@wso2.com","grantRoles":["cs_engineer"]}`)))
+		w := httptest.NewRecorder()
+		h.CreateUser(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if grantedRoleID != "role-1" || len(grantedEmails) != 1 || grantedEmails[0] != "jane@wso2.com" {
+			t.Errorf("AddRoleMembers called with roleID=%q emails=%v, want role-1 [jane@wso2.com]", grantedRoleID, grantedEmails)
+		}
+	})
+
 	t.Run("forwards the body unchanged and returns 201 with the upstream response", func(t *testing.T) {
 		const reqPayload = `{"firstName":"Jane","lastName":"Doe","email":"jane.doe@example.com","roles":["agent"]}`
 		var capturedBody []byte
@@ -1339,6 +1385,30 @@ func TestGrantUserRoles(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects a target whose email isn't a wso2.com address, before calling SCIM", func(t *testing.T) {
+		called := false
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(context.Context, string) ([]byte, error) {
+				return []byte(`{"id":"` + targetID + `","email":"jane@example.com"}`), nil
+			},
+		}
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(context.Context, string, []string) error {
+				called = true
+				return nil
+			},
+		}
+		h := newHandler(scimClient, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":["cs_engineer"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		if called {
+			t.Fatal("SCIM must not be called for a non-wso2.com target")
+		}
+	})
+
 	t.Run("grants every requested role and reports 200 on full success", func(t *testing.T) {
 		var grantedRoleIDs []string
 		entityClient := &mockEntityUserClient{
@@ -1346,13 +1416,13 @@ func TestGrantUserRoles(t *testing.T) {
 				if id != targetID {
 					t.Fatalf("GetUser called with id = %q, want %q", id, targetID)
 				}
-				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+				return []byte(`{"id":"`+targetID+`","email":"jane@wso2.com"}`), nil
 			},
 		}
 		scimClient := &mockSCIMClient{
 			addRoleMembersFn: func(_ context.Context, roleID string, emails []string) error {
-				if len(emails) != 1 || emails[0] != "jane@example.com" {
-					t.Fatalf("AddRoleMembers emails = %v, want [jane@example.com]", emails)
+				if len(emails) != 1 || emails[0] != "jane@wso2.com" {
+					t.Fatalf("AddRoleMembers emails = %v, want [jane@wso2.com]", emails)
 				}
 				grantedRoleIDs = append(grantedRoleIDs, roleID)
 				return nil
@@ -1381,7 +1451,7 @@ func TestGrantUserRoles(t *testing.T) {
 	t.Run("reports 502 when every role fails to grant", func(t *testing.T) {
 		entityClient := &mockEntityUserClient{
 			getUserFn: func(context.Context, string) ([]byte, error) {
-				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+				return []byte(`{"id":"`+targetID+`","email":"jane@wso2.com"}`), nil
 			},
 		}
 		scimClient := &mockSCIMClient{
@@ -1415,7 +1485,7 @@ func TestGrantUserRoles(t *testing.T) {
 	t.Run("reports 207 and still attempts every role on a partial failure", func(t *testing.T) {
 		entityClient := &mockEntityUserClient{
 			getUserFn: func(context.Context, string) ([]byte, error) {
-				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+				return []byte(`{"id":"`+targetID+`","email":"jane@wso2.com"}`), nil
 			},
 		}
 		var attempted []string
