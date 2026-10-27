@@ -170,6 +170,11 @@ describe("WeekTable: a rota admin editing the week", () => {
     { userId: "u-john", name: "John Roe", teamKey: "bravo" },
   ];
 
+  /** The value of the option named `name`, as a user picking it would send. */
+  function optionValue(select: HTMLElement, name: RegExp): string {
+    return (within(select).getByRole("option", { name }) as HTMLOptionElement).value;
+  }
+
   function editControls(over: Partial<WeekEditControls> = {}): WeekEditControls {
     return { people: PEOPLE, onAdd: vi.fn(), onRemove: vi.fn(), busy: false, ...over };
   }
@@ -191,7 +196,7 @@ describe("WeekTable: a rota admin editing the week", () => {
     const monday = screen.getByRole("combobox", { name: "Add someone to Evening 6-9pm on Mon 21" });
     // Jane is already on Monday's evening turn: only John is offered.
     expect(within(monday).queryByRole("option", { name: /Jane Doe/ })).not.toBeInTheDocument();
-    fireEvent.change(monday, { target: { value: "u-john" } });
+    fireEvent.change(monday, { target: { value: optionValue(monday, /John Roe/) } });
     expect(edit.onAdd).toHaveBeenCalledWith(
       { shiftCode: EVENING.code, tier: undefined, label: "Evening 6-9pm" },
       "2026-09-21",
@@ -200,6 +205,23 @@ describe("WeekTable: a rota admin editing the week", () => {
     // Tuesday is empty, so both are offered there.
     const tuesday = screen.getByRole("combobox", { name: "Add someone to Evening 6-9pm on Tue 22" });
     expect(within(tuesday).getAllByRole("option")).toHaveLength(3);
+  });
+
+  it("adds someone who is in two teams with the team of the option picked", () => {
+    const bothTeams = [
+      { userId: "u-jane", name: "Jane Doe", teamKey: "alpha" },
+      { userId: "u-jane", name: "Jane Doe", teamKey: "bravo" },
+    ];
+    const edit = editControls({ people: bothTeams });
+    renderWeek({ edit });
+    const tuesday = screen.getByRole("combobox", { name: "Add someone to Evening 6-9pm on Tue 22" });
+    const [first, second] = within(tuesday)
+      .getAllByRole("option", { name: /Jane Doe/ })
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(first).not.toBe(second);
+    fireEvent.change(tuesday, { target: { value: second } });
+    expect(edit.onAdd).toHaveBeenCalledTimes(1);
+    expect(edit.onAdd).toHaveBeenCalledWith(expect.anything(), "2026-09-22", bothTeams[1]);
   });
 
   it("takes someone off the turn they hold in that cell", () => {
@@ -233,7 +255,7 @@ describe("WeekTable: a rota admin editing the week", () => {
       edit,
     });
     const tue = screen.getByRole("combobox", { name: /Add someone to .* on Tue 22/ });
-    fireEvent.change(tue, { target: { value: "u-jane" } });
+    fireEvent.change(tue, { target: { value: optionValue(tue, /Jane Doe/) } });
     // The window carries its own tier, so none is sent with it.
     expect(edit.onAdd).toHaveBeenCalledWith(expect.objectContaining({ shiftCode: TZ1_L1.code, tier: undefined }), "2026-09-22", PEOPLE[0]);
   });

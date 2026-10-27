@@ -219,13 +219,15 @@ function WeekEditCell({
         value=""
         disabled={busy || sorted.length === 0}
         onChange={(e) => {
-          const person = sorted.find((p) => p.userId === e.target.value);
+          // Keyed by team as well as person: someone in two of the family's
+          // teams is offered once per team, and the option picked says which.
+          const person = sorted.find((p) => `${p.teamKey}|${p.userId}` === e.target.value);
           if (person) onAdd(turn, rotaDate, person);
         }}
       >
         <option value="">+ Add</option>
         {sorted.map((p) => (
-          <option key={`${p.teamKey}|${p.userId}`} value={p.userId}>
+          <option key={`${p.teamKey}|${p.userId}`} value={`${p.teamKey}|${p.userId}`}>
             {p.name} · {teamNameOf(p.teamKey)}
           </option>
         ))}
