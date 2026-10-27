@@ -240,6 +240,9 @@ const (
 	// on the skill's scale. The service checked it just before, so the scale was
 	// changed in between.
 	SkillOutcomeLevelNotInScale
+	// SkillOutcomeSkillInactive: when an add took its lock, the skill was inactive.
+	// The service checked it just before, so it was deactivated in between.
+	SkillOutcomeSkillInactive
 )
 
 // SkillWriteResult is a skill write's outcome and, for a profile write, the

@@ -340,6 +340,17 @@ func TestSkillIntegration_ConcurrentAddsMakeOneRow(t *testing.T) {
 // swap by itself.
 func swapScaleUnderWrite(t *testing.T, pool *pgxpool.Pool, write func() (domain.SkillWriteResult, error)) domain.SkillWriteResult {
 	t.Helper()
+	return changeSkillUnderWrite(t, pool, `UPDATE skill SET level_type_id = $2 WHERE id = $1`, skScaleB, write)
+}
+
+// deactivateUnderWrite is the same with the admin deactivating the skill.
+func deactivateUnderWrite(t *testing.T, pool *pgxpool.Pool, write func() (domain.SkillWriteResult, error)) domain.SkillWriteResult {
+	t.Helper()
+	return changeSkillUnderWrite(t, pool, `UPDATE skill SET active = false WHERE id = $1 AND $2::text IS NOT NULL`, skScaleB, write)
+}
+
+func changeSkillUnderWrite(t *testing.T, pool *pgxpool.Pool, change, arg string, write func() (domain.SkillWriteResult, error)) domain.SkillWriteResult {
+	t.Helper()
 	ctx := context.Background()
 	admin, err := pool.Begin(ctx)
 	if err != nil {
@@ -349,8 +360,8 @@ func swapScaleUnderWrite(t *testing.T, pool *pgxpool.Pool, write func() (domain.
 	if _, err := admin.Exec(ctx, `SELECT 1 FROM skill WHERE id = $1 FOR UPDATE`, skGo); err != nil {
 		t.Fatalf("lock skill: %v", err)
 	}
-	if _, err := admin.Exec(ctx, `UPDATE skill SET level_type_id = $2 WHERE id = $1`, skGo, skScaleB); err != nil {
-		t.Fatalf("swap scale: %v", err)
+	if _, err := admin.Exec(ctx, change, skGo, arg); err != nil {
+		t.Fatalf("change skill: %v", err)
 	}
 	type result struct {
 		res domain.SkillWriteResult
@@ -439,6 +450,49 @@ func TestSkillIntegration_SetLevelRacingAScaleChangeKeepsTheHeldLevel(t *testing
 	}
 	if n := len(skHistory(t, pool, skJane, skGo)); n != 0 {
 		t.Fatalf("history rows = %d, want 0", n)
+	}
+}
+
+func TestSkillIntegration_AddRacingADeactivationAddsNothing(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	res := deactivateUnderWrite(t, pool, func() (domain.SkillWriteResult, error) {
+		return repo.AddUserSkill(context.Background(), skJane, skGo, skLvlA20, skActor)
+	})
+	if res.Outcome != domain.SkillOutcomeSkillInactive {
+		t.Fatalf("outcome = %v, want SkillInactive", res.Outcome)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM user_skill WHERE user_id = $1 AND skill_id = $2`, skJane, skGo); n != 0 {
+		t.Fatalf("user_skill rows = %d, want 0", n)
+	}
+	if n := len(skHistory(t, pool, skJane, skGo)); n != 0 {
+		t.Fatalf("history rows = %d, want 0", n)
+	}
+}
+
+func TestSkillIntegration_ReviveRacingADeactivationLeavesTheInactiveRowAlone(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	skExec(t, pool, `INSERT INTO user_skill (created_on, updated_on, user_id, skill_id, skill_level_id, active, inherited) VALUES (NOW(), NOW(), $1, $2, $3, false, false)`, skJane, skGo, skLvlA20)
+	res := deactivateUnderWrite(t, pool, func() (domain.SkillWriteResult, error) {
+		return repo.AddUserSkill(context.Background(), skJane, skGo, skLvlA20, skActor)
+	})
+	if res.Outcome != domain.SkillOutcomeSkillInactive {
+		t.Fatalf("outcome = %v, want SkillInactive", res.Outcome)
+	}
+	if n := skCount(t, pool, `SELECT count(*) FROM user_skill WHERE user_id = $1 AND skill_id = $2 AND NOT active`, skJane, skGo); n != 1 {
+		t.Fatal("the inactive row was revived")
+	}
+	if n := len(skHistory(t, pool, skJane, skGo)); n != 0 {
+		t.Fatalf("history rows = %d, want 0", n)
+	}
+}
+
+func TestSkillIntegration_SetLevelStillWorksOnASkillDeactivatedAfterItWasHeld(t *testing.T) {
+	repo, pool := newSkillIntegration(t)
+	skExec(t, pool, `INSERT INTO user_skill (created_on, updated_on, user_id, skill_id, skill_level_id, active, inherited) VALUES (NOW(), NOW(), $1, $2, $3, true, false)`, skJane, skGo, skLvlA20)
+	skExec(t, pool, `UPDATE skill SET active = false WHERE id = $1`, skGo)
+	res, err := repo.SetUserSkillLevel(context.Background(), skJane, skGo, skLvlA50, skActor)
+	if err != nil || res.Outcome != domain.SkillOutcomeDone {
+		t.Fatalf("set level on a deactivated held skill = %v, %v; want Done", res.Outcome, err)
 	}
 }
 

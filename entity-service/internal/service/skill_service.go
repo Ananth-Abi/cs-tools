@@ -298,7 +298,7 @@ func (s *skillService) AddMySkill(ctx context.Context, req domain.AddMySkillRequ
 		return domain.UserSkill{}, err
 	}
 	if !skill.Active {
-		return domain.UserSkill{}, &apierror.ConflictError{Msg: "this skill is inactive and cannot be added to a profile"}
+		return domain.UserSkill{}, &apierror.ConflictError{Msg: inactiveSkillRefusal}
 	}
 	if err := s.checkLevelInScale(ctx, skill, req.LevelID); err != nil {
 		return domain.UserSkill{}, err
@@ -312,6 +312,8 @@ func (s *skillService) AddMySkill(ctx context.Context, req domain.AddMySkillRequ
 		return domain.UserSkill{}, &apierror.ConflictError{Msg: "this skill is already on your profile: change its level instead"}
 	case domain.SkillOutcomeInherited:
 		return domain.UserSkill{}, &apierror.ConflictError{Msg: inheritedRefusal}
+	case domain.SkillOutcomeSkillInactive:
+		return domain.UserSkill{}, &apierror.ConflictError{Msg: inactiveSkillRefusal}
 	case domain.SkillOutcomeLevelNotInScale, domain.SkillOutcomeNotFound:
 		return domain.UserSkill{}, levelScaleRaceError(res.Outcome)
 	}
@@ -353,6 +355,10 @@ func (s *skillService) SetMySkillLevel(ctx context.Context, skillID string, req 
 	}
 	return rowOrError(res)
 }
+
+// inactiveSkillRefusal is the 409 for adding a skill that is not active, whether
+// the service saw it or the write's own transaction did.
+const inactiveSkillRefusal = "this skill is inactive and cannot be added to a profile"
 
 // levelScaleRaceError answers the refusals only the write's own transaction can
 // find, because the skill changed after the request was checked: its scale was

@@ -524,16 +524,24 @@ func readBack(ctx context.Context, tx pgx.Tx, userID, skillID string) (*domain.U
 // levelOnSkillScale reads the skill's scale under a share lock on the skill
 // row, then checks the level is a rung of it. The lock is what UpdateSkill's
 // FOR UPDATE queues behind, so the scale cannot change between this check and
-// the commit of the write that follows. It returns the outcome that refuses the
-// write, or SkillOutcomeDone when the level may be written.
-func levelOnSkillScale(ctx context.Context, tx pgx.Tx, skillID, levelID string) (domain.SkillOutcome, error) {
+// the commit of the write that follows. The same locked read gives the skill's
+// active flag: an add (newOnProfile) is refused with SkillOutcomeSkillInactive
+// when the skill was deactivated after the service looked, while a level change
+// on an already-held skill is allowed whether or not it is active. It returns
+// the outcome that refuses the write, or SkillOutcomeDone when the level may be
+// written.
+func levelOnSkillScale(ctx context.Context, tx pgx.Tx, skillID, levelID string, newOnProfile bool) (domain.SkillOutcome, error) {
 	var scale *string
-	err := tx.QueryRow(ctx, `SELECT level_type_id::text FROM skill WHERE id = $1::uuid FOR SHARE`, skillID).Scan(&scale)
+	var active bool
+	err := tx.QueryRow(ctx, `SELECT level_type_id::text, active FROM skill WHERE id = $1::uuid FOR SHARE`, skillID).Scan(&scale, &active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SkillOutcomeNotFound, nil
 	}
 	if err != nil {
 		return domain.SkillOutcomeDone, fmt.Errorf("lock skill scale: %w", err)
+	}
+	if newOnProfile && !active {
+		return domain.SkillOutcomeSkillInactive, nil
 	}
 	if scale == nil {
 		return domain.SkillOutcomeLevelNotInScale, nil
@@ -566,7 +574,7 @@ func (r *skillRepository) AddUserSkill(ctx context.Context, userID, skillID, lev
 				revive = &rows[i]
 			}
 		}
-		if outcome, err := levelOnSkillScale(ctx, tx, skillID, levelID); err != nil || outcome != domain.SkillOutcomeDone {
+		if outcome, err := levelOnSkillScale(ctx, tx, skillID, levelID, true); err != nil || outcome != domain.SkillOutcomeDone {
 			res.Outcome = outcome
 			return err
 		}
@@ -605,7 +613,7 @@ func (r *skillRepository) SetUserSkillLevel(ctx context.Context, userID, skillID
 			res.Outcome, res.Row = domain.SkillOutcomeUnchanged, row
 			return err
 		}
-		if outcome, err := levelOnSkillScale(ctx, tx, skillID, levelID); err != nil || outcome != domain.SkillOutcomeDone {
+		if outcome, err := levelOnSkillScale(ctx, tx, skillID, levelID, false); err != nil || outcome != domain.SkillOutcomeDone {
 			res.Outcome = outcome
 			return err
 		}

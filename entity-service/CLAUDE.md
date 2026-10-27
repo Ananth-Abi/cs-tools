@@ -10072,7 +10072,8 @@ migration 0079 (`skill*`, `user_skill`, `user_skill_history`). Registered only w
 - **Levels.** A level must belong to the skill's `level_type_id` scale (checked in the service; no FK does it). The profile
   write re-checks it inside its transaction under `FOR SHARE` on the skill row, which an admin's scale change
   (`FOR UPDATE`) queues behind; a scale swapped in between is a 409. Ids are lower-cased once validated.
-  Inactive skills cannot be newly added. Every set, change and removal writes a `user_skill_history` row
+  Inactive skills cannot be newly added (an add re-reads `active` in that same locked query, so a deactivation
+  racing the add is a 409 too; changing the level of an already-held skill is unaffected). Every set, change and removal writes a `user_skill_history` row
   (`level_from_id` null on first set, `level_to_id` null on removal; `created_by` is the actor's email); setting
   the level already held writes nothing. A removal deletes the `user_skill` row. Inherited rows are never
   changed (409). A skill's scale cannot change while any `user_skill` holds a level of it (409).

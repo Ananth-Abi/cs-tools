@@ -509,3 +509,14 @@ func TestOwnProfileMapsAScaleSwappedUnderTheWrite(t *testing.T) {
 	_, err = svc.SetMySkillLevel(ctx, skSkillID, domain.SetMySkillLevelRequest{LevelID: skLevelA1})
 	wantNotFoundErr(t, err, "change of a skill deleted under the write")
 }
+
+// A skill deactivated between the service's check and the write's lock comes
+// back from the repository as SkillInactive, which is the same 409 as the
+// service's own inactive check.
+func TestOwnProfileMapsASkillDeactivatedUnderTheWrite(t *testing.T) {
+	repo := newFakeSkillRepo()
+	svc := newSkillSvc(repo)
+	repo.addOutcome = domain.SkillOutcomeSkillInactive
+	_, err := svc.AddMySkill(asCaller(skEmail), domain.AddMySkillRequest{SkillID: skSkillID, LevelID: skLevelA1})
+	wantConflictErr(t, err, "add after the skill was deactivated")
+}
