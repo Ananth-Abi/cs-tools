@@ -17,8 +17,31 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"time"
 )
+
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func isValidUUID(s string) bool { return uuidRe.MatchString(s) }
+
+// publicArticle is the subset of an entity-service article that is safe to
+// expose publicly. Internal fields (authorId, revisedById, updatedBy,
+// sourceCaseId, rejectionComment, baseVersionId, latest) are stripped.
+type publicArticle struct {
+	ID              string  `json:"id"`
+	KnowledgeBaseID string  `json:"knowledgeBaseId"`
+	Title           string  `json:"title"`
+	Body            string  `json:"body"`
+	Number          string  `json:"number,omitempty"`
+	State           string  `json:"state"`
+	ViewCount       int     `json:"viewCount"`
+	Rating          *float64 `json:"rating,omitempty"`
+	CreatedOn       string  `json:"createdOn,omitempty"`
+	UpdatedOn       string  `json:"updatedOn,omitempty"`
+	PublishedOn     string  `json:"publishedOn,omitempty"`
+	RetiredOn       string  `json:"retiredOn,omitempty"`
+}
 
 type KBHandler struct {
 	http         *http.Client
@@ -28,9 +51,19 @@ type KBHandler struct {
 }
 
 func NewKBHandler() *KBHandler {
+	baseURL := os.Getenv("ENTITY_SERVICE_BASE_URL")
+	if baseURL == "" {
+		slog.Error("ENTITY_SERVICE_BASE_URL is not set; exiting")
+		os.Exit(1)
+	}
 	return &KBHandler{
-		http:         &http.Client{Timeout: 10 * time.Second},
-		baseURL:      os.Getenv("ENTITY_SERVICE_BASE_URL"),
+		http: &http.Client{
+			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		baseURL:      baseURL,
 		pineconeHost: os.Getenv("PINECONE_HOST"),
 		pineconeKey:  os.Getenv("PINECONE_KEY"),
 	}
@@ -39,18 +72,56 @@ func NewKBHandler() *KBHandler {
 type searchRequest struct {
 	KnowledgeBaseID string `json:"knowledgeBaseId,omitempty"`
 	SearchQuery     string `json:"searchQuery,omitempty"`
-	SortBy          string `json:"sortBy,omitempty"`
 	Limit           int    `json:"limit,omitempty"`
 	Offset          int    `json:"offset,omitempty"`
 }
 
 // ListKnowledgeBases handles GET /public/knowledge-bases.
+// Only active knowledge bases are returned.
 func (h *KBHandler) ListKnowledgeBases(w http.ResponseWriter, r *http.Request) {
-	h.forward(w, r, http.MethodGet, "/knowledge-bases", nil)
+	resp, err := h.do(r, http.MethodGet, "/knowledge-bases", nil)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity-service call failed", "path", "/knowledge-bases", "err", err)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
+		return
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to read the response.")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		writeJSON(w, resp.StatusCode, payload)
+		return
+	}
+
+	// Filter to active-only before sending to the public client.
+	var upstream struct {
+		KnowledgeBases []json.RawMessage `json:"knowledgeBases"`
+	}
+	if err := json.Unmarshal(payload, &upstream); err != nil {
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	active := make([]json.RawMessage, 0, len(upstream.KnowledgeBases))
+	for _, raw := range upstream.KnowledgeBases {
+		var kb struct {
+			Active bool `json:"active"`
+		}
+		if json.Unmarshal(raw, &kb) == nil && kb.Active {
+			active = append(active, raw)
+		}
+	}
+	out, _ := json.Marshal(map[string]any{"knowledgeBases": active})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // SearchArticles handles POST /public/kb-articles/search. The state filter
 // is forced to published server-side and never taken from the request.
+// sortBy is intentionally not forwarded — upstream does not support it.
 func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 	var req searchRequest
 	if r.Body != nil {
@@ -76,25 +147,59 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 	if req.SearchQuery != "" {
 		upstream["searchQuery"] = req.SearchQuery
 	}
-	if req.SortBy != "" {
-		upstream["sortBy"] = req.SortBy
-	}
 
 	body, err := json.Marshal(upstream)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to build the search request.")
 		return
 	}
-	h.forward(w, r, http.MethodPost, "/kb-articles/search", body)
+
+	resp, err := h.do(r, http.MethodPost, "/kb-articles/search", body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity-service call failed", "path", "/kb-articles/search", "err", err)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
+		return
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to read the response.")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		writeJSON(w, resp.StatusCode, payload)
+		return
+	}
+
+	// Strip internal fields from each article before sending to the public.
+	var searchResp struct {
+		Articles []json.RawMessage `json:"articles"`
+		Total    int               `json:"total"`
+	}
+	if err := json.Unmarshal(payload, &searchResp); err != nil {
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	safe := make([]publicArticle, 0, len(searchResp.Articles))
+	for _, raw := range searchResp.Articles {
+		var a publicArticle
+		if json.Unmarshal(raw, &a) == nil {
+			safe = append(safe, a)
+		}
+	}
+	out, _ := json.Marshal(map[string]any{"articles": safe, "total": searchResp.Total})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // GetArticle handles GET /public/kb-articles/{id}. An unpublished article
 // is reported as 404, not 403, so a caller can't detect that a draft with
-// that id exists.
+// that id exists. Only safe public fields are returned.
 func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "Article id is required.")
+	if !isValidUUID(id) {
+		writeError(w, http.StatusBadRequest, "Invalid article id.")
 		return
 	}
 
@@ -112,57 +217,36 @@ func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, resp.StatusCode, payload)
-		return
-	}
-
-	var article struct {
-		State string `json:"state"`
-	}
-	if err := json.Unmarshal(payload, &article); err != nil {
-		writeError(w, http.StatusBadGateway, "Failed to read the article.")
-		return
-	}
-	if article.State != "published" {
 		writeError(w, http.StatusNotFound, "Article not found.")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, payload)
-}
-
-// RecordView handles POST /public/kb-articles/{id}/view. Always 204, even
-// on upstream failure: a lost view count is not worth erroring a page over.
-func (h *KBHandler) RecordView(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "Article id is required.")
+	var full struct {
+		Article json.RawMessage `json:"article"`
+	}
+	if err := json.Unmarshal(payload, &full); err != nil {
+		var a publicArticle
+		if json.Unmarshal(payload, &a) == nil && a.State == "published" {
+			out, _ := json.Marshal(map[string]any{"article": a})
+			writeJSON(w, http.StatusOK, out)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "Failed to read the article.")
 		return
 	}
-	resp, err := h.do(r, http.MethodPost, "/kb-articles/"+id+"/views", []byte("{}"))
-	if err != nil {
-		slog.ErrorContext(r.Context(), "record view failed", "id", id, "err", err)
-	} else {
-		defer resp.Body.Close()
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
 
-func (h *KBHandler) forward(w http.ResponseWriter, r *http.Request, method, path string, body []byte) {
-	resp, err := h.do(r, method, path, body)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "entity-service call failed", "path", path, "err", err)
-		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
+	var a publicArticle
+	if err := json.Unmarshal(full.Article, &a); err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to read the article.")
 		return
 	}
-	defer resp.Body.Close()
-
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "Failed to read the response.")
+	if a.State != "published" {
+		writeError(w, http.StatusNotFound, "Article not found.")
 		return
 	}
-	writeJSON(w, resp.StatusCode, payload)
+
+	out, _ := json.Marshal(map[string]any{"article": a})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *KBHandler) do(r *http.Request, method, path string, body []byte) (*http.Response, error) {

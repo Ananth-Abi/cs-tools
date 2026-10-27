@@ -48,7 +48,10 @@ export default function KBArticlePage(): JSX.Element {
   }, [article, kbData]);
 
   const sanitizedBody = useMemo(
-    () => (article ? DOMPurify.sanitize(article.body) : ""),
+    () => (article ? DOMPurify.sanitize(article.body, {
+      FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "object", "embed"],
+      FORBID_ATTR: ["style"],
+    }) : ""),
     [article],
   );
 

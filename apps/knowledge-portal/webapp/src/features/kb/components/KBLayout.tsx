@@ -8,15 +8,13 @@ import {
   Box,
   ColorSchemeToggle,
   Container,
-  Divider,
-  Grid,
   Header as HeaderUI,
   Link as OxygenLink,
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
 import { useEffect, useState, type JSX } from "react";
-import { Link, Outlet, useNavigate } from "react-router";
+import { Outlet, useNavigate } from "react-router";
 
 const BRAND_LOGO_HEIGHT = {
   xs: 18,

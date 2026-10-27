@@ -43,8 +43,8 @@ type relatedArticle struct {
 // unconfigured, or returns nothing.
 func (h *KBHandler) RelatedArticles(w http.ResponseWriter, r *http.Request) {
 	articleID := r.PathValue("id")
-	if articleID == "" {
-		writeError(w, http.StatusBadRequest, "Article id is required.")
+	if !isValidUUID(articleID) {
+		writeError(w, http.StatusBadRequest, "Invalid article id.")
 		return
 	}
 

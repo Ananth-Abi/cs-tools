@@ -40,7 +40,6 @@ func main() {
 	mux.HandleFunc("GET /public/knowledge-bases", kb.ListKnowledgeBases)
 	mux.HandleFunc("POST /public/kb-articles/search", kb.SearchArticles)
 	mux.HandleFunc("GET /public/kb-articles/{id}", kb.GetArticle)
-	mux.HandleFunc("POST /public/kb-articles/{id}/view", kb.RecordView)
 	mux.HandleFunc("GET /public/kb-articles/{id}/related", kb.RelatedArticles)
 
 	srv := &http.Server{
