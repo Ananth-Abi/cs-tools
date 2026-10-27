@@ -25185,6 +25185,20 @@ components:
           type: string
           example: SRE_SAAS
           description: The rota the team's type belongs to; absent for a team on no named rota.
+        heads:
+          type: array
+          description: >-
+            The team's americas_team_lead holders (userId, name, email, isLead,
+            role). They head the team from above and hold no rota, so members
+            leaves them out; absent when the team has none.
+          items:
+            type: object
+            properties:
+              userId: { type: string, format: uuid }
+              name: { type: string }
+              email: { type: string }
+              isLead: { type: boolean }
+              role: { type: string }
         isAbt:
           type: boolean
           description: >-

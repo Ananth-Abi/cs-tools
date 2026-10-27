@@ -120,6 +120,41 @@ describe("RotaAccessTab", () => {
     expect(within(panel).getByRole("rowheader", { name: "Apollo" })).toBeInTheDocument();
   });
 
+  it("names a team's head as its Lead and lists its other leads with the Rota Managers", () => {
+    const head = { ...member(LEO, "Leo", true), role: "americas_team_lead" };
+    const teams: ScheduleTeam[] = [
+      { key: "westwind", name: "Westwind", family: "CRE", sortOrder: 1, heads: [head], members: [member(ANA, "Ana", true), member(BEN, "Ben")] },
+      { key: "lyra", name: "Lyra", family: "CRE", sortOrder: 2, members: [member(ME, "Me", true), member(BEN, "Ben")] },
+    ];
+    render(<RotaAccessTab teams={teams} />);
+    const row = screen.getByRole("rowheader", { name: "Westwind" }).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Leo")).toHaveClass("ra-leads");
+    const managers = within(row).getByRole("list", { name: "Westwind Rota Managers" });
+    expect(within(managers).getByText("Ana")).toBeInTheDocument();
+    // A lead cannot be taken off here, and is not offered again.
+    expect(within(row).queryByRole("button", { name: /Remove Ana/ })).not.toBeInTheDocument();
+    const offered = within(within(row).getByRole("combobox")).getAllByRole("option").map((o) => o.textContent);
+    expect(offered).toEqual(["+ Add Rota Manager", "Ben"]);
+    // A team with no head keeps all its leads in the Lead column.
+    const lyra = screen.getByRole("rowheader", { name: "Lyra" }).closest("tr") as HTMLElement;
+    expect(within(lyra).getByText("Me")).toHaveClass("ra-leads");
+  });
+
+  it("shows a team synced as an identifier by its display name", () => {
+    const teams: ScheduleTeam[] = [
+      { key: "northwind_cre_team", name: "northwind_cre_team", family: "CRE", sortOrder: 1, members: [member(ME, "Me", true)] },
+      { key: "onboarding_team", name: "onboarding_team", family: "CRE", sortOrder: 2, members: [member(ANA, "Ana")] },
+      { key: "orion", name: "orion", family: "CRE", sortOrder: 3, members: [member(BEN, "Ben")] },
+    ];
+    render(<RotaAccessTab teams={teams} />);
+    const markers = screen.getByRole("tabpanel", { name: "CRE" });
+    for (const name of ["Northwind", "Onboarding", "Orion"]) {
+      expect(within(markers).getByRole("rowheader", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("northwind_cre_team")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Onboarding/ })).toBeInTheDocument();
+  });
+
   it("shows a rota admin only their own group's markers, and no rota admin section", () => {
     access.data = { ...access.data!, canManage: { rotaAdmins: false, markerFamilies: ["SRE"] } };
     render(<RotaAccessTab teams={TEAMS} />);

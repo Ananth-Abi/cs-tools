@@ -663,6 +663,18 @@ func TestScheduleIntegration_ManagementIsNotOnTheRota(t *testing.T) {
 				t.Error("a management role is served as a team member")
 			}
 		}
+		// The head is named apart from the members, on their own team only.
+		for _, h := range team.Heads {
+			if h.Role != "americas_team_lead" || !h.IsLead {
+				t.Errorf("team %s head %s: role %q isLead %v", team.Key, h.UserID, h.Role, h.IsLead)
+			}
+			if h.UserID == schedMemberID && team.Key != schedOtherTeam {
+				t.Errorf("the head of %s is served as a head of %s", schedOtherTeam, team.Key)
+			}
+		}
+		if team.Key == schedOtherTeam && (len(team.Heads) != 1 || team.Heads[0].UserID != schedMemberID) {
+			t.Errorf("%s heads = %+v, want the one americas_team_lead", schedOtherTeam, team.Heads)
+		}
 	}
 
 	byTeam, err := repo.SearchAssignments(ctx, domain.SearchScheduleAssignmentsRequest{
