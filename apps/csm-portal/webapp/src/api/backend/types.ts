@@ -1806,6 +1806,20 @@ export interface BeGrantableRolesResponse {
   roles: BeGrantableRole[];
 }
 
+/** `POST /users/{id}/roles` request body — grant one or more portal role keys
+ * (see `GET /roles/grantable`) to an already-existing user via SCIM. */
+export interface BeGrantUserRolesPayload {
+  roles: string[];
+}
+
+/** `POST /users/{id}/roles` response. `granted` is always present (an empty
+ * array, never `null`, on total failure); `failed` is omitted entirely on
+ * full success rather than sent as an empty array. */
+export interface BeGrantUserRolesResponse {
+  granted: string[];
+  failed?: string[];
+}
+
 export interface BeUserSearchFilters {
   /** Case-insensitive match against username and email. */
   searchQuery?: string;
