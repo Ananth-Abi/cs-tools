@@ -197,8 +197,10 @@ func subscriptionRenewed(proj project, now time.Time) (bool, error) {
 // from the date on every run and saved it, so once a customer renewed (or
 // paid) the track went back to "open" and the next term's reminders started
 // over. Without this, a renewed project keeps its old "30_days_notice" and its
-// next 90, 60 and 30-day reminders are skipped. Only a dimension that is still
-// Open is reset: reopening a suspended project is a separate, manual step.
+// next 90, 60 and 30-day reminders are skipped. Only a track whose own closure
+// state is still Open is reset, even if the other track suspended the project,
+// as in legacy. No closure state changes: reopening a suspended project is a
+// separate, manual step.
 func resetToOpen(ctx context.Context, updater projectUpdater, projectID string, history *json.RawMessage, track string, reset func(json.RawMessage) (json.RawMessage, error)) error {
 	newState, err := reset(*history)
 	if err != nil {

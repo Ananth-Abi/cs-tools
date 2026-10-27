@@ -237,11 +237,18 @@ saved as `{"event_type":"open"}` if:
 - invoice: there is no due invoice (paid), the account is a Partner without
   a primary partner, or the suspend date is more than 90 days away.
 
-Only a dimension that is still `Open` is reset. A suspended project keeps
-its record until someone reopens it (CSM closure state and Salesforce
-State), which stays manual; once reopened, the next run resets the record.
-This also keeps the ServiceNow mirror harmless: an `open` section never
-reaches a project that is still suspended. A failed invoice lookup is not
+A track is reset only while its own closure state (`endDateClosureState` /
+`invoiceDueDateClosureState`) is still `Open`; the other track may be
+suspended. Example: the contract is renewed and an unpaid invoice suspends
+the project in the same run. The end-date record is reset to `open` (that
+track really was renewed), the project stays Suspended through
+`invoiceDueDateClosureState`, and no email goes out. Legacy did the same: it
+recomputed each track from its own date on every run, whatever the other
+track's state. The reset never changes a closure state, so it never reopens
+anything; the overall `closureState` is derived from the closure states
+only. A track that is itself suspended keeps its record until someone
+reopens it (CSM closure state and Salesforce State), which stays manual;
+once reopened, the next run resets the record. A failed invoice lookup is not
 "no due invoice" and never resets. The reset sends no email, writes nothing
 in a dry run, and logs `state reset to open`. Tests: `renewal_test.go`.
 

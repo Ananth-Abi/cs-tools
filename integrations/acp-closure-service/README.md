@@ -143,8 +143,9 @@ knowing before trusting a sibling service's source or docs at face value:
   `internal/suspensionstate`'s package doc.
 - After a renewal (date more than 90 days away again) or a paid invoice, ACP
   saves that track's `event_type` back to `open`, as legacy did, so the next
-  term's reminders start over. It only does this while the project is Open;
-  reopening a suspended project stays manual.
+  term's reminders start over. It only does this while that track's own
+  closure state is Open, and never changes a closure state; reopening a
+  suspended project stays manual.
 
 ## Open dependencies
 
