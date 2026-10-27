@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -572,6 +573,21 @@ func TestTimeCardService_CreateTimeCard_PerCardLimit(t *testing.T) {
 	t.Run("481 minutes summed across fields is rejected", func(t *testing.T) {
 		req := validCreateTimeCardRequest()
 		req.TimeAnalyzing, req.TimeSettingUp, req.TimeReproducingDebugging, req.TimeProvidingSolution, req.TimePatching = 100, 100, 100, 100, 81
+		repo := &stubTimeCardRepo{
+			createTimeCard: func(context.Context, domain.CreateTimeCardRequest, string) (domain.TimeCardView, error) {
+				t.Fatal("repository.CreateTimeCard must not be called for an over-limit card")
+				return domain.TimeCardView{}, nil
+			},
+		}
+		_, err := NewTimeCardService(repo, userRepo).CreateTimeCard(ctx, req)
+		if err == nil || err.Error() != domain.MaxTimeCardMinutesMessage {
+			t.Fatalf("error = %v, want %q", err, domain.MaxTimeCardMinutesMessage)
+		}
+	})
+
+	t.Run("values whose sum would overflow are rejected", func(t *testing.T) {
+		req := validCreateTimeCardRequest()
+		req.TimeAnalyzing, req.TimeSettingUp = math.MaxInt64, 1
 		repo := &stubTimeCardRepo{
 			createTimeCard: func(context.Context, domain.CreateTimeCardRequest, string) (domain.TimeCardView, error) {
 				t.Fatal("repository.CreateTimeCard must not be called for an over-limit card")

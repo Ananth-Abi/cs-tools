@@ -194,6 +194,11 @@ func validateTimeCardMinutes(values ...int) error {
 		if v < 0 {
 			return &apierror.ValidationError{Msg: "time values must not be negative"}
 		}
+		// Reject each value on its own before summing: two huge values
+		// would overflow the sum to a negative and slip past the total check.
+		if v > domain.MaxTimeCardMinutes {
+			return &apierror.ValidationError{Msg: domain.MaxTimeCardMinutesMessage}
+		}
 		total += v
 	}
 	// Per-card limit, not a daily total. On an update only the fields the
