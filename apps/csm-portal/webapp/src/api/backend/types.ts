@@ -4022,21 +4022,15 @@ export interface BeProblemFieldFilter {
 export interface BeProblemSearchFilters {
   searchQuery?: string;
   /**
-   * Filter by state. Not confirmed live against the backend at the time this
-   * was written, so if the backend rejects or silently ignores this filter,
-   * drop it here and from `ProblemsTab`'s payload, and remove the state
-   * control from `ProblemsFilterBar`.
-   */
-  states?: BeProblemState[];
-  /**
    * A single problem number (e.g. "PRB0040192"); matches exactly. Routed as
    * a first-class filter rather than through the free-text searchQuery scan.
    */
   number?: string;
   /**
-   * The generic field/op/values filter array (see {@link BeProblemFieldFilter}) —
-   * additive alongside `states` above. Only the SRE Team control
-   * (`assignmentGroupId`/`"in"`) populates this today.
+   * The generic field/op/values filter array (see {@link BeProblemFieldFilter}).
+   * The only way to filter by state (`state`/`"in"`) or SRE team
+   * (`assignmentGroupId`/`"in"`); the search body has no named `states`
+   * field and the backend rejects unknown fields.
    */
   filters?: BeProblemFieldFilter[];
 }
