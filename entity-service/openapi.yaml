@@ -212,6 +212,190 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /customer-engagements/allocations/search:
+    post:
+      summary: Search customer engagement allocations.
+      description: >
+        Read-only, internal staff only. One page of allocations with their
+        engagement, account and engineer, filtered, sorted (default: newest
+        `startDate` first) and counted. `limit` defaults to 20, at most 50.
+        Registered only when a database pool is configured.
+      operationId: searchEngagementAllocations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEngagementAllocationsRequest'
+      responses:
+        "200":
+          description: One page of allocations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEngagementAllocationsResponse'
+        "400":
+          description: Bad request (unknown field, malformed id, date or state, limit above 50).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No valid user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The caller is not internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /customer-engagements/allocations/{id}:
+    get:
+      summary: One customer engagement allocation.
+      description: Read-only, internal staff only.
+      operationId: getEngagementAllocation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EngagementAllocationView'
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No valid user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The caller is not internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /customer-engagements/allocations/{id}/updates:
+    get:
+      summary: The status updates written against an allocation, newest first.
+      description: Read-only, internal staff only. `limit` defaults to 20, at most 50.
+      operationId: listEngagementAllocationUpdates
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: One page of updates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEngagementAllocationUpdatesResponse'
+        "400":
+          description: Bad id, limit or offset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No valid user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The caller is not internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Post a status update on an allocation, as the engineer allocated.
+      description: >
+        Only the engineer the allocation is for may post: the caller's email
+        (from the user token) is resolved to the platform user record and that
+        id must equal the allocation's engineer. The server sets the author,
+        and stores the update as PUBLISHED, INTERNAL, INDIVIDUAL, WEEKLY, with
+        the Monday (UTC) of the current week as `cycleStartDate`. No
+        notification is sent. `subject` is required, at most 512 characters;
+        `content` is required, at most 8000.
+      operationId: createEngagementAllocationUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEngagementAllocationUpdateRequest'
+      responses:
+        "201":
+          description: The stored update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EngagementAllocationUpdate'
+        "400":
+          description: Missing or too long subject or content, or a bad id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No valid user token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The caller is not the engineer allocated, or not internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /onboarding-steps/search:
     post:
       summary: >-
@@ -26758,6 +26942,118 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ScheduleEngagementAllocation' }
         count: { type: integer }
+    SearchEngagementAllocationsRequest:
+      type: object
+      properties:
+        pagination:
+          type: object
+          properties:
+            limit: { type: integer, description: Defaults to 20; at most 50. }
+            offset: { type: integer }
+        filters:
+          type: object
+          properties:
+            searchQuery: { type: string, description: Matches the allocation reference, engagement name and engagement display id. }
+            accountId: { type: string, format: uuid }
+            accountName: { type: string, description: Substring match. }
+            engineerId: { type: string, format: uuid, description: Platform user id of the allocated engineer. }
+            engagementId: { type: string, format: uuid }
+            states:
+              type: array
+              items: { type: string, description: An allocation state such as CONFIRMED. }
+            from: { type: string, format: date, description: Keep allocations ending on or after this date. }
+            to: { type: string, format: date, description: Keep allocations starting on or before this date. }
+        sortBy:
+          type: object
+          properties:
+            field: { type: string, enum: [startDate, endDate, state, allocationId, accountName, engineerName, utilization] }
+            order: { type: string, enum: [asc, desc] }
+    EngagementAllocationPerson:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+    EngagementAllocationView:
+      type: object
+      required: [id, engagement]
+      properties:
+        id: { type: string, format: uuid }
+        allocationId: { type: string, description: Human-readable reference. }
+        state: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        startTime: { type: string, description: "Wall-clock time in `timezone`, e.g. 09:00:00." }
+        endTime: { type: string }
+        timezone: { type: string }
+        utilization: { type: number }
+        engagement:
+          type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
+            displayId: { type: string }
+            name: { type: string }
+            type: { type: string }
+            modeOfDelivery: { type: string }
+            state: { type: string }
+            businessUnit: { type: string }
+            isPaid: { type: boolean }
+            projectId: { type: string, format: uuid }
+            plannedStartDate: { type: string, format: date }
+            plannedEndDate: { type: string, format: date }
+            actualStartDate: { type: string, format: date }
+            actualEndDate: { type: string, format: date }
+        account:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        engineer: { $ref: '#/components/schemas/EngagementAllocationPerson' }
+        latestUpdateDate: { type: string, format: date-time }
+    SearchEngagementAllocationsResponse:
+      type: object
+      required: [allocations, total, limit, offset, hasMore]
+      properties:
+        allocations:
+          type: array
+          items: { $ref: '#/components/schemas/EngagementAllocationView' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    EngagementAllocationUpdate:
+      type: object
+      required: [id, createdOn]
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string }
+        content: { type: string }
+        state: { type: string, enum: [DRAFT, PUBLISHED, CANCELLED] }
+        visibility: { type: string, enum: [INTERNAL, CUSTOMER] }
+        cycleStartDate: { type: string, format: date }
+        publishedDate: { type: string, format: date-time }
+        createdOn: { type: string, format: date-time }
+        author: { $ref: '#/components/schemas/EngagementAllocationPerson' }
+    ListEngagementAllocationUpdatesResponse:
+      type: object
+      required: [updates, total, limit, offset, hasMore]
+      properties:
+        updates:
+          type: array
+          items: { $ref: '#/components/schemas/EngagementAllocationUpdate' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    CreateEngagementAllocationUpdateRequest:
+      type: object
+      required: [subject, content]
+      properties:
+        subject: { type: string, maxLength: 512 }
+        content: { type: string, maxLength: 8000 }
     TeamMembersResponse:
       type: object
       required: [members, count]
