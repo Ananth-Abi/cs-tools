@@ -598,6 +598,16 @@ func main() {
 	// team id; internal staff only (entity-service refuses anyone else).
 	route("GET /groups/{id}", handler.PermView, groupHandler.GetGroup)
 
+	// Customer engagement allocations: the list, one allocation, and the status
+	// updates written against it. Pure pass-through; entity-service restricts all
+	// of it to internal staff and lets only the allocated engineer post an update,
+	// so posting is an ordinary write here with no ownership check of its own.
+	engagementAllocationHandler := handler.NewEngagementAllocationHandler(customerEntityClient)
+	route("POST /engagement-allocations/search", handler.PermView, engagementAllocationHandler.SearchEngagementAllocations)
+	route("GET /engagement-allocations/{id}", handler.PermView, engagementAllocationHandler.GetEngagementAllocation)
+	route("GET /engagement-allocations/{id}/updates", handler.PermView, engagementAllocationHandler.ListEngagementAllocationUpdates)
+	route("POST /engagement-allocations/{id}/updates", handler.PermWrite, engagementAllocationHandler.CreateEngagementAllocationUpdate)
+
 	// Team Schedule. Reads only for now, so everything sits under view: any
 	// role that can see the portal can see who is on the rota. Editing the
 	// rota is a lead's job and will need a permission of its own when the
