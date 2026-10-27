@@ -328,14 +328,15 @@ func TestSendIncidentCreatedAlert_CaseFormShowsProjectNotState(t *testing.T) {
 
 func TestCaseS0ThreadKey(t *testing.T) {
 	a, b := []byte(`{"type":"case.created"}`), []byte(`{"type":"case.severity_changed"}`)
-	if CaseS0ThreadKey("c1", a) != CaseS0ThreadKey("c1", a) {
+	first, again := CaseS0ThreadKey("c1", a), CaseS0ThreadKey("c1", a)
+	if first != again {
 		t.Error("the same record must give the same thread")
 	}
-	if CaseS0ThreadKey("c1", a) == CaseS0ThreadKey("c1", b) {
+	if first == CaseS0ThreadKey("c1", b) {
 		t.Error("two records must give two threads")
 	}
-	if !strings.HasPrefix(CaseS0ThreadKey("c1", a), IncidentThreadKey("c1")+"-") {
-		t.Errorf("thread %q; want it under the case's incident thread key", CaseS0ThreadKey("c1", a))
+	if !strings.HasPrefix(first, IncidentThreadKey("c1")+"-") {
+		t.Errorf("thread %q; want it under the case's incident thread key", first)
 	}
 }
 
