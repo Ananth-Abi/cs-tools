@@ -20,6 +20,7 @@ import { useSearchInternalUsersByName } from "@api/useSearchUsersByName";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { memberFamiliesOf, useChangeRotaAccess, useRotaAccess, type RotaAccessChange } from "../api/useRotaAccess";
 import type { RotaAdminGrant, RotaFamily, RotaMarkerGrant, ScheduleTeam } from "../types";
+import { teamDisplayName } from "../utils/teamDisplayName";
 import RotaReminderSettings from "./RotaReminderSettings";
 import ScheduleSkeleton from "./ScheduleSkeleton";
 
@@ -50,7 +51,10 @@ interface Props {
  * The server decides who may change what and answers with it (canManage); the
  * page only offers what it says. Every change saves the moment it is made.
  */
-export default function RotaAccessTab({ teams }: Props): JSX.Element {
+export default function RotaAccessTab({ teams: synced }: Props): JSX.Element {
+  // Team names come synced as identifiers ("americas_cre_team"); the tables
+  // and labels below show them as the rest of the page does ("Americas").
+  const teams = useMemo(() => synced.map((t) => ({ ...t, name: teamDisplayName(t.name) })), [synced]);
   const access = useRotaAccess();
   const change = useChangeRotaAccess();
   const [error, setError] = useState<string | null>(null);
@@ -320,7 +324,12 @@ function MarkerTable({
           const held = byTeam.get(t.key) ?? [];
           const heldIds = new Set(held.map((m) => m.userId));
           const members = t.members ?? [];
-          const leads = members.filter((m) => m.isLead);
+          // A team with a head (the Americas team lead) names only them as
+          // its Lead; its leads are listed with the Rota Managers, the part
+          // of the lead role this table is about. Roles are unchanged.
+          const heads = t.heads ?? [];
+          const leads = heads.length > 0 ? heads : members.filter((m) => m.isLead);
+          const leadManagers = heads.length > 0 ? members.filter((m) => m.isLead && !heldIds.has(m.userId)) : [];
           // A lead already marks their own team; offering them would grant
           // nothing they do not hold.
           const pickable = members.filter((m) => !m.isLead && !heldIds.has(m.userId));
@@ -332,8 +341,15 @@ function MarkerTable({
               <td className="ra-leads">{leads.length > 0 ? leads.map((m) => m.name).join(", ") : "—"}</td>
               <td>
                 <div className="ra-cell">
-                  {held.length > 0 ? (
+                  {held.length + leadManagers.length > 0 ? (
                     <ul className="ra-list" aria-label={`${t.name} Rota Managers`}>
+                      {leadManagers.map((m) => (
+                        <li key={m.userId}>
+                          <span className="ra-name" title="A lead of this team, so they manage its rota.">
+                            {m.name || m.email}
+                          </span>
+                        </li>
+                      ))}
                       {held.map((m) => (
                         <li key={m.userId} className={m.active ? undefined : "off"}>
                           <span
