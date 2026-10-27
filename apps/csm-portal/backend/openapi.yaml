@@ -16648,7 +16648,7 @@ components:
         filters:
           type: object
           properties:
-            searchQuery: { type: string, description: Matches the allocation reference, engagement name and engagement display id. }
+            searchQuery: { type: string, description: "Matches the allocation reference, engagement name and engagement display id." }
             accountId: { type: string, format: uuid }
             accountName: { type: string, description: Substring match. }
             engineerId: { type: string, format: uuid, description: Platform user id of the allocated engineer. }
