@@ -799,11 +799,18 @@ func syncGlobalRoles(ctx context.Context, tx querier, userID string, wanted, man
 // accounts for the change being made and for every project not involved in
 // it. Do not narrow it to the membership in hand.
 //
-// adminRole empty (an integration user) means the whole admin question does
-// not apply: nothing is granted and nothing is revoked. The bool returned is
+// adminRole empty (an integration user) means no admin role applies: nothing
+// is granted and any managed one still held is revoked. The bool returned is
 // whether the user ends up holding adminRole.
 func syncDerivedAdminRole(ctx context.Context, tx querier, userID, adminRole string, managed []string, isCsAdmin bool, actor string) (bool, error) {
 	if adminRole == "" {
+		if len(managed) > 0 {
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM user_role ur USING role r
+				WHERE ur.role_id = r.id AND ur.user_id = $1 AND r.name = ANY($2::text[])`, userID, managed); err != nil {
+				return false, fmt.Errorf("upsert membership: revoke roles: %w", err)
+			}
+		}
 		return false, nil
 	}
 

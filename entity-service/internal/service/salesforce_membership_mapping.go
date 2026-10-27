@@ -232,7 +232,7 @@ type contactRoleMapping struct {
 // none are revoked either.
 func mapGlobalRoles(account *salesentity.ContactAccount, isIntegrationUser bool) contactRoleMapping {
 	if isIntegrationUser {
-		return contactRoleMapping{}
+		return contactRoleMapping{ManagedAdmin: managedAdminRoles}
 	}
 	m := contactRoleMapping{Grant: []string{globalRoleExternal}, ManagedAdmin: managedAdminRoles}
 	if account != nil && strings.TrimSpace(derefString(account.Classification)) != "" {
