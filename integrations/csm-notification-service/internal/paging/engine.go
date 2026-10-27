@@ -771,7 +771,7 @@ func (e *Engine) Handle(ctx context.Context, record eventbus.Record) error {
 	case events.TypeCaseCreated, events.TypeSeverityChanged, events.TypeCaseAssigned,
 		events.TypeCommentAdded, events.TypeStatusChanged:
 		// Customer cases: see cases.go.
-		return e.handleCase(ctx, env)
+		return e.handleCase(ctx, env, record.Value)
 	case events.TypeIncidentCreated:
 		var p events.IncidentCreatedPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {

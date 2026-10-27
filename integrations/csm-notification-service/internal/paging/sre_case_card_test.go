@@ -17,6 +17,7 @@
 package paging
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -143,5 +144,67 @@ func TestKnownSRETeam(t *testing.T) {
 		if got := KnownSRETeam(l, group); got != want {
 			t.Errorf("KnownSRETeam(%q) = %v; want %v", group, got, want)
 		}
+	}
+}
+
+// Each S0 episode of a case gets its own thread: the SRE ladder keys its
+// messages by the record that started the chain, the same key the
+// dispatcher's room card has (notifications.CaseS0ThreadKey). Lowering below
+// S0 stops the running chain in its own thread; raising to S0 again starts a
+// chain in a new one.
+func TestSRECaseRung_EachS0EpisodeHasItsOwnThread(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+	e := ladderEngine(LadderSRE, &fakeChat{}, store)
+
+	created := caseCreated(t, "Atlas", "CATASTROPHIC")
+	if err := e.Handle(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	st, found, _ := store.Get(ctx, testIncidentID)
+	if !found {
+		t.Fatal("no SRE chain for an S0 case")
+	}
+	if want := notifications.CaseS0ThreadKey(testIncidentID, created.Value); st.Plan.Trigger.chatThreadKey() != want {
+		t.Errorf("first episode thread = %q; want %q", st.Plan.Trigger.chatThreadKey(), want)
+	}
+	firstThread := st.Plan.Trigger.chatThreadKey()
+
+	if err := e.Handle(ctx, severityChanged(t, "CATASTROPHIC", "CRITICAL")); err != nil {
+		t.Fatal(err)
+	}
+	raised := severityChanged(t, "CRITICAL", "CATASTROPHIC")
+	if err := e.Handle(ctx, raised); err != nil {
+		t.Fatal(err)
+	}
+	st, found, _ = store.Get(ctx, testIncidentID)
+	if !found {
+		t.Fatal("no SRE chain after the raise to S0")
+	}
+	second := st.Plan.Trigger.chatThreadKey()
+	if want := notifications.CaseS0ThreadKey(testIncidentID, raised.Value); second != want {
+		t.Errorf("second episode thread = %q; want %q", second, want)
+	}
+	if second == firstThread {
+		t.Errorf("the raise to S0 reused thread %q; want a new one", second)
+	}
+}
+
+// The per-episode thread is the SRE ladder's only: a CRE-ladder case keeps
+// its own thread, and an incident keeps the incident card's.
+func TestSRECaseRung_EpisodeThreadOnlyOnTheSRELadder(t *testing.T) {
+	cre := sreCase("MS/PC SRE Group")
+	cre.Routing.Ladder = LadderCRE
+	cre.CardThread = "incident-case-1-abc"
+	if got := cre.chatThreadKey(); got != "incident-escalation-case-1" {
+		t.Errorf("CRE case thread = %q; want incident-escalation-case-1", got)
+	}
+	inc := Trigger{IncidentID: "inc-1", Record: RecordIncident, Routing: RoutingContext{Ladder: LadderSRE}}
+	if got := inc.chatThreadKey(); got != notifications.IncidentThreadKey("inc-1") {
+		t.Errorf("incident thread = %q; want %q", got, notifications.IncidentThreadKey("inc-1"))
+	}
+	sre := sreCase("MS/PC SRE Group")
+	if got := sre.chatThreadKey(); got != notifications.IncidentThreadKey("case-1") {
+		t.Errorf("SRE case chain saved before CardThread = %q; want the case's one thread", got)
 	}
 }
