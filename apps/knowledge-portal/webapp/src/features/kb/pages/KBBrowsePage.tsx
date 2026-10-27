@@ -51,6 +51,7 @@ export default function KBBrowsePage(): JSX.Element {
   const PAGE_SIZE = 20;
   const [offset, setOffset] = useState(0);
   const [accumulated, setAccumulated] = useState<KBArticle[]>([]);
+  const [lastAppendedOffset, setLastAppendedOffset] = useState(-1);
 
   const searchReq = useMemo(() => ({
     ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
@@ -59,22 +60,25 @@ export default function KBBrowsePage(): JSX.Element {
     offset,
   }), [knowledgeBaseId, searchQuery, offset]);
 
-  const { data, isLoading, isError } = useSearchArticles(searchReq);
+  const { data, isLoading, isError, isFetching, isPlaceholderData } = useSearchArticles(searchReq);
 
   // Reset accumulated articles when filters change (but not when offset changes)
   useEffect(() => {
     setOffset(0);
     setAccumulated([]);
+    setLastAppendedOffset(-1);
   }, [knowledgeBaseId, searchQuery]);
 
-  // Append new page results
+  // Append new page results only when the real fetch completes,
+  // not when keepPreviousData supplies stale results.
   useEffect(() => {
-    if (data?.articles) {
+    if (data?.articles && !isPlaceholderData && offset !== lastAppendedOffset) {
       setAccumulated((prev) =>
         offset === 0 ? data.articles : [...prev, ...data.articles]
       );
+      setLastAppendedOffset(offset);
     }
-  }, [data, offset]);
+  }, [data, offset, isPlaceholderData, lastAppendedOffset]);
 
   const knowledgeBases = kbData?.knowledgeBases ?? [];
   const articles = accumulated;
@@ -226,9 +230,9 @@ export default function KBBrowsePage(): JSX.Element {
                   <Button
                     variant="outlined"
                     onClick={loadMore}
-                    disabled={isLoading}
+                    disabled={isFetching}
                   >
-                    {isLoading ? "Loading..." : "Load more"}
+                    {isFetching ? "Loading..." : "Load more"}
                   </Button>
                 </Stack>
               )}
