@@ -22,7 +22,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/chataudience"
@@ -56,21 +59,27 @@ func roomCards(chat *mockGoogleChatSender) []sentIncidentCreatedAlert {
 	return slices.Clone(chat.incidentCreatedCalls)
 }
 
+// roomAudiences is the rooms the card went to, sorted.
 func roomAudiences(chat *mockGoogleChatSender) []string {
 	var out []string
 	for _, c := range roomCards(chat) {
 		out = append(out, c.audience)
 	}
+	slices.Sort(out)
 	return out
 }
 
 func sreRoomDispatcher(chat googleChatSender) *Dispatcher {
+	return sreRoomDispatcherWith(&mockEmailSender{}, chat)
+}
+
+func sreRoomDispatcherWith(email emailSender, chat googleChatSender) *Dispatcher {
 	routes := &notifications.IncidentRoutes{}
 	routes.Set(map[string][]string{"Default SRE Group": {"apollo", "artemis"}})
 	routes.SetTeamless([]string{"apollo", "artemis"})
 	// WSO2 IaaS Team is the one known SRE team; U2 SRE Group is not one.
 	routes.SetKnownSRETeam(func(group string) bool { return strings.EqualFold(group, "WSO2 IaaS Team") })
-	return NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, true, false, nil, true, "", nil).
+	return NewDispatcher(email, chat, &mockCallSender{}, &mockLinkResolver{}, true, false, nil, true, "", nil).
 		WithIncidentRoutes(routes)
 }
 
@@ -207,5 +216,202 @@ func TestDispatcher_S0RoomCardOnlyForCustomerCases(t *testing.T) {
 				t.Errorf("room cards = %d; want %d", got, tc.rooms)
 			}
 		})
+	}
+}
+
+// blockingRoomChat holds every SRE room card until the Incident Monitor card
+// has gone out, so the record completes only if the CRE-side work does not
+// wait for the room card.
+type blockingRoomChat struct {
+	*mockGoogleChatSender
+	monitorSent chan struct{}
+	// timedOut is set when a room card gave up waiting for the Incident
+	// Monitor card: the CRE-side work was waiting for the room card.
+	timedOut *atomic.Bool
+}
+
+func (b blockingRoomChat) SendCaseCreatedAlert(ctx context.Context, audience, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error {
+	err := b.mockGoogleChatSender.SendCaseCreatedAlert(ctx, audience, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink)
+	close(b.monitorSent)
+	return err
+}
+
+func (b blockingRoomChat) SendIncidentCreatedAlert(ctx context.Context, audience string, a notifications.IncidentCreatedAlert) error {
+	select {
+	case <-b.monitorSent:
+	case <-time.After(5 * time.Second):
+		b.timedOut.Store(true)
+		return errors.New("timed out: the Incident Monitor card was never sent while the SRE room card waited for it")
+	}
+	return b.mockGoogleChatSender.SendIncidentCreatedAlert(ctx, audience, a)
+}
+
+// The CRE-side work does not wait for the SRE room card: the Incident Monitor
+// card (and the emails before it) go out while the room card is held, and
+// Handle still returns only once the room card is done.
+//
+// Guards against putting the room card first in the handler's own sequence
+// (the reorder considered in #3052): the Incident Monitor card would then wait
+// for a room card that is waiting for it, and this test fails. Together with
+// TestDispatcher_S0RoomCardStartsBeforeTheCRESideWork it pins the parallel path.
+func TestDispatcher_S0RoomCardDoesNotDelayTheCRESideWork(t *testing.T) {
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	timedOut := &atomic.Bool{}
+	d := sreRoomDispatcher(blockingRoomChat{mockGoogleChatSender: chat, monitorSent: make(chan struct{}), timedOut: timedOut})
+	err := d.Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team"))
+	// The room card is best effort, so a CRE side that waits for it does not
+	// fail Handle: it shows as the room card timing out.
+	if timedOut.Load() {
+		t.Fatalf("The CRE-side work (Incident Monitor card, emails) now waits for the SRE room card. " +
+			"A slow or hanging SRE webhook would then delay the Incident Monitor card and the case emails. See #3052.")
+	}
+	if err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	if got := caseCardAudiences(chat); !slices.Equal(got, []string{chataudience.IncidentMonitor}) {
+		t.Errorf("Case Reported card went to %v; want Incident Monitor", got)
+	}
+	if got := roomAudiences(chat); !slices.Equal(got, []string{notifications.IncidentAudience("WSO2 IaaS Team")}) {
+		t.Errorf("room card went to %v by the time Handle returned; want the team's room", got)
+	}
+}
+
+// Every room is posted; one failing room does not stop the others.
+func TestDispatcher_S0RoomCardPostsEveryRoom(t *testing.T) {
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	if err := sreRoomDispatcher(chat).Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "")); err != nil {
+		t.Fatalf("Handle error = %v", err)
+	}
+	got := roomAudiences(chat)
+	if want := []string{notifications.IncidentAudience("apollo"), notifications.IncidentAudience("artemis")}; !slices.Equal(got, want) {
+		t.Errorf("room cards went to %v; want %v", got, want)
+	}
+}
+
+// roomSignalChat closes roomSent the moment the SRE room card is sent.
+type roomSignalChat struct {
+	*mockGoogleChatSender
+	roomSent chan struct{}
+	once     sync.Once
+}
+
+func (r *roomSignalChat) SendIncidentCreatedAlert(ctx context.Context, audience string, a notifications.IncidentCreatedAlert) error {
+	err := r.mockGoogleChatSender.SendIncidentCreatedAlert(ctx, audience, a)
+	r.once.Do(func() { close(r.roomSent) })
+	return err
+}
+
+// emailWaitsForRoomCard sends no email until the SRE room card has been sent,
+// and fails after 5 s.
+type emailWaitsForRoomCard struct {
+	*mockEmailSender
+	roomSent <-chan struct{}
+}
+
+func (e emailWaitsForRoomCard) SendEmail(ctx context.Context, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
+	return e.SendEmailFrom(ctx, "", to, cc, bcc, replyTo, subject, htmlBody, attachments)
+}
+
+func (e emailWaitsForRoomCard) SendEmailFrom(ctx context.Context, from string, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
+	select {
+	case <-e.roomSent:
+	case <-time.After(5 * time.Second):
+		return errors.New("timed out: the case emails started before any SRE room card was sent")
+	}
+	return e.mockEmailSender.SendEmailFrom(ctx, from, to, cc, bcc, replyTo, subject, htmlBody, attachments)
+}
+
+// The SRE room card starts before the CRE-side work: the case emails, and so
+// the Incident Monitor card after them, only go out once it has been sent.
+//
+// Guards against the room card going back to the end of the handler (#3038's
+// order): the emails would then wait for a card that only comes after them,
+// time out, and this test fails. Together with
+// TestDispatcher_S0RoomCardDoesNotDelayTheCRESideWork it pins the parallel path.
+func TestDispatcher_S0RoomCardStartsBeforeTheCRESideWork(t *testing.T) {
+	roomSent := make(chan struct{})
+	chat := &roomSignalChat{mockGoogleChatSender: &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}, roomSent: roomSent}
+	email := emailWaitsForRoomCard{mockEmailSender: &mockEmailSender{}, roomSent: roomSent}
+	if err := sreRoomDispatcherWith(email, chat).Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team")); err != nil {
+		if len(roomCards(chat.mockGoogleChatSender)) == 0 {
+			t.Fatalf("No SRE room card was sent for this S0 case. Check the room selection (CaseSREAudiences) "+
+				"and the S0 gate; this is not an ordering problem. (%v)", err)
+		}
+		t.Fatalf("The SRE room card no longer starts before the CRE-side work (emails, Incident Monitor card). "+
+			"Notifications still work, but the SRE engine can post its first rung (\"Notifying L1\") before the case card, "+
+			"so the rung opens the thread in the SRE room and the \"Case Reported\" card lands under it as a reply. See #3052. (%v)", err)
+	}
+	if len(email.mockEmailSender.calls) == 0 {
+		t.Error("no case email was sent")
+	}
+	if got := caseCardAudiences(chat.mockGoogleChatSender); !slices.Equal(got, []string{chataudience.IncidentMonitor}) {
+		t.Errorf("Case Reported card went to %v; want Incident Monitor", got)
+	}
+}
+
+// failFirstRoomChat fails the first room card and accepts the rest.
+type failFirstRoomChat struct {
+	*mockGoogleChatSender
+	mu        sync.Mutex
+	attempted []string
+}
+
+func (f *failFirstRoomChat) SendIncidentCreatedAlert(ctx context.Context, audience string, a notifications.IncidentCreatedAlert) error {
+	f.mu.Lock()
+	f.attempted = append(f.attempted, audience)
+	first := len(f.attempted) == 1
+	f.mu.Unlock()
+	if first {
+		return errors.New("room unavailable")
+	}
+	return f.mockGoogleChatSender.SendIncidentCreatedAlert(ctx, audience, a)
+}
+
+// One failing SRE room does not stop the others, and does not fail the record.
+func TestDispatcher_S0RoomCardContinuesAfterRoomFailure(t *testing.T) {
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	sender := &failFirstRoomChat{mockGoogleChatSender: chat}
+	if err := sreRoomDispatcher(sender).Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "")); err != nil {
+		t.Fatalf("Handle error = %v; a failing room must not fail the record", err)
+	}
+	sender.mu.Lock()
+	attempted := slices.Clone(sender.attempted)
+	sender.mu.Unlock()
+	slices.Sort(attempted)
+	want := []string{notifications.IncidentAudience("apollo"), notifications.IncidentAudience("artemis")}
+	if !slices.Equal(attempted, want) {
+		t.Errorf("rooms attempted = %v; want %v", attempted, want)
+	}
+	if got := roomAudiences(chat); len(got) != 1 || !slices.Contains(want, got[0]) {
+		t.Errorf("room cards delivered to %v; want one of the teamless rooms", got)
+	}
+}
+
+// hangingRoomChat never answers a room card until its context ends.
+type hangingRoomChat struct{ *mockGoogleChatSender }
+
+func (hangingRoomChat) SendIncidentCreatedAlert(ctx context.Context, _ string, _ notifications.IncidentCreatedAlert) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// A hanging SRE webhook holds the record no longer than the budget, however
+// many rooms there are, and does not fail it: the next record on the
+// partition, possibly another case's CRE event, is not held for long.
+func TestDispatcher_S0RoomCardHangingWebhookIsBounded(t *testing.T) {
+	was := caseSRERoomCardBudget
+	caseSRERoomCardBudget = 200 * time.Millisecond
+	t.Cleanup(func() { caseSRERoomCardBudget = was })
+
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	start := time.Now()
+	if err := sreRoomDispatcher(hangingRoomChat{chat}).Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "")); err != nil {
+		t.Fatalf("Handle error = %v; a hanging room must not fail the record", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("Handle took %v with a hanging SRE webhook; want about the %v budget", took, caseSRERoomCardBudget)
+	}
+	if got := caseCardAudiences(chat); !slices.Equal(got, []string{chataudience.IncidentMonitor}) {
+		t.Errorf("Case Reported card went to %v; want Incident Monitor", got)
 	}
 }
