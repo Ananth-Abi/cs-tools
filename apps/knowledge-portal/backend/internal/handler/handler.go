@@ -225,22 +225,9 @@ func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var full struct {
-		Article json.RawMessage `json:"article"`
-	}
-	if err := json.Unmarshal(payload, &full); err != nil {
-		var a publicArticle
-		if json.Unmarshal(payload, &a) == nil && a.State == "published" {
-			out, _ := json.Marshal(map[string]any{"article": a})
-			writeJSON(w, http.StatusOK, out)
-			return
-		}
-		writeError(w, http.StatusBadGateway, "Failed to read the article.")
-		return
-	}
-
 	var a publicArticle
-	if err := json.Unmarshal(full.Article, &a); err != nil {
+	if err := json.Unmarshal(payload, &a); err != nil {
+		slog.ErrorContext(r.Context(), "decode article failed", "id", id, "err", err)
 		writeError(w, http.StatusBadGateway, "Failed to read the article.")
 		return
 	}
@@ -249,7 +236,7 @@ func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, _ := json.Marshal(map[string]any{"article": a})
+	out, _ := json.Marshal(a)
 	writeJSON(w, http.StatusOK, out)
 }
 
