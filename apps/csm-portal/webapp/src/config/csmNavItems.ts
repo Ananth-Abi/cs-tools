@@ -40,6 +40,7 @@ import {
   ScrollText,
   Settings,
   Shield,
+  UserCheck,
   UserCog,
   UserSearch,
   Users,
@@ -199,6 +200,12 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     label: "Engagements",
     href: "/engagements",
     icon: Briefcase,
+  },
+  {
+    id: "allocations",
+    label: "Allocations",
+    href: "/allocations",
+    icon: UserCheck,
   },
   {
     id: "announcements",
