@@ -1,2 +1,6 @@
+packages:
+  - "."
+
 allowBuilds:
-  esbuild: false
+  core-js: true
+  esbuild: true

@@ -3,54 +3,161 @@
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-// Command server runs the public Knowledge Base API. Everything it serves
-// is public and read-only: published KB articles, knowledge bases, search,
-// view counts, and related-article lookups. There is no authentication --
-// per the Sep 30 decision, rating (the only feature that needed login) was
-// dropped, so this whole service is unauthenticated by design.
+// Command server runs the public Knowledge Base API. Everything it serves is
+// public and read-only: published KB articles, active knowledge bases, search
+// and related-article lookups. There is no authentication by design, so there is
+// no identity or authorization middleware here; the controls that replace it are
+// strict input validation, a forced published-only filter and whitelist response
+// shapes (see internal/handler).
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
-	"time"
+	"os/signal"
+	"strings"
+	"syscall"
 
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/handler"
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/pinecone"
 )
 
-func mustEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func main() {
-	port := mustEnv("PORT", "8085")
+	loadDotEnv(".env")
+	middleware.ConfigureLogger()
 
-	kb := handler.NewKBHandler()
+	cfg, err := loadConfig(os.Getenv)
+	if err != nil {
+		slog.Error("invalid configuration", "err", err)
+		os.Exit(1)
+	}
+
+	entityClient := entity.NewClient(entity.Config{
+		BaseURL:      cfg.EntityBaseURL,
+		TokenURL:     cfg.TokenURL,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		Scopes:       cfg.EntityScopes,
+		Timeout:      cfg.Timeouts.EntityService,
+	})
+
+	var similarity handler.Similarity
+	if cfg.PineconeHost != "" {
+		pc, err := pinecone.New(cfg.PineconeHost, cfg.PineconeKey)
+		if err != nil {
+			slog.Error("invalid related-articles index configuration", "err", err)
+			os.Exit(1)
+		}
+		similarity = pc
+	}
+	kb := handler.NewKBHandler(entityClient, similarity)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	mux.HandleFunc("GET /health", handler.Health)
 	mux.HandleFunc("GET /public/knowledge-bases", kb.ListKnowledgeBases)
 	mux.HandleFunc("POST /public/kb-articles/search", kb.SearchArticles)
 	mux.HandleFunc("GET /public/kb-articles/{id}", kb.GetArticle)
 	mux.HandleFunc("GET /public/kb-articles/{id}/related", kb.RelatedArticles)
+	mux.HandleFunc("/", handler.NotFound)
 
-	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           handler.CORS(mux),
-		ReadHeaderTimeout: 10 * time.Second,
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	addr := ":" + cfg.Port
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		slog.Error("failed to bind", "addr", addr, "err", err)
+		os.Exit(1)
 	}
 
-	slog.Info("knowledge-portal backend started", "port", port)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server failed", "err", err)
+	srv := &http.Server{
+		// SecurityHeaders stays outermost so its headers are on every response.
+		// Logger wraps Recovery so a recovered panic is recorded as a 500 in the
+		// access log. CORS is not handled here: the API gateway sets it.
+		Handler: middleware.SecurityHeaders(
+			middleware.CorrelationID(
+				middleware.Logger(
+					middleware.Recovery(mux),
+				),
+			),
+		),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       cfg.Timeouts.RESTRead,
+		WriteTimeout:      cfg.Timeouts.RESTWrite,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+	}
+
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server exited", "err", err)
+			os.Exit(1)
+		}
+	}()
+	slog.Info("Knowledge Portal Backend started", "addr", addr)
+
+	<-ctx.Done()
+	stop()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
+	}
+	slog.Info("Knowledge Portal Backend stopped")
+}
+
+// loadDotEnv reads a .env file and sets any unset environment variables from it.
+// Silently ignored if the file does not exist; logs a warning for any other error.
+func loadDotEnv(path string) {
+	f, err := os.Open(path) // #nosec G304 -- path is always the hardcoded literal ".env" at the only call site
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("loadDotEnv: failed to open .env file", "err", err)
+		}
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		// Strip surrounding quotes from value.
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
+		}
+		if os.Getenv(k) == "" {
+			_ = os.Setenv(k, v)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("loadDotEnv: error reading .env file", "err", err)
 	}
 }

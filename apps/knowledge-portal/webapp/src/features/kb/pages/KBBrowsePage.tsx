@@ -3,13 +3,20 @@
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 import {
   Box,
   Button,
-  Card,
-  CardActionArea,
-  CircularProgress,
   Container,
   Divider,
   Grid,
@@ -17,222 +24,165 @@ import {
   ListItemButton,
   ListItemText,
   Stack,
-  TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Eye, Search } from "@wso2/oxygen-ui-icons-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type JSX } from "react";
-import { useNavigate, useSearchParams } from "react-router";
-import { useKnowledgeBases, useSearchArticles } from "@features/kb/api/useKb";
-import type { KBArticle } from "@features/kb/types/kb";
-
-const toSnippet = (body: string, max = 180): string => {
-  const plain = body
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[#*_`>[\]()]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain.length > max ? `${plain.slice(0, max)}...` : plain;
-};
+import type { JSX } from "react";
+import { Link, useSearchParams } from "react-router";
+import { isValidId } from "@api/backend/types";
+import { isClientError } from "@api/backend/client";
+import { useArticleSearch, useKnowledgeBases } from "@api/useKb";
+import EmptyState from "@components/EmptyState";
+import LoadingState from "@components/LoadingState";
+import QueryErrorState from "@components/QueryErrorState";
+import ArticleCard from "@features/kb/components/ArticleCard";
+import ArticleList, { ArticleListItem } from "@features/kb/components/ArticleList";
+import SearchBox from "@features/kb/components/SearchBox";
+import { useDocumentTitle } from "@hooks/useDocumentTitle";
+import { browseUrl } from "@utils/browseUrl";
+import { normalizeSearchQuery } from "@utils/searchQuery";
+import { toSnippet } from "@utils/snippet";
 
 export default function KBBrowsePage(): JSX.Element {
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
 
-  const knowledgeBaseId = params.get("knowledgeBaseId") ?? "";
-  const searchQuery = params.get("q") ?? "";
-  const [draftQuery, setDraftQuery] = useState(searchQuery);
-
-  useEffect(() => {
-    setDraftQuery(searchQuery);
-  }, [searchQuery]);
+  const rawKb = params.get("knowledgeBaseId");
+  const knowledgeBaseId = isValidId(rawKb) ? rawKb : "";
+  const searchQuery = normalizeSearchQuery(params.get("q"));
 
   const { data: kbData } = useKnowledgeBases();
-  const PAGE_SIZE = 20;
-  const [offset, setOffset] = useState(0);
-  const [accumulated, setAccumulated] = useState<KBArticle[]>([]);
-  const [lastAppendedOffset, setLastAppendedOffset] = useState(-1);
-
-  const searchReq = useMemo(() => ({
-    ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
-    ...(searchQuery ? { searchQuery } : {}),
-    limit: PAGE_SIZE,
-    offset,
-  }), [knowledgeBaseId, searchQuery, offset]);
-
-  const { data, isLoading, isError, isFetching, isPlaceholderData } = useSearchArticles(searchReq);
-
-  // Reset accumulated articles when filters change (but not when offset changes)
-  useEffect(() => {
-    setOffset(0);
-    setAccumulated([]);
-    setLastAppendedOffset(-1);
-  }, [knowledgeBaseId, searchQuery]);
-
-  // Append new page results only when the real fetch completes,
-  // not when keepPreviousData supplies stale results.
-  useEffect(() => {
-    if (data?.articles && !isPlaceholderData && offset !== lastAppendedOffset) {
-      setAccumulated((prev) =>
-        offset === 0 ? data.articles : [...prev, ...data.articles]
-      );
-      setLastAppendedOffset(offset);
-    }
-  }, [data, offset, isPlaceholderData, lastAppendedOffset]);
+  const search = useArticleSearch({ knowledgeBaseId, searchQuery });
 
   const knowledgeBases = kbData?.knowledgeBases ?? [];
-  const articles = accumulated;
-  const total = data?.total ?? 0;
-  const hasMore = articles.length < total;
+  const selectedKb = knowledgeBases.find((kb) => kb.id === knowledgeBaseId);
 
-  const loadMore = useCallback(() => {
-    setOffset((prev) => prev + PAGE_SIZE);
-  }, []);
+  const heading = searchQuery
+    ? `Search results for "${searchQuery}"`
+    : (selectedKb?.title ?? "All articles");
+  useDocumentTitle(heading);
 
-  const onSearch = (e: FormEvent) => {
-    e.preventDefault();
+  const onSearch = (raw: string): void => {
     const next = new URLSearchParams(params);
-    const trimmed = draftQuery.trim();
-    if (trimmed) {
-      next.set("q", trimmed);
-    } else {
-      next.delete("q");
-    }
+    const q = normalizeSearchQuery(raw);
+    if (q) next.set("q", q);
+    else next.delete("q");
     setParams(next);
   };
 
-  const selectKnowledgeBase = (id: string) => {
-    const next = new URLSearchParams(params);
-    if (id) {
-      next.set("knowledgeBaseId", id);
-    } else {
-      next.delete("knowledgeBaseId");
-    }
-    setParams(next);
-  };
+  const { articles, total } = search;
+  const showInitialError = search.isError && articles.length === 0;
 
   return (
     <Container maxWidth="lg" sx={{ py: 5 }}>
-      <Box component="form" onSubmit={onSearch} sx={{ mb: 4 }}>
-        <TextField
-          fullWidth
-          value={draftQuery}
-          onChange={(e) => setDraftQuery(e.target.value)}
+      <Typography variant="h4" component="h1" sx={{ fontWeight: 700, mb: 3 }}>
+        {heading}
+      </Typography>
+
+      <Box sx={{ mb: 4 }}>
+        {/* Remount when the URL query changes so the input follows back/forward. */}
+        <SearchBox
+          key={searchQuery}
+          label="Search articles"
           placeholder="Search articles..."
-          slotProps={{
-            input: {
-              startAdornment: (
-                <Search size={18} style={{ marginRight: 8, opacity: 0.6 }} />
-              ),
-            },
-          }}
+          initialValue={searchQuery}
+          onSearch={onSearch}
         />
       </Box>
 
       <Grid container spacing={4}>
         <Grid size={{ xs: 12, md: 3 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-            Knowledge bases
-          </Typography>
-          <Divider sx={{ mb: 1 }} />
-          <List dense disablePadding>
-            <ListItemButton
-              selected={!knowledgeBaseId}
-              onClick={() => selectKnowledgeBase("")}
-              sx={{ borderRadius: 1 }}
-            >
-              <ListItemText primary="All" />
-            </ListItemButton>
-            {knowledgeBases.map((kb) => (
+          <Box component="nav" aria-label="Knowledge bases">
+            <Typography variant="subtitle2" component="h2" sx={{ fontWeight: 600, mb: 1 }}>
+              Knowledge bases
+            </Typography>
+            <Divider sx={{ mb: 1 }} />
+            <List dense disablePadding>
               <ListItemButton
-                key={kb.id}
-                selected={kb.id === knowledgeBaseId}
-                onClick={() => selectKnowledgeBase(kb.id)}
+                component={Link}
+                to={browseUrl({ q: searchQuery })}
+                selected={!knowledgeBaseId}
+                aria-current={!knowledgeBaseId ? "page" : undefined}
                 sx={{ borderRadius: 1 }}
               >
-                <ListItemText primary={kb.title} />
+                <ListItemText primary="All" />
               </ListItemButton>
-            ))}
-          </List>
+              {knowledgeBases.map((kb) => (
+                <ListItemButton
+                  key={kb.id}
+                  component={Link}
+                  to={browseUrl({ knowledgeBaseId: kb.id, q: searchQuery })}
+                  selected={kb.id === knowledgeBaseId}
+                  aria-current={kb.id === knowledgeBaseId ? "page" : undefined}
+                  sx={{ borderRadius: 1 }}
+                >
+                  <ListItemText primary={kb.title} />
+                </ListItemButton>
+              ))}
+            </List>
+          </Box>
         </Grid>
 
         <Grid size={{ xs: 12, md: 9 }}>
-          {isLoading && (
-            <Stack alignItems="center" sx={{ py: 8 }}>
-              <CircularProgress size={28} />
-            </Stack>
+          {search.isLoading && <LoadingState label="Loading articles" />}
+
+          {showInitialError && (
+            <QueryErrorState
+              error={search.error}
+              message="Articles could not be loaded."
+              onRetry={isClientError(search.error) ? undefined : search.refetch}
+            />
           )}
 
-          {isError && (
-            <Typography color="error" variant="body2">
-              The knowledge base is temporarily unavailable. Please try again
-              later.
-            </Typography>
-          )}
-
-          {!isLoading && !isError && (
+          {!search.isLoading && !showInitialError && (
             <>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                role="status"
+                aria-live="polite"
+                sx={{ mb: 2 }}
+              >
                 {total} article{total === 1 ? "" : "s"}
+                {articles.length > 0 && total > articles.length
+                  ? `, showing ${articles.length}`
+                  : ""}
               </Typography>
 
-              {articles.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  No articles matched. Try a different search or knowledge base.
-                </Typography>
+              {articles.length === 0 ? (
+                <EmptyState
+                  title="No articles matched"
+                  message="Try a different search or knowledge base."
+                />
+              ) : (
+                <ArticleList label="Articles" busy={search.isRefreshing}>
+                  {articles.map((article) => (
+                    <ArticleListItem key={article.id}>
+                      <ArticleCard
+                        id={article.id}
+                        title={article.title}
+                        snippet={toSnippet(article.body)}
+                        publishedOn={article.publishedOn}
+                      />
+                    </ArticleListItem>
+                  ))}
+                </ArticleList>
               )}
 
-              <Stack spacing={1.5}>
-                {articles.map((article) => (
-                  <Card key={article.id} variant="outlined">
-                    <CardActionArea
-                      onClick={() => navigate(`/articles/${article.id}`)}
-                      sx={{ p: 2.5, alignItems: "flex-start" }}
-                    >
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                        {article.title}
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mt: 0.5 }}
-                      >
-                        {toSnippet(article.body)}
-                      </Typography>
-                      <Stack
-                        direction="row"
-                        spacing={1.5}
-                        alignItems="center"
-                        sx={{ mt: 1, color: "text.secondary" }}
-                      >
-                        {article.viewCount != null && (
-                          <Stack direction="row" spacing={0.5} alignItems="center">
-                            <Eye size={13} />
-                            <Typography variant="caption">
-                              {article.viewCount} views
-                            </Typography>
-                          </Stack>
-                        )}
-                        {article.publishedOn && (
-                          <Typography variant="caption">
-                            {new Date(article.publishedOn).toLocaleDateString()}
-                          </Typography>
-                        )}
+              {search.isLoadMoreError && (
+                <QueryErrorState
+                  error={search.error}
+                  message="More articles could not be loaded."
+                  onRetry={search.loadMore}
+                />
+              )}
 
-                      </Stack>
-                    </CardActionArea>
-                  </Card>
-                ))}
-              </Stack>
-
-              {hasMore && (
+              {search.hasMore && !search.isLoadMoreError && (
                 <Stack alignItems="center" sx={{ mt: 3 }}>
                   <Button
                     variant="outlined"
-                    onClick={loadMore}
-                    disabled={isFetching}
+                    onClick={search.loadMore}
+                    disabled={search.isLoadingMore}
                   >
-                    {isFetching ? "Loading..." : "Load more"}
+                    {search.isLoadingMore ? "Loading..." : "Load more"}
                   </Button>
                 </Stack>
               )}

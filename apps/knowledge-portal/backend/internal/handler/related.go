@@ -3,167 +3,174 @@
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
+
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/entity"
 )
 
-type pineconeQueryRequest struct {
-	ID              string `json:"id"`
-	TopK            int    `json:"topK"`
-	IncludeMetadata bool   `json:"includeMetadata"`
-	Namespace       string `json:"namespace"`
-}
+const (
+	// relatedMax is how many related articles are returned.
+	relatedMax = 5
+	// relatedCandidates is how many vector matches are fetched; one extra covers
+	// the source article matching itself, the rest cover unpublished matches.
+	relatedCandidates = 8
+	// relatedBudget bounds the whole related-articles lookup.
+	relatedBudget = 20 * time.Second
+)
 
-type pineconeMatch struct {
-	ID       string            `json:"id"`
-	Score    float64           `json:"score"`
-	Metadata map[string]string `json:"metadata"`
-}
-
-type pineconeQueryResponse struct {
-	Matches []pineconeMatch `json:"matches"`
-}
-
-type relatedArticle struct {
-	ID    string  `json:"id"`
-	Title string  `json:"title"`
-	Score float64 `json:"score"`
-}
-
-// RelatedArticles handles GET /public/kb-articles/{id}/related. Queries
-// Pinecone by the article's vector id for semantically similar articles.
-// Falls back to same-knowledge-base articles when Pinecone is unavailable,
-// unconfigured, or returns nothing.
+// RelatedArticles handles GET /public/kb-articles/{id}/related.
+//
+// The source article must itself be published (404 otherwise). Semantic matches
+// come back from the vector index as ids only; each is re-read from
+// entity-service and kept only if it is published, and the title served is the
+// one entity-service holds, never one stored in the index. When no semantic
+// match survives (index disabled, down, or all unpublished) it falls back to
+// other published articles in the same knowledge base.
 func (h *KBHandler) RelatedArticles(w http.ResponseWriter, r *http.Request) {
-	articleID := r.PathValue("id")
-	if !isValidUUID(articleID) {
-		writeError(w, http.StatusBadRequest, "Invalid article id.")
+	id := r.PathValue("id")
+	if !validID(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidID)
 		return
 	}
+	// Related articles chain several upstream calls; bound the whole lookup so it
+	// finishes inside the server's write timeout and can still answer cleanly.
+	ctx, cancel := context.WithTimeout(r.Context(), relatedBudget)
+	defer cancel()
+	r = r.WithContext(ctx)
 
-	var article struct {
-		KnowledgeBaseID string `json:"knowledgeBaseId"`
-	}
-	if entResp, err := h.do(r, http.MethodGet, "/kb-articles/"+articleID, nil); err == nil {
-		defer entResp.Body.Close()
-		_ = json.NewDecoder(entResp.Body).Decode(&article)
-	}
-
-	if h.pineconeHost == "" || h.pineconeKey == "" {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
-		return
-	}
-
-	qBody, err := json.Marshal(pineconeQueryRequest{ID: articleID, TopK: 6, IncludeMetadata: true, Namespace: ""})
+	src, err := h.entity.GetKBArticle(r.Context(), id)
 	if err != nil {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
+		writeUpstreamError(w, r, "related: get source article", err, true)
 		return
 	}
-
-	host := h.pineconeHost
-	if host[len(host)-1] == '/' {
-		host = host[:len(host)-1]
+	if src.State != entity.StatePublished {
+		writeError(w, http.StatusNotFound, ErrMsgNotFound)
+		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, host+"/query", bytes.NewReader(qBody))
+	active, err := h.activeKBs.get(r.Context())
 	if err != nil {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
+		writeUpstreamError(w, r, "related: load active knowledge bases", err, false)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Api-Key", h.pineconeKey)
-
-	resp, err := h.http.Do(req)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "pinecone query failed", "id", articleID, "err", err)
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
-		return
-	}
-	defer resp.Body.Close()
-
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
+	if _, ok := active[src.KnowledgeBaseID]; !ok {
+		writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		return
 	}
 
-	var pResp pineconeQueryResponse
-	if err := json.Unmarshal(payload, &pResp); err != nil {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
-		return
-	}
-
-	result := make([]relatedArticle, 0, 5)
-	for _, m := range pResp.Matches {
-		if m.ID == articleID || m.Metadata["title"] == "" {
-			continue
-		}
-		result = append(result, relatedArticle{ID: m.ID, Title: m.Metadata["title"], Score: m.Score})
-		if len(result) >= 5 {
-			break
+	if h.similarity != nil {
+		if out := h.semanticRelated(r, id, active); len(out) > 0 {
+			writeJSONValue(w, http.StatusOK, relatedArticlesDTO{Articles: out})
+			return
 		}
 	}
-	if len(result) == 0 {
-		h.fallbackSameKB(w, r, articleID, article.KnowledgeBaseID)
-		return
-	}
-
-	out, _ := json.Marshal(map[string]any{"articles": result})
-	writeJSON(w, http.StatusOK, out)
+	writeJSONValue(w, http.StatusOK, relatedArticlesDTO{Articles: h.sameKnowledgeBase(r, src, active)})
 }
 
-// fallbackSameKB returns up to 5 published articles from the same knowledge
-// base, excluding the current one.
-func (h *KBHandler) fallbackSameKB(w http.ResponseWriter, r *http.Request, excludeID, knowledgeBaseID string) {
-	if knowledgeBaseID == "" {
-		writeJSON(w, http.StatusOK, []byte(`{"articles":[]}`))
-		return
-	}
-	searchBody, _ := json.Marshal(map[string]any{
-		"knowledgeBaseId": knowledgeBaseID,
-		"states":          []string{"published"},
-		"pagination":      map[string]int{"limit": 6, "offset": 0},
-	})
-	resp, err := h.do(r, http.MethodPost, "/kb-articles/search", searchBody)
+// semanticRelated returns verified, published semantic matches in index order.
+// Any failure yields an empty result so the caller falls back.
+func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []relatedArticleDTO {
+	matches, err := h.similarity.Similar(r.Context(), id, relatedCandidates)
 	if err != nil {
-		writeJSON(w, http.StatusOK, []byte(`{"articles":[]}`))
-		return
-	}
-	defer resp.Body.Close()
-
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, http.StatusOK, []byte(`{"articles":[]}`))
-		return
+		slog.ErrorContext(r.Context(), "related: similarity query failed", "err", err)
+		return nil
 	}
 
-	var searchResp struct {
-		Articles []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		} `json:"articles"`
+	// Candidate ids come from an external index: validate before they are
+	// used in an upstream URL, drop the source itself and duplicates.
+	type candidate struct {
+		id    string
+		score float64
 	}
-	if err := json.Unmarshal(payload, &searchResp); err != nil {
-		writeJSON(w, http.StatusOK, []byte(`{"articles":[]}`))
-		return
-	}
-
-	result := make([]relatedArticle, 0, 5)
-	for _, a := range searchResp.Articles {
-		if a.ID == excludeID {
+	seen := map[string]bool{id: true}
+	var cands []candidate
+	for _, m := range matches {
+		if !validID(m.ID) || seen[m.ID] {
 			continue
 		}
-		result = append(result, relatedArticle{ID: a.ID, Title: a.Title, Score: 0})
-		if len(result) >= 5 {
+		seen[m.ID] = true
+		cands = append(cands, candidate{id: m.ID, score: m.Score})
+	}
+
+	// Published-state lookup, concurrent (bounded by relatedCandidates).
+	found := make([]*entity.KBArticle, len(cands))
+	var wg sync.WaitGroup
+	for i, c := range cands {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a, err := h.entity.GetKBArticle(r.Context(), c.id)
+			if err != nil {
+				var apiErr *apierror.Error
+				if !(errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound) {
+					slog.WarnContext(r.Context(), "related: candidate lookup failed", "err", err)
+				}
+				return
+			}
+			if _, ok := active[a.KnowledgeBaseID]; ok && a.State == entity.StatePublished && a.ID == c.id {
+				found[i] = &a
+			}
+		}()
+	}
+	wg.Wait()
+
+	out := make([]relatedArticleDTO, 0, relatedMax)
+	for i, a := range found {
+		if a == nil || a.Title == "" {
+			continue
+		}
+		out = append(out, relatedArticleDTO{ID: a.ID, Title: a.Title, Score: cands[i].score})
+		if len(out) >= relatedMax {
 			break
 		}
 	}
-	out, _ := json.Marshal(map[string]any{"articles": result})
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+// sameKnowledgeBase returns up to relatedMax other published articles from the
+// source article's knowledge base. Failure yields an empty list: related
+// articles are decoration and must not fail the page.
+func (h *KBHandler) sameKnowledgeBase(r *http.Request, src entity.KBArticle, active kbSet) []relatedArticleDTO {
+	out := []relatedArticleDTO{}
+	if !validID(src.KnowledgeBaseID) {
+		return out
+	}
+	resp, err := h.entity.SearchKBArticles(r.Context(), entity.SearchRequest{
+		KnowledgeBaseID: src.KnowledgeBaseID,
+		States:          []string{entity.StatePublished},
+		Pagination:      entity.Pagination{Limit: relatedMax + 1},
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "related: same-knowledge-base search failed", "err", err)
+		return out
+	}
+	for _, a := range resp.Articles {
+		if _, ok := active[a.KnowledgeBaseID]; !ok || a.ID == src.ID || a.State != entity.StatePublished || a.Title == "" {
+			continue
+		}
+		out = append(out, relatedArticleDTO{ID: a.ID, Title: a.Title})
+		if len(out) >= relatedMax {
+			break
+		}
+	}
+	return out
 }
