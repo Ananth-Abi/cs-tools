@@ -479,6 +479,11 @@ func main() {
 	// phone) -- needed when reassigning a team lead who has no phone on
 	// file yet (see the /teams/{id}/lead comment above).
 	route("PATCH /users/{id}", handler.PermWrite, usersHandler.UpdateUser)
+	// Admin-only, like POST /users' own grantRoles field (the same
+	// grantableRoles resolution and the same GET /roles/grantable vocabulary)
+	// -- grants a portal permission role to a user who already exists,
+	// instead of only at the moment a new one is created.
+	route("POST /users/{id}/roles", handler.PermAdmin, usersHandler.GrantUserRoles)
 	// Registered unconditionally, even when timecardApproverRoleIDs is empty:
 	// GetTimeCardApprovers itself returns 404 when disabled. Registering it
 	// only when configured would instead let the request fall through to the

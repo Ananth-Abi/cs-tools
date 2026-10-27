@@ -1271,6 +1271,200 @@ func TestCreateUser(t *testing.T) {
 	})
 }
 
+// ----- GrantUserRoles -----
+
+func TestGrantUserRoles(t *testing.T) {
+	targetID := "11111111-1111-1111-1111-111111111111"
+	grantable := []GrantableRole{{Key: "cs_engineer", RoleID: "role-cs-engineer"}, {Key: "escalator", RoleID: "role-escalator"}}
+
+	newHandler := func(scimClient *mockSCIMClient, entityClient *mockEntityUserClient) *UsersHandler {
+		return NewUsersHandler(scimClient, entityClient, testDirectory(t), false, nil).WithGrantableRoles(grantable)
+	}
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := newHandler(&mockSCIMClient{}, &mockEntityUserClient{})
+		r := httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":["cs_engineer"]}`))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+	})
+
+	t.Run("rejects a malformed id", func(t *testing.T) {
+		h := newHandler(&mockSCIMClient{}, &mockEntityUserClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/not-a-uuid/roles", strings.NewReader(`{"roles":["cs_engineer"]}`)))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+	})
+
+	t.Run("rejects invalid JSON body", func(t *testing.T) {
+		h := newHandler(&mockSCIMClient{}, &mockEntityUserClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`not-json`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+	})
+
+	t.Run("rejects an empty roles list", func(t *testing.T) {
+		h := newHandler(&mockSCIMClient{}, &mockEntityUserClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":[]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("rejects an unknown role key before looking up the target user", func(t *testing.T) {
+		called := false
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(context.Context, string) ([]byte, error) {
+				called = true
+				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+			},
+		}
+		h := newHandler(&mockSCIMClient{}, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":["not-a-real-role"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		if called {
+			t.Fatal("the target user must not be looked up for an unknown role key")
+		}
+	})
+
+	t.Run("grants every requested role and reports 200 on full success", func(t *testing.T) {
+		var grantedRoleIDs []string
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(_ context.Context, id string) ([]byte, error) {
+				if id != targetID {
+					t.Fatalf("GetUser called with id = %q, want %q", id, targetID)
+				}
+				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+			},
+		}
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(_ context.Context, roleID string, emails []string) error {
+				if len(emails) != 1 || emails[0] != "jane@example.com" {
+					t.Fatalf("AddRoleMembers emails = %v, want [jane@example.com]", emails)
+				}
+				grantedRoleIDs = append(grantedRoleIDs, roleID)
+				return nil
+			},
+		}
+		h := newHandler(scimClient, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles",
+			strings.NewReader(`{"roles":["cs_engineer","escalator"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusOK)
+
+		var resp grantUserRolesResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(resp.Granted) != 2 || len(resp.Failed) != 0 {
+			t.Errorf("response = %+v, want both roles granted and none failed", resp)
+		}
+		if len(grantedRoleIDs) != 2 {
+			t.Errorf("AddRoleMembers called %d times, want 2", len(grantedRoleIDs))
+		}
+	})
+
+	t.Run("reports 502 when every role fails to grant", func(t *testing.T) {
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(context.Context, string) ([]byte, error) {
+				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+			},
+		}
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(context.Context, string, []string) error {
+				return errors.New("scim unavailable")
+			},
+		}
+		h := newHandler(scimClient, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":["cs_engineer"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusBadGateway)
+
+		var resp grantUserRolesResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(resp.Granted) != 0 || len(resp.Failed) != 1 {
+			t.Errorf("response = %+v, want zero granted and one failed", resp)
+		}
+	})
+
+	t.Run("reports 207 and still attempts every role on a partial failure", func(t *testing.T) {
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(context.Context, string) ([]byte, error) {
+				return []byte(`{"id":"`+targetID+`","email":"jane@example.com"}`), nil
+			},
+		}
+		var attempted []string
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(_ context.Context, roleID string, _ []string) error {
+				attempted = append(attempted, roleID)
+				if roleID == "role-escalator" {
+					return errors.New("scim rejected this role")
+				}
+				return nil
+			},
+		}
+		h := newHandler(scimClient, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles",
+			strings.NewReader(`{"roles":["cs_engineer","escalator"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		assertStatus(t, w, http.StatusMultiStatus)
+
+		var resp grantUserRolesResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(resp.Granted) != 1 || len(resp.Failed) != 1 {
+			t.Errorf("response = %+v, want exactly one granted and one failed", resp)
+		}
+		if len(attempted) != 2 {
+			t.Errorf("attempted %d roles, want both roles attempted despite the first succeeding and the second failing", len(attempted))
+		}
+	})
+
+	t.Run("maps a target-lookup failure through mapUpstreamErrorGeneric", func(t *testing.T) {
+		entityClient := &mockEntityUserClient{
+			getUserFn: func(context.Context, string) ([]byte, error) {
+				return nil, &apierror.Error{StatusCode: http.StatusNotFound}
+			},
+		}
+		called := false
+		scimClient := &mockSCIMClient{
+			addRoleMembersFn: func(context.Context, string, []string) error {
+				called = true
+				return nil
+			},
+		}
+		h := newHandler(scimClient, entityClient)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/users/"+targetID+"/roles", strings.NewReader(`{"roles":["cs_engineer"]}`)))
+		r.SetPathValue("id", targetID)
+		w := httptest.NewRecorder()
+		h.GrantUserRoles(w, r)
+		if called {
+			t.Fatal("no role should be granted when the target user lookup fails")
+		}
+	})
+}
+
 // ----- GetTimeCardApprovers -----
 
 func TestGetTimeCardApprovers(t *testing.T) {

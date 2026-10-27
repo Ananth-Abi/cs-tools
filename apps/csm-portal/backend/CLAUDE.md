@@ -250,6 +250,31 @@ is really a deployment misconfiguration. `GetTimeCardApprovers` checks for those
 and reports a sanitized 502 instead; every other SCIM failure status still goes through the normal
 `mapUpstreamErrorGeneric` mapping.
 
+## Granting a portal role to an existing user (`POST /users/{id}/roles`)
+
+`grantRoles` above only ever fires at the moment a new platform user is created — there was no
+way to put an *existing* user into a portal role afterward without an admin doing it by hand,
+outside the portal. `UsersHandler.GrantUserRoles` (`internal/handler/users.go`) closes that gap:
+admin-only, same `PermAdmin` gate as `POST /users` and `GET /roles/grantable`, and reuses the
+identical `handler.GrantableRole`/`RoleIDForKey` resolution `CreateUser`'s own grant step uses —
+the request body is `{"roles": ["cs_engineer", ...]}`, the same portal role key vocabulary `GET
+/roles/grantable` reports.
+
+**Unlike `CreateUser`'s grant step, a SCIM failure here is not best-effort.** `CreateUser` can
+treat a failed grant as recoverable because the platform user it just created is the actual point
+of that call — granting a role is a bonus on top. Here, granting the role *is* the entire point of
+the call, so swallowing a SCIM failure as a logged warning (as `CreateUser` does) would return a
+200 to an admin who just watched nothing happen. Every requested role is still attempted
+independently — one bad/unreachable role never blocks the others — and the response reports
+exactly which roles were granted and which weren't (`grantUserRolesResponse{Granted, Failed}`):
+`200` when every role succeeded, `502` when none did, `207 Multi-Status` for a mixed result.
+
+**The target's email is resolved via `entity.GetUser(id)`, not taken from the caller.** SCIM's
+`AddRoleMembers` grants by email, not platform user id, so the handler looks the target up by the
+`{id}` path segment first (the same identity resolution `PATCH /users/{id}` already does) and uses
+whatever email entity-service's own `UserDetail.Email` returns — a caller cannot grant a role to an
+email of their own choosing that doesn't match the `{id}` they named.
+
 ## Provisioning a "user" row on demand (`ensureUserProvisioned`)
 
 A `worknote_creator`- or `escalator`-only caller reaches `POST /cases/{id}/comments`
