@@ -1440,6 +1440,38 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// same *caseService the case handler already holds, so this reaches it.
 	activeCaseSvc = service.WithServiceRequestCatalog(activeCaseSvc, activeCatalogSvc)
 
+	// Case auto-closure (reminders and automatic closure of Awaiting Info /
+	// Solution Proposed tickets). Needs the Postgres case tables. It acts as the
+	// system user named by AUTOCLOSURE_SYSTEM_USER_EMAIL when that is set, and as
+	// the system itself ("System user", no user row) when it is not. Driven by
+	// operations/csm-scheduled-tasks, which is what switches it on.
+	//
+	// It acts through activeCaseSvc, so its comments, state changes and the close
+	// follow the deployment's data source like every other case write: Postgres
+	// only on DATA_SOURCE=postgres, and Postgres first with an asynchronous,
+	// best-effort ServiceNow mirror on postgres-servicenow-dual-write (a failed
+	// mirror is recorded in sn_writeback_failures and never fails or repeats a
+	// stage). The workflow's own position (step, clock) and audit rows are
+	// Postgres-only: ServiceNow has no field that API accepts for them.
+	//
+	// The routes are always registered. Where the feature cannot run
+	// (DATA_SOURCE=servicenow, which has no Postgres case tables to work from) they answer an explicit 503 naming the reason, so an enabled scheduler
+	// fails with that sentence in its alert instead of a bare 404.
+	var autoclosureSvc service.AutoclosureService
+	switch {
+	case db == nil || cfg.DataSource == config.DataSourceServiceNow:
+		autoclosureSvc = service.NewUnavailableAutoclosureService("case auto-closure needs the Postgres case tables: DATA_SOURCE must be postgres or postgres-servicenow-dual-write")
+	default:
+		autoclosureSvc = service.NewAutoclosureService(
+			repository.NewAutoclosureRepository(repository.NewScoped(db)),
+			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
+		// A case closed for inactivity is queued for the customer's own
+		// verification (the Pending Verification feature) where the project
+		// has that turned on.
+		service.WithPendingVerificationQueue(autoclosureSvc, repository.NewPendingVerificationRepository(repository.NewScoped(db)))
+	}
+	autoclosureHandler := handler.NewAutoclosureHandler(autoclosureSvc)
+
 	// Case feedback (CSAT submissions): the ServiceNow data source reads it
 	// from the backing system; both Postgres data sources read
 	// work_item_feedback (migration 0102). Dual write deliberately does NOT
@@ -1982,6 +2014,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// what each has spent. A customer token must never reach it.
 		mux.HandleFunc("GET /reports/query-hours", internalOnly(accessSvc, queryHourHandler.GetWeeklyReport))
 		mux.HandleFunc("POST /query-hours/recompute", internalOnly(accessSvc, queryHourHandler.RecomputeQueryHours))
+	}
+	{
+		mux.HandleFunc("POST /autoclosure/candidates", internalOnly(accessSvc, autoclosureHandler.FindCandidates))
+		mux.HandleFunc("POST /autoclosure/cases/{id}/advance", internalOnly(accessSvc, autoclosureHandler.Advance))
 	}
 	if scheduledTaskRunHandler != nil {
 		mux.HandleFunc("POST /scheduled-tasks/attempts", scheduledTaskRunHandler.AttemptScheduledTaskRun)
