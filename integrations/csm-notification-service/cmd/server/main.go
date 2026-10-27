@@ -1801,6 +1801,8 @@ func applyIncidentRoutes(sre paging.LadderConfig, chat *notifications.GoogleChat
 	})
 	chat.SetIncidentRouteSpaces(table.Spaces)
 	routes.Set(table.Fanout)
+	routes.SetTeamless(table.Teamless)
+	routes.SetKnownSRETeam(func(group string) bool { return paging.KnownSRETeam(sre, group) })
 	_, fallback := table.Spaces[notifications.IncidentFallbackAudience]
 	slog.Info("incident cards follow the Alert Settings group mapping",
 		"mappedGroups", table.Mapped, "defaultGroupsFannedOut", len(table.Fanout), "sharedSRERoom", fallback)

@@ -172,6 +172,25 @@ func caseTeamName(cv domain.CaseView) string {
 	return ""
 }
 
+// accountSRETeamResolver looks up the SRE team of the account owning a project.
+type accountSRETeamResolver func(ctx context.Context, projectID string) (id, name string, err error)
+
+// caseSRETeam is the case's account SRE team: the case view's, else Postgres's, since the ServiceNow case response may omit it.
+func caseSRETeam(ctx context.Context, resolve accountSRETeamResolver, cv domain.CaseView, logContext string) (id, name string) {
+	if cv.AccountDetails != nil && cv.AccountDetails.SreTeam != nil && cv.AccountDetails.SreTeam.Name != "" {
+		return cv.AccountDetails.SreTeam.ID, cv.AccountDetails.SreTeam.Name
+	}
+	if resolve == nil || cv.ProjectDetails == nil {
+		return "", ""
+	}
+	id, name, err := resolve(ctx, cv.ProjectDetails.ID)
+	if err != nil {
+		slog.ErrorContext(ctx, logContext+": resolving account SRE team failed", "error", err)
+		return "", ""
+	}
+	return id, name
+}
+
 // wso2EmailDomain is WSO2's own corporate domain — mirrors
 // apps/csm-portal/backend's own wso2EmailDomain constant (see that
 // package's user_external_account.go).
@@ -1176,7 +1195,7 @@ func registerCaseSLAClocksEvent(ctx context.Context, slaEngine SLAEngineService,
 // reasoning — this is now a thin wrapper around it, same shape as
 // snIncidentService.publishIncidentCreated/publishIncidentCreatedEvent.
 func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.CreateCaseRequest, caseID string) {
-	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, req, caseID)
+	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req, caseID)
 }
 
 // publishCaseCreatedEvent is publishCaseCreated's actual body, factored out
@@ -1256,6 +1275,7 @@ func publishCaseCreatedEvent(
 	getCaseByID func(context.Context, string) (domain.CaseView, error),
 	resolveProjectContactEmailsByRole func(context.Context, string, string) ([]string, error),
 	resolveAccountDefaultWatcherEmails func(context.Context, string) ([]string, error),
+	resolveAccountSRETeam accountSRETeamResolver,
 	req domain.CreateCaseRequest,
 	caseID string,
 ) {
@@ -1324,6 +1344,7 @@ func publishCaseCreatedEvent(
 	product := caseProductName(cv)
 
 	description, descriptionTruncated := stripInlineBase64Images(cv.Description)
+	sreTeamID, sreTeamName := caseSRETeam(ctx, resolveAccountSRETeam, cv, "create case")
 
 	payload, err := json.Marshal(events.CaseCreatedPayload{
 		ReporterName:         reporterName,
@@ -1337,6 +1358,8 @@ func publishCaseCreatedEvent(
 		Priority:             strings.ToUpper(string(derefSeverity(cv.Severity))),
 		Product:              product,
 		Team:                 caseTeamName(cv),
+		SRETeamID:            sreTeamID,
+		SRETeamName:          sreTeamName,
 		CreatedAt:            cv.CreatedOn.Format(time.RFC3339),
 		Description:          description,
 		DescriptionTruncated: descriptionTruncated,
@@ -1704,24 +1727,57 @@ func (s *snCaseService) reviseCaseSLAClocks(ctx context.Context, caseID string, 
 // role. Skips entirely, rather than guessing, when s.customerRoles is empty
 // (unconfigured — see config.Config.CustomerRoles' own doc comment).
 func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, req domain.CreateCaseCommentRequest, commentID string) {
-	if req.Type != domain.CommentTypeComment || len(s.customerRoles) == 0 {
+	if req.Type != domain.CommentTypeComment {
+		return
+	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, req.CaseID, "customer reply", func(ctx context.Context) *domain.UserReference {
+		return s.resolveCommentAuthor(ctx, req.CaseID, commentID)
+	})
+}
+
+// applyCustomerAttachmentStateTransition is the attachment counterpart of
+// applyCustomerReplyStateTransition: a customer who uploads a file to a case
+// that is Awaiting Info or Solution Proposed has answered WSO2's request just
+// as surely as one who comments, so the case moves to Waiting on WSO2 the
+// same way (the shared moveToWaitingOnWSO2OnCustomerActivity). Only an
+// attachment on the case itself counts; deployment, incident, change request
+// and conversation attachments never move a case. Best-effort: called after
+// the upload has succeeded, and never fails it.
+func (s *snCaseService) applyCustomerAttachmentStateTransition(ctx context.Context, req domain.CreateAttachmentRequest, attachmentID string) {
+	if req.ReferenceType != domain.ReferenceTypeCase {
+		return
+	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, req.ReferenceID, "customer attachment", func(ctx context.Context) *domain.UserReference {
+		return s.resolveAttachmentAuthor(ctx, req.ReferenceID, attachmentID)
+	})
+}
+
+// moveToWaitingOnWSO2OnCustomerActivity is the rule shared by a customer's
+// comment and a customer's attachment: when the case is Awaiting Info or
+// Solution Proposed and the activity's author holds one of s.customerRoles,
+// the case moves to Waiting on WSO2. activity ("customer reply" or "customer attachment") is
+// only used to label log lines. resolveAuthor is called only after the cheap
+// state check passes, so a case in any other state costs one GetCaseByID.
+// Skips entirely, rather than guessing, when s.customerRoles is empty.
+func (s *snCaseService) moveToWaitingOnWSO2OnCustomerActivity(ctx context.Context, caseID, activity string, resolveAuthor func(context.Context) *domain.UserReference) {
+	if len(s.customerRoles) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, applyCustomerReplyTimeout)
 	defer cancel()
 
-	cv, err := s.GetCaseByID(ctx, req.CaseID)
+	cv, err := s.GetCaseByID(ctx, caseID)
 	if err != nil {
-		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, get case failed", "caseId", req.CaseID)
+		slog.ErrorContext(ctx, "sn "+activity+" state transition not evaluated, get case failed", "caseId", caseID)
 		return
 	}
 	if derefState(cv.State) != domain.CaseStateAwaitingInfo && derefState(cv.State) != domain.CaseStateSolutionProposed {
 		return
 	}
 
-	author := s.resolveCommentAuthor(ctx, req.CaseID, commentID)
+	author := resolveAuthor(ctx)
 	if author == nil || author.Email == "" {
-		slog.InfoContext(ctx, "sn create comment: customer reply state transition not evaluated, could not resolve comment author's email", "caseId", req.CaseID)
+		slog.InfoContext(ctx, "sn "+activity+" state transition not evaluated, could not resolve author's email", "caseId", caseID)
 		return
 	}
 
@@ -1730,7 +1786,7 @@ func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, r
 		Filters:    domain.SearchUsersFilters{Emails: []string{author.Email}},
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, user role lookup failed", "caseId", req.CaseID)
+		slog.ErrorContext(ctx, "sn "+activity+" state transition not evaluated, user role lookup failed", "caseId", caseID)
 		return
 	}
 
@@ -1746,9 +1802,32 @@ func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, r
 	}
 
 	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
-	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &waitingOnWSO2}); err != nil {
-		slog.ErrorContext(ctx, "sn create comment: move case to waiting on wso2 after customer reply failed", "caseId", req.CaseID)
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: caseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "sn move case to waiting on wso2 after "+activity+" failed", "caseId", caseID)
 	}
+}
+
+// resolveAttachmentAuthor looks up attachmentID's resolved uploader on the
+// case via SearchCaseAttachments, the attachment twin of resolveCommentAuthor
+// (the create response carries only a raw, unresolved CreatedBy string, and
+// the same bounded-window reasoning applies). Returns nil when the
+// attachment isn't found in the first resolveCommentAuthorSearchLimit results
+// or the search fails.
+func (s *snCaseService) resolveAttachmentAuthor(ctx context.Context, caseID, attachmentID string) *domain.UserReference {
+	resp, err := s.SearchCaseAttachments(ctx, domain.SearchAttachmentsRequest{
+		ReferenceID:   caseID,
+		ReferenceType: domain.ReferenceTypeCase,
+		Pagination:    domain.Pagination{Limit: resolveCommentAuthorSearchLimit},
+	})
+	if err != nil {
+		return nil
+	}
+	for _, a := range resp.Attachments {
+		if a.ID == attachmentID && a.CreatedBy != nil {
+			return a.CreatedBy
+		}
+	}
+	return nil
 }
 
 // publishStatusChanged best-effort publishes a case.status_changed event
@@ -1893,7 +1972,7 @@ func publishStatusChangedEvent(ctx context.Context, publisher EventPublisherServ
 // wrapper around publishSeverityChangedEvent — see that function's own doc
 // comment for why.
 func (s *snCaseService) publishSeverityChanged(ctx context.Context, caseID, oldSeverity, newSeverity string, before domain.CaseView) {
-	publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, caseID, oldSeverity, newSeverity, before)
+	publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, s.AccountSRETeam, caseID, oldSeverity, newSeverity, before)
 }
 
 // publishSeverityChangedEvent is publishSeverityChanged's actual body,
@@ -1903,7 +1982,7 @@ func (s *snCaseService) publishSeverityChanged(ctx context.Context, caseID, oldS
 // plain severity strings (either case; upper-cased here) — the caller has
 // already confirmed they actually differ, not a caller re-PATCHing the
 // case's current severity.
-func publishSeverityChangedEvent(ctx context.Context, publisher EventPublisherService, resolveAccountDefaultWatcherEmails func(context.Context, string) ([]string, error), caseID, oldSeverity, newSeverity string, before domain.CaseView) {
+func publishSeverityChangedEvent(ctx context.Context, publisher EventPublisherService, resolveAccountDefaultWatcherEmails func(context.Context, string) ([]string, error), resolveAccountSRETeam accountSRETeamResolver, caseID, oldSeverity, newSeverity string, before domain.CaseView) {
 	if publisher == nil || newSeverity == "" {
 		return
 	}
@@ -1925,6 +2004,7 @@ func publishSeverityChangedEvent(ctx context.Context, publisher EventPublisherSe
 		projectID = before.ProjectDetails.ID
 	}
 
+	sreTeamID, sreTeamName := caseSRETeam(ctx, resolveAccountSRETeam, before, "update case")
 	payload, err := json.Marshal(events.SeverityChangedPayload{
 		ProjectID:   projectID,
 		CaseID:      caseID,
@@ -1935,6 +2015,8 @@ func publishSeverityChangedEvent(ctx context.Context, publisher EventPublisherSe
 		NewSeverity: strings.ToUpper(newSeverity),
 		Product:     caseProductName(before),
 		Team:        caseTeamName(before),
+		SRETeamID:   sreTeamID,
+		SRETeamName: sreTeamName,
 		Recipients:  recipients,
 	})
 	if err != nil {
@@ -2125,6 +2207,14 @@ func (s *snCaseService) AccountDefaultWatcherEmails(ctx context.Context, project
 		return nil, nil
 	}
 	return s.pgFallback.AccountDefaultWatcherEmails(ctx, projectID)
+}
+
+// AccountSRETeam implements CaseService; account is Postgres-only, so it delegates to pgFallback like AccountDefaultWatcherEmails.
+func (s *snCaseService) AccountSRETeam(ctx context.Context, projectID string) (string, string, error) {
+	if s.pgFallback == nil {
+		return "", "", nil
+	}
+	return s.pgFallback.AccountSRETeam(ctx, projectID)
 }
 
 // GetCaseEtaSharedOn implements CaseService. eta_shared_on is a
@@ -4084,7 +4174,23 @@ type snCreateAttachmentResponse struct {
 
 const maxAttachmentBytes = 10 * 1024 * 1024 // 10 MB decoded
 
+// CreateCaseAttachment uploads the file via createAttachment, then, for an
+// attachment on a case, runs applyCustomerAttachmentStateTransition
+// (best-effort, after the upload has succeeded).
 func (s *snCaseService) CreateCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
+	resp, err := s.CreateBareCaseAttachment(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	s.applyCustomerAttachmentStateTransition(ctx, req, resp.Attachment.ID)
+	return resp, nil
+}
+
+// CreateBareCaseAttachment uploads the file with none of CreateCaseAttachment's
+// side effects, for callers that own the resulting state decision themselves
+// (the dual-write attachment service, where Postgres decides the case's state
+// move and mirrors it, exactly as CreateBareCaseComment does for comments).
+func (s *snCaseService) CreateBareCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
 	if req.Name == "" {
 		return domain.CreateAttachmentResponse{}, &apierror.ValidationError{Msg: "name is required"}
 	}

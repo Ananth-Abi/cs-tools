@@ -1579,10 +1579,7 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var currentCase struct {
-			State            string `json:"state"`
-			AssignedEngineer *struct {
-				ID *string `json:"id"`
-			} `json:"assignedEngineer"`
+			State string `json:"state"`
 		}
 		if err := json.Unmarshal(current, &currentCase); err != nil {
 			slog.ErrorContext(r.Context(), "failed to parse current case state", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1597,23 +1594,9 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, ErrMsgWorkStateNotAllowed)
 			return
 		}
-		// Ownership check: closing a case is restricted to its own assigned
-		// engineer, unless the caller is admin (an operational override).
-		// Scoped to only the transition that sets state to closed — not every
-		// PATCH — since the issue this guards against is specifically about
-		// closing a ticket that isn't yours. Mirrors CreateCaseComment's own
-		// ownership guard above.
-		if patch.State != nil && *patch.State == caseStateClosed && !(h.access != nil && h.access.Permits(PermAdmin, user.Roles)) {
-			currentUserID := resolveCurrentUserID(r.Context(), h.entity, user)
-			if currentUserID == "" {
-				writeError(w, http.StatusInternalServerError, ErrMsgInternal)
-				return
-			}
-			if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != currentUserID {
-				writeError(w, http.StatusForbidden, ErrMsgCaseCloseNotOwnCase)
-				return
-			}
-		}
+		// No ownership check on closing: any caller that reached this handler
+		// holds PermWrite (route-level; cs_engineer or admin), and every such
+		// caller may close any case, assigned to them or not.
 	}
 
 	result, err := h.entity.PatchCase(r.Context(), caseID, body)

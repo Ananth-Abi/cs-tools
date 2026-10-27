@@ -35,6 +35,12 @@ type Trigger struct {
 	Number string
 	// WSO2CaseID is the platform's own identifier, e.g. "WSO2-1000".
 	WSO2CaseID string
+	// CardThread is a case's S0 episode thread (notifications.CaseS0ThreadKey),
+	// set from the record that started the chain: an S0 case on the SRE ladder
+	// replies under the card the dispatcher posted for that same record.
+	// Empty on an incident, and on a chain saved before it existed, which
+	// keeps the case's one thread.
+	CardThread string `json:",omitempty"`
 	// Priority keys the timing policy; accepts P-notation or severity labels.
 	Priority string
 	Title    string
@@ -74,6 +80,14 @@ const (
 // isCase reports whether the ladder pages about a customer case.
 func (t Trigger) isCase() bool { return t.Record == RecordCase }
 
+// sreTeam is the team whose SRE spaces and channel the trigger uses: a case's account SRE team, else Team.
+func (t Trigger) sreTeam() string {
+	if strings.TrimSpace(t.Routing.SRETeam) != "" {
+		return t.Routing.SRETeam
+	}
+	return t.Team
+}
+
 // sreIncident reports whether an SRE ladder pages about an incident, whose space gets an "Incident Reported" card with every ladder message as a reply under it.
 func (t Trigger) sreIncident() bool { return t.Routing.Ladder == LadderSRE && !t.isCase() }
 
@@ -83,10 +97,18 @@ func (t Trigger) smeIncident() bool { return t.Routing.Ladder == LadderSME && !t
 // threadedIncident reports whether the ladder's own space gets a parent incident card with its messages as replies under it.
 func (t Trigger) threadedIncident() bool { return t.sreIncident() || t.smeIncident() }
 
-// chatThreadKey puts an incident's paging messages under its "Incident Reported" card; a case has no such card.
+// sreCaseCard reports whether a case has a card of its own to reply under: an S0 on the SRE ladder, whose card the dispatcher posted to its account SRE team's rooms, or the teamless rooms when it has none (caseSRERooms). A case on the CRE ladder never has one.
+func (t Trigger) sreCaseCard() bool {
+	return t.isCase() && t.Routing.Ladder == LadderSRE
+}
+
+// chatThreadKey puts an incident's paging messages, and an SRE case's (sreCaseCard), under its "Reported" card -- an SRE case's under the card of its own S0 episode (CardThread); any other case has no such card.
 func (t Trigger) chatThreadKey() string {
-	if t.isCase() {
+	if t.isCase() && !t.sreCaseCard() {
 		return "incident-escalation-" + t.IncidentID
+	}
+	if t.isCase() && t.CardThread != "" {
+		return t.CardThread
 	}
 	return notifications.IncidentThreadKey(t.IncidentID)
 }

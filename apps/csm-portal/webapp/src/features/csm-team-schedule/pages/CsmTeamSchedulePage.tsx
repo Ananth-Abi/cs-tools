@@ -1444,6 +1444,16 @@ export default function CsmTeamSchedulePage(): JSX.Element {
       );
   }, [teamMembers, catalogue.data?.teams, family]);
 
+  /** Every person's own teams, across all of them, so the roster can put
+   *  leave filed under some other team on the person's own row. */
+  const ownTeams = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const t of catalogue.data?.teams ?? []) {
+      for (const m of t.members ?? []) out.set(m.userId, [...(out.get(m.userId) ?? []), t.key]);
+    }
+    return out;
+  }, [catalogue.data?.teams]);
+
   if (catalogue.isError) {
     return <QueryErrorState message="Could not load the schedule catalogue." error={catalogue.error} />;
   }
@@ -1815,6 +1825,7 @@ export default function CsmTeamSchedulePage(): JSX.Element {
               meEmail={user?.email}
               leadTeams={leadTeams.data ?? []}
               teamMembers={teamMembers}
+              ownTeams={ownTeams}
               teamDefaultShift={teamDefaultShift}
               teamsWithoutDefault={teamsWithoutDefault}
               editedCells={editedCells}
