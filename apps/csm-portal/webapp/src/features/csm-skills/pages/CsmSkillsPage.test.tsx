@@ -167,3 +167,42 @@ describe("All Skills admin actions", () => {
     );
   });
 });
+
+describe("All Skills level scale label", () => {
+  const noScaleSkill = { ...skillGo, id: "skill-bare", name: "Bare Skill", levelTypeId: null };
+
+  it("does not claim 'No level scale' while the scales are loading", async () => {
+    route({ manager: false });
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/skills/levels") return new Promise(() => {});
+      return path === "/skills/me" ? { userId: "u1", skills: [] } : { categories };
+    });
+    renderPage("/skills?tab=all");
+    await screen.findByText("Go");
+    expect(screen.queryByText("No level scale")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Loading levels…").length).toBeGreaterThan(0);
+  });
+
+  it("does not claim 'No level scale' when the scales failed to load", async () => {
+    route({ manager: false });
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/skills/levels") throw new Error("boom");
+      return path === "/skills/me" ? { userId: "u1", skills: [] } : { categories };
+    });
+    renderPage("/skills?tab=all");
+    await screen.findByText("Go");
+    await waitFor(() => expect(screen.getAllByText("Levels unavailable").length).toBeGreaterThan(0));
+    expect(screen.queryByText("No level scale")).not.toBeInTheDocument();
+  });
+
+  it("shows 'No level scale' for a skill that has no scale", async () => {
+    route({ manager: false });
+    api.post.mockImplementation(async (path: string) => {
+      if (path === "/skills/users/search") throw forbidden;
+      return { skills: [noScaleSkill], total: 1, limit: 10, offset: 0 };
+    });
+    renderPage("/skills?tab=all");
+    await screen.findByText("Bare Skill");
+    expect(screen.getByText("No level scale")).toBeInTheDocument();
+  });
+});

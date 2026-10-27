@@ -226,7 +226,13 @@ export default function AllSkillsTab({ isAdmin }: AllSkillsTabProps): JSX.Elemen
                         )}
                         <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
                           <Typography variant="caption" color="text.secondary">
-                            {scale ? `Levels (${scale.name}):` : "No level scale"}
+                            {scale
+                              ? `Levels (${scale.name}):`
+                              : !skill.levelTypeId
+                                ? "No level scale"
+                                : levelTypes.isLoading
+                                  ? "Loading levels…"
+                                  : "Levels unavailable"}
                           </Typography>
                           {sortedLevels(scale).map((l) => (
                             <LevelChip key={l.id} level={l} />
