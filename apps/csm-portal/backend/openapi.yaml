@@ -1858,6 +1858,81 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /users/{id}/roles:
+    post:
+      summary: Grant one or more portal permission roles to an existing user.
+      description: >
+        Admin-only. The post-creation counterpart to POST /users' own grantRoles
+        field — grants a portal permission role (see GET /roles/grantable for the
+        exact set this deployment can grant) to a user who already exists via
+        SCIM, rather than only at the moment a new one is created. Every
+        requested role is attempted even if an earlier one fails to grant, so
+        one bad role never blocks the rest; the response reports exactly which
+        roles were granted and which were not.
+      operationId: grantUserRoles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantUserRolesPayload'
+      responses:
+        "200":
+          description: Every requested role was granted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantUserRolesResponse'
+        "207":
+          description: Some, but not all, requested roles were granted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantUserRolesResponse'
+        "400":
+          description: Bad request (malformed id, empty roles, or an unknown role key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden (admin only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "502":
+          description: None of the requested roles could be granted (a SCIM failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantUserRolesResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /roles/search:
     post:
       summary: Search the role catalogue.
@@ -19608,6 +19683,38 @@ components:
           description: >-
             A stable portal role key (e.g. "cs_engineer", "escalator") — pass this
             value, not a display name, in CreateUserPayload.grantRoles.
+
+    GrantUserRolesPayload:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: >-
+            Portal role keys to grant via SCIM to the user named in the path —
+            see GET /roles/grantable for the exact set this deployment can
+            grant. At least one is required; an unknown key is a 400.
+
+    GrantUserRolesResponse:
+      type: object
+      required: [granted]
+      properties:
+        granted:
+          type: array
+          items:
+            type: string
+          description: Portal role keys that were successfully granted.
+        failed:
+          type: array
+          items:
+            type: string
+          description: >-
+            Portal role keys that were requested but could not be granted (a
+            SCIM failure). Omitted entirely when every requested role was
+            granted.
 
     CreateUserPayload:
       type: object
