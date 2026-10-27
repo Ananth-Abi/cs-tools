@@ -189,10 +189,20 @@ func validateTimeCardFilters(f *domain.SearchTimeCardsFilters) error {
 }
 
 func validateTimeCardMinutes(values ...int) error {
+	total := 0
 	for _, v := range values {
 		if v < 0 {
 			return &apierror.ValidationError{Msg: "time values must not be negative"}
 		}
+		total += v
+	}
+	// Per-card limit, not a daily total. On an update only the fields the
+	// caller supplied are passed here, so this can only under-count: a
+	// partial edit that is over the limit by itself is rejected here, and
+	// the repository re-checks the card's merged total against its stored
+	// values.
+	if total > domain.MaxTimeCardMinutes {
+		return &apierror.ValidationError{Msg: domain.MaxTimeCardMinutesMessage}
 	}
 	return nil
 }
