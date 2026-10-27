@@ -413,6 +413,9 @@ export interface RotaAccess {
   canManage: {
     rotaAdmins: boolean;
     markerFamilies: RotaFamily[];
+    /** The teams whose Rota Managers the reader may change as their lead.
+     *  Absent from an older server. */
+    markerTeams?: string[];
     /** The families whose teams' members the reader may add and remove (the
      *  same rule as markerFamilies). Absent from an older server. */
     memberFamilies?: RotaFamily[];
