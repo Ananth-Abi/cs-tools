@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -219,10 +220,14 @@ func TestDispatcher_S0RoomCardOnlyForCustomerCases(t *testing.T) {
 }
 
 // blockingRoomChat holds every SRE room card until the Incident Monitor card
-// has gone out, so the record only completes if the two run side by side.
+// has gone out, so the record completes only if the CRE-side work does not
+// wait for the room card.
 type blockingRoomChat struct {
 	*mockGoogleChatSender
 	monitorSent chan struct{}
+	// timedOut is set when a room card gave up waiting for the Incident
+	// Monitor card: the CRE-side work was waiting for the room card.
+	timedOut *atomic.Bool
 }
 
 func (b blockingRoomChat) SendCaseCreatedAlert(ctx context.Context, audience, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error {
@@ -235,18 +240,32 @@ func (b blockingRoomChat) SendIncidentCreatedAlert(ctx context.Context, audience
 	select {
 	case <-b.monitorSent:
 	case <-time.After(5 * time.Second):
-		return errors.New("the Incident Monitor card waited on the SRE room card")
+		b.timedOut.Store(true)
+		return errors.New("timed out: the Incident Monitor card was never sent while the SRE room card waited for it")
 	}
 	return b.mockGoogleChatSender.SendIncidentCreatedAlert(ctx, audience, a)
 }
 
-// The SRE room card runs beside the CRE-side work: the Incident Monitor card
-// (and the emails before it) are sent without waiting on it, and Handle still
-// returns only once the room card is done.
-func TestDispatcher_S0RoomCardRunsBesideTheIncidentMonitorCard(t *testing.T) {
+// The CRE-side work does not wait for the SRE room card: the Incident Monitor
+// card (and the emails before it) go out while the room card is held, and
+// Handle still returns only once the room card is done.
+//
+// Guards against putting the room card first in the handler's own sequence
+// (the reorder considered in #3052): the Incident Monitor card would then wait
+// for a room card that is waiting for it, and this test fails. Together with
+// TestDispatcher_S0RoomCardStartsBeforeTheCRESideWork it pins the parallel path.
+func TestDispatcher_S0RoomCardDoesNotDelayTheCRESideWork(t *testing.T) {
 	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
-	d := sreRoomDispatcher(blockingRoomChat{mockGoogleChatSender: chat, monitorSent: make(chan struct{})})
-	if err := d.Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team")); err != nil {
+	timedOut := &atomic.Bool{}
+	d := sreRoomDispatcher(blockingRoomChat{mockGoogleChatSender: chat, monitorSent: make(chan struct{}), timedOut: timedOut})
+	err := d.Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team"))
+	// The room card is best effort, so a CRE side that waits for it does not
+	// fail Handle: it shows as the room card timing out.
+	if timedOut.Load() {
+		t.Fatalf("The CRE-side work (Incident Monitor card, emails) now waits for the SRE room card. " +
+			"A slow or hanging SRE webhook would then delay the Incident Monitor card and the case emails. See #3052.")
+	}
+	if err != nil {
 		t.Fatalf("Handle error = %v", err)
 	}
 	if got := caseCardAudiences(chat); !slices.Equal(got, []string{chataudience.IncidentMonitor}) {
@@ -297,21 +316,30 @@ func (e emailWaitsForRoomCard) SendEmailFrom(ctx context.Context, from string, t
 	select {
 	case <-e.roomSent:
 	case <-time.After(5 * time.Second):
-		return errors.New("the emails ran before the SRE room card started")
+		return errors.New("timed out: the case emails started before any SRE room card was sent")
 	}
 	return e.mockEmailSender.SendEmailFrom(ctx, from, to, cc, bcc, replyTo, subject, htmlBody, attachments)
 }
 
 // The SRE room card starts before the CRE-side work: the case emails, and so
 // the Incident Monitor card after them, only go out once it has been sent.
-// With the room card last (#3038's order) the emails wait for a card that
-// comes only after them, time out, and the record fails.
+//
+// Guards against the room card going back to the end of the handler (#3038's
+// order): the emails would then wait for a card that only comes after them,
+// time out, and this test fails. Together with
+// TestDispatcher_S0RoomCardDoesNotDelayTheCRESideWork it pins the parallel path.
 func TestDispatcher_S0RoomCardStartsBeforeTheCRESideWork(t *testing.T) {
 	roomSent := make(chan struct{})
 	chat := &roomSignalChat{mockGoogleChatSender: &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}, roomSent: roomSent}
 	email := emailWaitsForRoomCard{mockEmailSender: &mockEmailSender{}, roomSent: roomSent}
 	if err := sreRoomDispatcherWith(email, chat).Handle(context.Background(), caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team")); err != nil {
-		t.Fatalf("Handle error = %v; the SRE room card must start before the emails", err)
+		if len(roomCards(chat.mockGoogleChatSender)) == 0 {
+			t.Fatalf("No SRE room card was sent for this S0 case. Check the room selection (CaseSREAudiences) "+
+				"and the S0 gate; this is not an ordering problem. (%v)", err)
+		}
+		t.Fatalf("The SRE room card no longer starts before the CRE-side work (emails, Incident Monitor card). "+
+			"Notifications still work, but the SRE engine can post its first rung (\"Notifying L1\") before the case card, "+
+			"so the rung opens the thread in the SRE room and the \"Case Reported\" card lands under it as a reply. See #3052. (%v)", err)
 	}
 	if len(email.mockEmailSender.calls) == 0 {
 		t.Error("no case email was sent")
