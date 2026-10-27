@@ -13525,7 +13525,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "409":
-          description: State transition rejected by the data source. Not returned when the secondary data source refuses a move that the primary has already applied: that refusal is logged and the update succeeds.
+          description: State transition rejected by the data source. Not returned when the secondary data source refuses a move that the primary has already applied, since that refusal is logged and the update succeeds.
           content:
             application/json:
               schema:
