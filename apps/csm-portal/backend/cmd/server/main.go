@@ -578,6 +578,7 @@ func main() {
 	route("GET /kb-articles/{id}/history", handler.PermView, kbArticleHandler.ListKBArticleHistory)
 	route("POST /deployments/search", handler.PermView, deploymentHandler.SearchDeployments)
 	route("PATCH /deployments/{id}", handler.PermWrite, deploymentHandler.PatchDeployment)
+	route("PUT /deployments/{id}/air-gapped", handler.PermWrite, deploymentHandler.SetDeploymentAirGapped)
 	route("POST /deployments/{id}/products", handler.PermWrite, deploymentHandler.PostDeployedProduct)
 	route("POST /deployments/{id}/products/search", handler.PermView, deploymentHandler.SearchDeployedProducts)
 	route("PATCH /deployments/{deploymentId}/products/{productId}", handler.PermWrite, deploymentHandler.PatchDeployedProduct)
