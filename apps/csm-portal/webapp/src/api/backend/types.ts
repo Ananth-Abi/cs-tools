@@ -2110,6 +2110,26 @@ export interface BeDeployment {
   createdBy?: string;
   createdOn?: string;
   updatedOn?: string;
+  /**
+   * Whether the deployment's products cannot reach WSO2, so its licences tell
+   * them not to publish usage online. `null` when the entity service runs on
+   * ServiceNow, which has no such field (and no way to set it).
+   */
+  airGapped?: boolean | null;
+}
+
+/** Body of `PUT /deployments/{id}/air-gapped`. */
+export interface BeDeploymentAirGappedPayload {
+  airGapped: boolean;
+}
+
+/** Response of `PUT /deployments/{id}/air-gapped`. */
+export interface BeDeploymentAirGappedResponse {
+  id: string;
+  number?: string | null;
+  airGapped: boolean;
+  updatedOn: string;
+  updatedBy: string;
 }
 
 /**
