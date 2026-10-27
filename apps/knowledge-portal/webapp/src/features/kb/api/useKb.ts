@@ -4,7 +4,7 @@
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
   getArticle,
@@ -28,6 +28,7 @@ export const useSearchArticles = (req: SearchKBArticlesRequest) =>
   useQuery({
     queryKey: [KB_KEY, "articles", req],
     queryFn: () => searchArticles(req),
+    placeholderData: keepPreviousData,
   });
 
 export const useArticle = (id: string | undefined) =>

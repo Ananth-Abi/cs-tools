@@ -6,6 +6,7 @@
 
 import {
   Box,
+  Button,
   Card,
   CardActionArea,
   CircularProgress,
@@ -20,9 +21,10 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Eye, Search } from "@wso2/oxygen-ui-icons-react";
-import { useEffect, useState, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type JSX } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useKnowledgeBases, useSearchArticles } from "@features/kb/api/useKb";
+import type { KBArticle } from "@features/kb/types/kb";
 
 const toSnippet = (body: string, max = 180): string => {
   const plain = body
@@ -46,14 +48,42 @@ export default function KBBrowsePage(): JSX.Element {
   }, [searchQuery]);
 
   const { data: kbData } = useKnowledgeBases();
-  const { data, isLoading, isError } = useSearchArticles({
+  const PAGE_SIZE = 20;
+  const [offset, setOffset] = useState(0);
+  const [accumulated, setAccumulated] = useState<KBArticle[]>([]);
+
+  const searchReq = useMemo(() => ({
     ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
     ...(searchQuery ? { searchQuery } : {}),
-    limit: 20,
-  });
+    limit: PAGE_SIZE,
+    offset,
+  }), [knowledgeBaseId, searchQuery, offset]);
+
+  const { data, isLoading, isError } = useSearchArticles(searchReq);
+
+  // Reset accumulated articles when filters change (but not when offset changes)
+  useEffect(() => {
+    setOffset(0);
+    setAccumulated([]);
+  }, [knowledgeBaseId, searchQuery]);
+
+  // Append new page results
+  useEffect(() => {
+    if (data?.articles) {
+      setAccumulated((prev) =>
+        offset === 0 ? data.articles : [...prev, ...data.articles]
+      );
+    }
+  }, [data, offset]);
 
   const knowledgeBases = kbData?.knowledgeBases ?? [];
-  const articles = data?.articles ?? [];
+  const articles = accumulated;
+  const total = data?.total ?? 0;
+  const hasMore = articles.length < total;
+
+  const loadMore = useCallback(() => {
+    setOffset((prev) => prev + PAGE_SIZE);
+  }, []);
 
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
@@ -139,7 +169,7 @@ export default function KBBrowsePage(): JSX.Element {
           {!isLoading && !isError && (
             <>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {data?.total ?? 0} article{(data?.total ?? 0) === 1 ? "" : "s"}
+                {total} article{total === 1 ? "" : "s"}
               </Typography>
 
               {articles.length === 0 && (
@@ -190,6 +220,18 @@ export default function KBBrowsePage(): JSX.Element {
                   </Card>
                 ))}
               </Stack>
+
+              {hasMore && (
+                <Stack alignItems="center" sx={{ mt: 3 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={loadMore}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "Loading..." : "Load more"}
+                  </Button>
+                </Stack>
+              )}
             </>
           )}
         </Grid>
