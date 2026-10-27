@@ -650,7 +650,17 @@ export default function CsmCaseCreatePage(): JSX.Element {
         </Grid>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button variant="outlined" onClick={() => navigate(backTarget)}>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              // An explicit discard: drop the draft too (flag first, so the
+              // mirroring effect cannot write it back) or it would reappear
+              // the next time the form opens.
+              submitted.current = true;
+              draftStore.clear();
+              navigate(backTarget);
+            }}
+          >
             Cancel
           </Button>
           <Button

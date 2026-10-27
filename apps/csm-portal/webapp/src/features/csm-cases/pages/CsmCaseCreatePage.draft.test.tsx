@@ -178,6 +178,19 @@ describe("CsmCaseCreatePage draft retention across in-app tab switches", () => {
     expect(screen.getByLabelText("Description body")).toHaveValue("");
   });
 
+  it("discards the draft when Cancel is clicked", () => {
+    renderApp();
+    fillForm();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(navigateMock).toHaveBeenCalledWith("/cases");
+
+    fireEvent.click(screen.getByText("Case tab"));
+    fireEvent.click(screen.getByText("Support tab"));
+
+    expect(screen.getByLabelText(/Subject/)).toHaveValue("");
+    expect(screen.getByLabelText("Description body")).toHaveValue("");
+  });
+
   it("clears the draft after a successful submit", async () => {
     renderApp();
     fillForm();
