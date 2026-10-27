@@ -93,7 +93,8 @@ func (h *KBHandler) ListKnowledgeBases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, resp.StatusCode, payload)
+		slog.ErrorContext(r.Context(), "entity-service returned non-200", "path", r.URL.Path, "status", resp.StatusCode)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
 		return
 	}
 
@@ -102,7 +103,8 @@ func (h *KBHandler) ListKnowledgeBases(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBases []json.RawMessage `json:"knowledgeBases"`
 	}
 	if err := json.Unmarshal(payload, &upstream); err != nil {
-		writeJSON(w, http.StatusOK, payload)
+		slog.ErrorContext(r.Context(), "decode knowledge bases failed", "err", err)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
 		return
 	}
 
@@ -168,7 +170,8 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		writeJSON(w, resp.StatusCode, payload)
+		slog.ErrorContext(r.Context(), "entity-service returned non-200", "path", r.URL.Path, "status", resp.StatusCode)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
 		return
 	}
 
@@ -178,7 +181,8 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		Total    int               `json:"total"`
 	}
 	if err := json.Unmarshal(payload, &searchResp); err != nil {
-		writeJSON(w, http.StatusOK, payload)
+		slog.ErrorContext(r.Context(), "decode search response failed", "err", err)
+		writeError(w, http.StatusBadGateway, "The knowledge base is temporarily unavailable.")
 		return
 	}
 
