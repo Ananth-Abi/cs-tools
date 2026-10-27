@@ -5258,6 +5258,16 @@ type SearchTimeCardsResponse struct {
 	Offset    int            `json:"offset"`
 }
 
+// MaxTimeCardMinutes is the most minutes one time card may carry in total
+// (the sum of its five duration fields): 8 hours. The limit is per card, not
+// a cumulative daily total -- a submitter may log several cards against the
+// same case on the same day, each judged on its own.
+const MaxTimeCardMinutes = 480
+
+// MaxTimeCardMinutesMessage is the validation message returned when a single
+// time card's total exceeds MaxTimeCardMinutes.
+const MaxTimeCardMinutesMessage = "Total logged time cannot exceed 8 hours (480 minutes) per time card."
+
 // CreateTimeCardRequest is the request body for POST /time-cards. The submitter
 // is taken from the authenticated session, never from the payload; the card is
 // created in the "submitted" state. approverIds populate the eligible-approver list.

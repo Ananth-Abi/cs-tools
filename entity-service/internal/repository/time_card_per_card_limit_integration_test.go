@@ -14,14 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Integration tests for the "no more than 8 hours (480 minutes) per ticket
-// per submitter per day" cap (digiops-cs#3270), enforced inside
-// CreateTimeCard/UpdateTimeCardFields's own transactions. Same DSN and
-// skip-when-unset pattern as time_card_repo_test.go (caseStatsPool, this
-// same package) -- the cap check runs raw SQL (an advisory lock, a SUM
-// across sibling rows) that only a real Postgres can verify.
+// Integration tests for the per-card limit (8 hours / 480 minutes per time
+// card, not a cumulative daily total). The create path's 481-minute rejection
+// lives in the service layer (see time_card_service_test.go); here the
+// repository must (a) NOT reject a second card on the same case/day/user even
+// when the sum exceeds 480, and (b) reject an edit whose resulting card total
+// exceeds 480. Same DSN and skip-when-unset pattern as time_card_repo_test.go
+// (caseStatsPool, this same package).
 //
-//	CASE_STATS_TEST_DSN=postgres://... go test ./internal/repository/ -run TimeCardDailyCap
+//	CASE_STATS_TEST_DSN=postgres://... go test ./internal/repository/ -run TimeCardPerCardLimit
 
 package repository_test
 
@@ -81,23 +82,6 @@ func seedDailyCapFixture(t *testing.T, pool *pgxpool.Pool) {
 	mustExec(`INSERT INTO "case" (id, state, severity) VALUES ($1, 'OPEN', 'S2')`, dailyCapTestCaseID)
 }
 
-// seedSiblingTimeCard inserts one already-existing time_card row for
-// dailyCapTestUserID/dailyCapTestCaseID/dailyCapTestDate, in the given
-// state, with totalMinutes split evenly across the five duration columns
-// (the split doesn't matter to the cap, which sums all five).
-func seedSiblingTimeCard(t *testing.T, pool *pgxpool.Pool, id string, totalMinutes int, state string) {
-	t.Helper()
-	ctx := repository.WithSystemIdentity(context.Background())
-	scoped := repository.NewScoped(pool)
-	if _, err := scoped.Exec(ctx, `
-		INSERT INTO time_card (id, created_on, updated_on, created_by, updated_by, case_id, user_id, work_date, is_billable, state, analyzing_minutes)
-		VALUES ($1, now(), now(), 'time-card-cap-test', 'time-card-cap-test', $2, $3, $4::date, true, $5::text::time_card_state_enum, $6)`,
-		id, dailyCapTestCaseID, dailyCapTestUserID, dailyCapTestDate, state, totalMinutes,
-	); err != nil {
-		t.Fatalf("seed sibling time card: %v", err)
-	}
-}
-
 func dailyCapCreateRequest(minutes int) domain.CreateTimeCardRequest {
 	return domain.CreateTimeCardRequest{
 		CaseID:         dailyCapTestCaseID,
@@ -108,64 +92,50 @@ func dailyCapCreateRequest(minutes int) domain.CreateTimeCardRequest {
 	}
 }
 
-// TestTimeCardDailyCap_CreateRejectsOverCap: an existing 300-minute sibling
-// plus a new 250-minute card (550 total) is over the 480-minute cap.
-func TestTimeCardDailyCap_CreateRejectsOverCap(t *testing.T) {
+// TestTimeCardPerCardLimit_MultipleCardsSameCaseDayAccepted: a 480-minute card
+// followed by a 30-minute card on the same case, day and user are both
+// accepted, even though they sum to 510.
+func TestTimeCardPerCardLimit_MultipleCardsSameCaseDayAccepted(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDailyCapFixture(t, pool)
-	seedSiblingTimeCard(t, pool, "47777777-0000-0000-0000-000000000001", 300, "SUBMITTED")
 
 	repo := repository.NewTimeCardRepository(repository.NewScoped(pool))
 	ctx := repository.WithSystemIdentity(context.Background())
 
-	_, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(250), dailyCapTestUserID)
-	var valErr *apierror.ValidationError
-	if err == nil || !errorsAsValidation(err, &valErr) {
-		t.Fatalf("CreateTimeCard() error = %v, want a *apierror.ValidationError for exceeding the daily cap", err)
+	if _, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(480), dailyCapTestUserID); err != nil {
+		t.Fatalf("first CreateTimeCard(480) error = %v, want success", err)
 	}
-}
-
-// TestTimeCardDailyCap_CreateAllowsExactlyAtCap: 300 existing + 180 new =
-// exactly 480, the inclusive boundary, must succeed.
-func TestTimeCardDailyCap_CreateAllowsExactlyAtCap(t *testing.T) {
-	pool := caseStatsPool(t)
-	seedDailyCapFixture(t, pool)
-	seedSiblingTimeCard(t, pool, "47777777-0000-0000-0000-000000000002", 300, "SUBMITTED")
-
-	repo := repository.NewTimeCardRepository(repository.NewScoped(pool))
-	ctx := repository.WithSystemIdentity(context.Background())
-
-	view, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(180), dailyCapTestUserID)
+	view, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(30), dailyCapTestUserID)
 	if err != nil {
-		t.Fatalf("CreateTimeCard() error = %v, want success at exactly the 480-minute cap", err)
+		t.Fatalf("second CreateTimeCard(30) error = %v, want success -- the limit is per card, not a daily total", err)
 	}
-	if view.TotalTime != 180 {
-		t.Errorf("created card totalTime = %v, want 180", view.TotalTime)
+	if view.TotalTime != 30 {
+		t.Errorf("second card totalTime = %v, want 30", view.TotalTime)
 	}
 }
 
-// TestTimeCardDailyCap_RejectedSiblingsDontCount: a REJECTED sibling's
-// minutes must not count toward the cap.
-func TestTimeCardDailyCap_RejectedSiblingsDontCount(t *testing.T) {
+// TestTimeCardPerCardLimit_CreateAllowsExactly480: the inclusive boundary.
+func TestTimeCardPerCardLimit_CreateAllowsExactly480(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDailyCapFixture(t, pool)
-	seedSiblingTimeCard(t, pool, "47777777-0000-0000-0000-000000000003", 400, "REJECTED")
 
 	repo := repository.NewTimeCardRepository(repository.NewScoped(pool))
 	ctx := repository.WithSystemIdentity(context.Background())
 
-	if _, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(300), dailyCapTestUserID); err != nil {
-		t.Fatalf("CreateTimeCard() error = %v, want success -- the 400-minute sibling is REJECTED and must not count", err)
+	view, err := repo.CreateTimeCard(ctx, dailyCapCreateRequest(480), dailyCapTestUserID)
+	if err != nil {
+		t.Fatalf("CreateTimeCard(480) error = %v, want success at exactly the per-card limit", err)
+	}
+	if view.TotalTime != 480 {
+		t.Errorf("created card totalTime = %v, want 480", view.TotalTime)
 	}
 }
 
-// TestTimeCardDailyCap_UpdateRejectsOverCap: editing a 100-minute card up to
-// 300 minutes, with an unrelated 300-minute sibling already logged the same
-// day, would total 600 -- over the cap.
-func TestTimeCardDailyCap_UpdateRejectsOverCap(t *testing.T) {
+// TestTimeCardPerCardLimit_UpdateRejectsOver480: editing a 100-minute card up
+// to 481 minutes is rejected.
+func TestTimeCardPerCardLimit_UpdateRejectsOver480(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDailyCapFixture(t, pool)
-	seedSiblingTimeCard(t, pool, "47777777-0000-0000-0000-000000000004", 300, "SUBMITTED")
 
 	repo := repository.NewTimeCardRepository(repository.NewScoped(pool))
 	ctx := repository.WithSystemIdentity(context.Background())
@@ -175,21 +145,25 @@ func TestTimeCardDailyCap_UpdateRejectsOverCap(t *testing.T) {
 		t.Fatalf("seed CreateTimeCard() error = %v", err)
 	}
 
-	newMinutes := 300
+	newMinutes := 481
 	_, err = repo.UpdateTimeCardFields(ctx, domain.UpdateTimeCardRequest{
 		ID:            created.ID,
 		TimeAnalyzing: &newMinutes,
 	}, dailyCapTestUserID)
 	var valErr *apierror.ValidationError
 	if err == nil || !errorsAsValidation(err, &valErr) {
-		t.Fatalf("UpdateTimeCardFields() error = %v, want a *apierror.ValidationError for exceeding the daily cap", err)
+		t.Fatalf("UpdateTimeCardFields(481) error = %v, want a *apierror.ValidationError for exceeding the per-card limit", err)
+	}
+	if valErr.Msg != domain.MaxTimeCardMinutesMessage {
+		t.Errorf("error message = %q, want %q", valErr.Msg, domain.MaxTimeCardMinutesMessage)
 	}
 }
 
-// TestTimeCardDailyCap_UpdateExcludesOwnPriorValue: editing a card's own
-// minutes must compare against OTHER cards only -- not double-count this
-// same card's stored value before the edit.
-func TestTimeCardDailyCap_UpdateExcludesOwnPriorValue(t *testing.T) {
+// TestTimeCardPerCardLimit_UpdateJudgesMergedTotal: a partial edit that only
+// touches one minute field must be judged against the card's resulting total
+// (the stored values of the other four fields included), and an edit that
+// lands exactly on 480 is accepted.
+func TestTimeCardPerCardLimit_UpdateJudgesMergedTotal(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDailyCapFixture(t, pool)
 
@@ -201,32 +175,28 @@ func TestTimeCardDailyCap_UpdateExcludesOwnPriorValue(t *testing.T) {
 		t.Fatalf("seed CreateTimeCard() error = %v", err)
 	}
 
-	// Raising this same card from 400 to 480 must succeed: if the check
-	// wrongly counted the card's own pre-edit 400 minutes as a "sibling" on
-	// top of its new 480, this would be rejected as 880.
-	newMinutes := 480
-	view, err := repo.UpdateTimeCardFields(ctx, domain.UpdateTimeCardRequest{
-		ID:            created.ID,
-		TimeAnalyzing: &newMinutes,
-	}, dailyCapTestUserID)
+	// 400 stored (analyzing) + 81 patching = 481: rejected, though 81 alone is fine.
+	patching := 81
+	_, err = repo.UpdateTimeCardFields(ctx, domain.UpdateTimeCardRequest{ID: created.ID, TimePatching: &patching}, dailyCapTestUserID)
+	var valErr *apierror.ValidationError
+	if err == nil || !errorsAsValidation(err, &valErr) {
+		t.Fatalf("UpdateTimeCardFields(+81) error = %v, want a *apierror.ValidationError", err)
+	}
+
+	// 400 + 80 = 480: accepted.
+	patching = 80
+	view, err := repo.UpdateTimeCardFields(ctx, domain.UpdateTimeCardRequest{ID: created.ID, TimePatching: &patching}, dailyCapTestUserID)
 	if err != nil {
-		t.Fatalf("UpdateTimeCardFields() error = %v, want success -- the card's own prior value must not be double-counted", err)
+		t.Fatalf("UpdateTimeCardFields(+80) error = %v, want success at exactly 480", err)
 	}
 	if view.TotalTime != 480 {
 		t.Errorf("updated card totalTime = %v, want 480", view.TotalTime)
 	}
 }
 
-// TestTimeCardDailyCap_UpdateSkipsCheckWhenMinutesAndDateUnchanged: an edit
-// touching only the work log comment must not run the cap check at all --
-// confirmed here by an edit that would exceed the cap if it DID run the
-// check. The 480-minute sibling is seeded by raw SQL *after* the 480-minute
-// card is created through the repo (so creating it doesn't itself trip the
-// cap, which it correctly would if both existed up front): the two rows
-// together are already 960 minutes, an over-cap state the repo itself would
-// never have allowed to arise on its own, deliberately constructed so a
-// comment-only edit that DID still re-run the check would be rejected.
-func TestTimeCardDailyCap_UpdateSkipsCheckWhenMinutesAndDateUnchanged(t *testing.T) {
+// TestTimeCardPerCardLimit_CommentOnlyEditIgnoresLimit: an edit touching no
+// minute field never re-checks the total.
+func TestTimeCardPerCardLimit_CommentOnlyEditIgnoresLimit(t *testing.T) {
 	pool := caseStatsPool(t)
 	seedDailyCapFixture(t, pool)
 
@@ -237,14 +207,12 @@ func TestTimeCardDailyCap_UpdateSkipsCheckWhenMinutesAndDateUnchanged(t *testing
 	if err != nil {
 		t.Fatalf("seed CreateTimeCard() error = %v", err)
 	}
-	seedSiblingTimeCard(t, pool, "47777777-0000-0000-0000-000000000005", 480, "SUBMITTED")
-
 	comment := "updated comment only"
 	if _, err := repo.UpdateTimeCardFields(ctx, domain.UpdateTimeCardRequest{
 		ID:             created.ID,
 		WorkLogComment: &comment,
 	}, dailyCapTestUserID); err != nil {
-		t.Fatalf("UpdateTimeCardFields() error = %v, want success -- a comment-only edit must skip the daily cap check entirely", err)
+		t.Fatalf("UpdateTimeCardFields() error = %v, want success for a comment-only edit", err)
 	}
 }
 
