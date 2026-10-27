@@ -329,8 +329,8 @@ Problem Management lifecycle, one step at a time: **New → Assess → Root
 Cause Analysis → Fix In Progress → Resolved → Closed**. Only one transition
 is ever available at once (the next step in the chain); once a problem is
 Closed there is nothing further to do. Moving to Fix In Progress opens a
-small dialog offering to record cause notes and fix notes — both optional,
-and can be added or edited later — before the state changes.
+small dialog asking for cause notes and fix notes. Both are required: a blank
+field is flagged and the state does not change until both are filled in.
 
 An **Edit** button on the detail page opens a separate dialog for fields
 that don't require a lifecycle transition: assigned engineer, assignment
