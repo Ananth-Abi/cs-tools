@@ -472,8 +472,9 @@ func TestAdminRoleBasis(t *testing.T) {
 	integration := sampleContact()
 	integration.IsCsIntegrationUser = boolPtr(true)
 	h.se.contacts[testContactID] = integration
-	if _, ok := basis(context.Background(), testContactID); ok {
-		t.Error("an integration user has no admin role to re-derive")
+	got, ok = basis(context.Background(), testContactID)
+	if !ok || got.AdminRole != "" || !reflect.DeepEqual(got.Managed, []string{"customer_admin", "partner_admin"}) {
+		t.Errorf("an integration user must still have the admin pair revoked: basis = %+v ok = %v", got, ok)
 	}
 }
 
