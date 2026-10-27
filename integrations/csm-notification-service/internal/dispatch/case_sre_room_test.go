@@ -415,3 +415,84 @@ func TestDispatcher_S0RoomCardHangingWebhookIsBounded(t *testing.T) {
 		t.Errorf("Case Reported card went to %v; want Incident Monitor", got)
 	}
 }
+
+// holdingSLA holds the first RegisterClocks call until released: on the code
+// before this fix that call sat between the SRE room card claiming its key and
+// the record being registered (beginRecord).
+type holdingSLA struct {
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (h *holdingSLA) RegisterClocks(context.Context, string, string, time.Time, string, string, string, string, string, string) {
+	first := false
+	h.once.Do(func() { first = true })
+	if first {
+		close(h.entered)
+		<-h.release
+	}
+}
+func (h *holdingSLA) ApplyStateEffects(context.Context, string, string)     {}
+func (h *holdingSLA) CompleteResponseClock(context.Context, string)         {}
+func (h *holdingSLA) CompleteWorkaroundClock(context.Context, string) error { return nil }
+
+// A redelivery of the same record while the first call is still in flight
+// (a rebalance) must not release the SRE room card's key: the record is
+// registered before the card claims it, so the concurrent call does not see
+// itself as the last one. Before, a third delivery could then claim the key
+// again and post the card twice.
+func TestDispatcher_S0RoomCardKeyHeldWhileTheFirstCallIsInFlight(t *testing.T) {
+	rec := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1001","caseTitle":"Something broke","caseType":"CASE","priority":"CATASTROPHIC","product":"api-manager","team":"Phoenix","sreTeamName":"WSO2 IaaS Team","createdAt":"2026-01-01T00:00:00Z","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	sla := &holdingSLA{entered: make(chan struct{}), release: make(chan struct{})}
+	d := sreRoomDispatcher(chat).WithSLAEngine(sla)
+
+	first := make(chan error, 1)
+	go func() { first <- d.Handle(context.Background(), rec) }()
+	select {
+	case <-sla.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first call never reached the SLA clocks")
+	}
+	// The redelivery runs to the end while the first call is held.
+	if err := d.Handle(context.Background(), rec); err != nil {
+		t.Fatalf("redelivery: %v", err)
+	}
+	// A third delivery: the key must still be held by the first call.
+	if err := d.Handle(context.Background(), rec); err != nil {
+		t.Fatalf("third delivery: %v", err)
+	}
+	close(sla.release)
+	if err := <-first; err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if got := roomAudiences(chat); len(got) != 1 {
+		t.Errorf("SRE room cards posted = %d (%v); want 1: a concurrent call released the room card's key while the first was still sending", len(got), got)
+	}
+}
+
+// Each time a case becomes S0 its SRE room card starts a thread of its own,
+// keyed by the record that made it S0, so a case raised to S0 again does not
+// post a second card into the first episode's thread.
+func TestDispatcher_S0RoomCardThreadIsPerS0Episode(t *testing.T) {
+	chat := &mockGoogleChatSender{hasAudienceSpace: mappedSpaces}
+	d := sreRoomDispatcher(chat)
+	created := caseCreatedWith("CATASTROPHIC", "WSO2 IaaS Team")
+	raised := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","oldSeverity":"CRITICAL","newSeverity":"CATASTROPHIC","product":"api-manager","team":"Phoenix","sreTeamName":"WSO2 IaaS Team","recipients":["test-recipient@example.com"]}}`)}
+	for _, rec := range []eventbus.Record{created, raised} {
+		if err := d.Handle(context.Background(), rec); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+	}
+	cards := roomCards(chat)
+	if len(cards) != 2 {
+		t.Fatalf("room cards = %d; want one per S0 episode", len(cards))
+	}
+	first, second := cards[0].alert.ThreadKey, cards[1].alert.ThreadKey
+	if first != notifications.CaseS0ThreadKey("CASE-1", created.Value) || second != notifications.CaseS0ThreadKey("CASE-1", raised.Value) {
+		t.Errorf("threads = %q, %q; want each episode's CaseS0ThreadKey", first, second)
+	}
+	if first == second {
+		t.Errorf("both S0 episodes posted into thread %q; want a new thread for the raise", first)
+	}
+}

@@ -325,3 +325,29 @@ func TestSendIncidentCreatedAlert_CaseFormShowsProjectNotState(t *testing.T) {
 		t.Errorf("details = %q; want the project and no State", text)
 	}
 }
+
+func TestCaseS0ThreadKey(t *testing.T) {
+	a, b := []byte(`{"type":"case.created"}`), []byte(`{"type":"case.severity_changed"}`)
+	if CaseS0ThreadKey("c1", a) != CaseS0ThreadKey("c1", a) {
+		t.Error("the same record must give the same thread")
+	}
+	if CaseS0ThreadKey("c1", a) == CaseS0ThreadKey("c1", b) {
+		t.Error("two records must give two threads")
+	}
+	if !strings.HasPrefix(CaseS0ThreadKey("c1", a), IncidentThreadKey("c1")+"-") {
+		t.Errorf("thread %q; want it under the case's incident thread key", CaseS0ThreadKey("c1", a))
+	}
+}
+
+// A card with a ThreadKey posts into that thread; without one, the incident's.
+func TestSendIncidentCreatedAlert_ThreadKey(t *testing.T) {
+	c, got := captureIncidentCard(t)
+	if err := c.SendIncidentCreatedAlert(context.Background(), IncidentAudience("artemis sre group"), IncidentCreatedAlert{
+		IncidentID: "case-1", Priority: "CATASTROPHIC", Case: true, ThreadKey: "incident-case-1-0a1b2c3d4e5f",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if msg, _, _ := got(); msg.Thread == nil || msg.Thread.ThreadKey != "incident-case-1-0a1b2c3d4e5f" {
+		t.Errorf("thread = %+v; want the card's ThreadKey", msg.Thread)
+	}
+}

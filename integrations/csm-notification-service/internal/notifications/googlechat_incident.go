@@ -18,6 +18,8 @@ package notifications
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -204,6 +206,10 @@ type IncidentCreatedAlert struct {
 	// Project is the case's project, shown in Case Details in place of State
 	// (a case card carries no state); left out when empty. Case only.
 	Project string
+	// ThreadKey is the card's thread; empty is IncidentThreadKey(IncidentID).
+	// An S0 case sets CaseS0ThreadKey, so each time it becomes S0 it starts a
+	// thread of its own.
+	ThreadKey string
 }
 
 // casePriorityLabels renders a case severity on the card when Case is set.
@@ -242,6 +248,10 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 		return fmt.Errorf("notifications: incidentId is required")
 	}
 	priority := incidentPriorityLabels[strings.ToUpper(strings.TrimSpace(a.Priority))]
+	threadKey := a.ThreadKey
+	if threadKey == "" {
+		threadKey = IncidentThreadKey(a.IncidentID)
+	}
 	noun := "Incident"
 	if a.Case {
 		priority, noun = casePriorityLabels[strings.ToUpper(strings.TrimSpace(a.Priority))], "Case"
@@ -292,7 +302,7 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 			Header:   &chatCardHeader{Title: title, Subtitle: subtitle},
 			Sections: sections,
 		}}},
-		Thread: &chatThread{ThreadKey: IncidentThreadKey(a.IncidentID)},
+		Thread: &chatThread{ThreadKey: threadKey},
 	}
 	return c.sendCardToAudience(ctx, audience, a.Number, a.IncidentID, msg)
 }
@@ -430,6 +440,17 @@ func incidentRef(number, incidentID string) string {
 // IncidentThreadKey keeps an incident's created card and its replies, the paging rungs included, in one Chat thread.
 func IncidentThreadKey(incidentID string) string {
 	return "incident-" + incidentID
+}
+
+// CaseS0ThreadKey is the thread of one S0 episode of a case: the dispatcher's
+// SRE room card and the SRE ladder's messages for the record that made the
+// case S0 (created at S0, or raised to it). Both read that same record, so
+// both derive the same key from its bytes without sharing any state; a later
+// raise to S0 is a new record and so a new thread, and a redelivered record
+// keeps its thread.
+func CaseS0ThreadKey(caseID string, record []byte) string {
+	sum := sha256.Sum256(record)
+	return IncidentThreadKey(caseID) + "-" + hex.EncodeToString(sum[:6])
 }
 
 // humanizeEnumLabel turns an UPPER_SNAKE value such as IN_PROGRESS into "In Progress".

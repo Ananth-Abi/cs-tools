@@ -35,6 +35,12 @@ type Trigger struct {
 	Number string
 	// WSO2CaseID is the platform's own identifier, e.g. "WSO2-1000".
 	WSO2CaseID string
+	// CardThread is a case's S0 episode thread (notifications.CaseS0ThreadKey),
+	// set from the record that started the chain: an S0 case on the SRE ladder
+	// replies under the card the dispatcher posted for that same record.
+	// Empty on an incident, and on a chain saved before it existed, which
+	// keeps the case's one thread.
+	CardThread string `json:",omitempty"`
 	// Priority keys the timing policy; accepts P-notation or severity labels.
 	Priority string
 	Title    string
@@ -96,10 +102,13 @@ func (t Trigger) sreCaseCard() bool {
 	return t.isCase() && t.Routing.Ladder == LadderSRE
 }
 
-// chatThreadKey puts an incident's paging messages, and an SRE case's (sreCaseCard), under its "Reported" card; any other case has no such card.
+// chatThreadKey puts an incident's paging messages, and an SRE case's (sreCaseCard), under its "Reported" card -- an SRE case's under the card of its own S0 episode (CardThread); any other case has no such card.
 func (t Trigger) chatThreadKey() string {
 	if t.isCase() && !t.sreCaseCard() {
 		return "incident-escalation-" + t.IncidentID
+	}
+	if t.isCase() && t.CardThread != "" {
+		return t.CardThread
 	}
 	return notifications.IncidentThreadKey(t.IncidentID)
 }
