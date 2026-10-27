@@ -91,8 +91,14 @@ type autoclosureService struct {
 
 // NewAutoclosureService constructs the service. systemEmail is the system
 // user the reminder and closure comments are written as and the close is
-// attributed to.
+// attributed to. It is optional: empty (or blank) runs the workflow as the
+// system itself, shown as domain.AutoclosureDefaultActor ("System user"), with
+// no user row behind it, so closed_by_user_id stays empty.
 func NewAutoclosureService(repo repository.AutoclosureRepository, cases CaseService, access AccessService, systemEmail string) AutoclosureService {
+	systemEmail = strings.TrimSpace(systemEmail)
+	if systemEmail == "" {
+		systemEmail = domain.AutoclosureDefaultActor
+	}
 	return &autoclosureService{repo: repo, cases: cases, access: access, systemEmail: systemEmail, now: time.Now}
 }
 

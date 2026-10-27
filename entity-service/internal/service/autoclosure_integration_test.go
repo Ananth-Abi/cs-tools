@@ -692,3 +692,52 @@ func TestAutoclosureIntegration_DualWriteMirrorFailureNeitherFailsNorRepeatsASta
 	}
 	waitFor(t, func() bool { return failures.count() >= 1 })
 }
+
+// With no AUTOCLOSURE_SYSTEM_USER_EMAIL the workflow acts as the system itself:
+// everything a person reads says "System user", and nothing points at a user row.
+func TestAutoclosureIntegration_NoSystemUserEmailActsAsSystemUser(t *testing.T) {
+	e := newACEnv(t)
+	userRepo := repository.NewUserRepository(e.pool)
+	caseSvc := NewCaseService(repository.NewCaseRepository(e.scoped), userRepo, nil, ctxIdentityAccess{}, nil)
+	e.svc = NewAutoclosureService(repository.NewAutoclosureRepository(e.scoped), caseSvc, ctxIdentityAccess{}, "")
+	WithPendingVerificationQueue(e.svc, repository.NewPendingVerificationRepository(e.scoped))
+
+	id := e.ticket(51, "AWAITING_INFO", 0, ptrOf("FIRST_COMMENT"), ptrTime(e.ago(8)))
+	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, id, acProjectOn)
+
+	if got := e.advance(id, domain.AutoclosureStageSecondReminder); got.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("second reminder = %q (%s)", got.Outcome, got.Reason)
+	}
+	e.exec(`UPDATE "case" SET autoclosure_state_on = $2 WHERE id = $1`, id, e.ago(8))
+	if got := e.advance(id, domain.AutoclosureStageClose); got.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("close = %q (%s)", got.Outcome, got.Reason)
+	}
+
+	if r := e.row(id); r.state != "CLOSED" || r.closedBy != nil {
+		t.Errorf("row = %+v, want closed with no closed_by (there is no user row for the system)", r)
+	}
+	var authors []string
+	rows, err := e.scoped.Query(e.ctx, `SELECT created_by FROM comment WHERE work_item_id = $1 ORDER BY created_on`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var a string
+		_ = rows.Scan(&a)
+		authors = append(authors, a)
+	}
+	rows.Close()
+	if len(authors) != 2 || authors[0] != "System user" || authors[1] != "System user" {
+		t.Errorf("comment authors = %v, want two \"System user\"", authors)
+	}
+	var activityBy string
+	if err := e.scoped.QueryRow(e.ctx, `SELECT user_email FROM work_item_activity WHERE work_item_id = $1 AND field_name = 'state' ORDER BY created_on DESC LIMIT 1`, id).Scan(&activityBy); err != nil {
+		t.Fatalf("the close's activity entry: %v", err)
+	}
+	if activityBy != "System user" {
+		t.Errorf("activity actor = %q, want \"System user\"", activityBy)
+	}
+	if v := e.verifications(id); len(v) != 1 || v[0].addedBy != "System user" {
+		t.Errorf("pending verification = %+v, want one entry added by \"System user\"", v)
+	}
+}

@@ -379,8 +379,7 @@ some subjects updated and the rest stale.
 `internal/autoclosure.Run`, registered as **`case_autoclosure`** (default schedule `0 8 * * *`, TZ=UTC
 caveat as above), reminds and closes tickets that sit in Awaiting Info / Solution Proposed with no activity.
 **Off unless `AUTOCLOSURE_ENABLED=true`**: it comments on and closes customers' tickets, so it is never on by
-accident. entity-service must also have `AUTOCLOSURE_SYSTEM_USER_EMAIL` set (else it does not register the
-two routes this calls) and this component's client id in its `M2M_CLIENT_IDS`.
+accident. This component's client id must be in entity-service's `M2M_CLIENT_IDS`. entity-service's `AUTOCLOSURE_SYSTEM_USER_EMAIL` is optional: empty acts as "System user" (no user row, no `closed_by`).
 
 This task is a **trigger only**. Everything that decides anything (eligibility, whether a ticket is still due,
 the comment text, how it is closed, the daily limit) is in entity-service; see its CLAUDE.md, "Case

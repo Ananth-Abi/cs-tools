@@ -3592,13 +3592,12 @@ has neither column, so a hold on one is a 400, never a silent no-op.
 
 Tickets that sit in **Awaiting Info** or **Solution Proposed** with no activity are reminded twice and
 then closed. This is native to this service (Postgres only): nothing in it reads or writes ServiceNow,
-and it replaces ServiceNow's "Auto Close Resolved Cases" flow rather than mirroring it. It is **off**
-until `AUTOCLOSURE_SYSTEM_USER_EMAIL` is set, and needs the Postgres case tables: it needs a Postgres data source (`postgres` or `postgres-servicenow-dual-write`, where the case writes are mirrored to ServiceNow like any other). The two routes are always registered; where the feature cannot run (no system user email, or `DATA_SOURCE=servicenow`) they answer an explicit `503` naming the reason, so an enabled scheduler fails with that sentence in its alert instead of a bare 404. See "Dual-write rollout" below. It is driven
+and it replaces ServiceNow's "Auto Close Resolved Cases" flow rather than mirroring it. It is switched on by the scheduler (`AUTOCLOSURE_ENABLED`); `AUTOCLOSURE_SYSTEM_USER_EMAIL` is **optional**. It needs a Postgres data source (`postgres` or `postgres-servicenow-dual-write`, where the case writes are mirrored to ServiceNow like any other). The two routes are always registered; where the feature cannot run (`DATA_SOURCE=servicenow`) they answer an explicit `503` naming the reason, so an enabled scheduler fails with that sentence in its alert instead of a bare 404. See "Dual-write rollout" below. It is driven
 by `operations/csm-scheduled-tasks`'s `case_autoclosure` task (see that component's CLAUDE.md).
 
 | Env var | Meaning |
 |---|---|
-| `AUTOCLOSURE_SYSTEM_USER_EMAIL` | The system user the reminder and closure comments are written as and `closed_by` is stamped with. Should be a `"user"` row of type `SYSTEM`. Empty = feature off |
+| `AUTOCLOSURE_SYSTEM_USER_EMAIL` | Optional. The `"user"` row (type `SYSTEM`) the reminder and closure comments are written as and `closed_by` is stamped with. **Empty (the normal case): the workflow acts as the system itself, shown as "System user"**: comments are authored "System user", the activity entry and the Pending Verification card's "Added by" say "System user", and `closed_by_user_id` stays empty (no user row exists to point at) |
 
 **Who is eligible** (one SQL predicate, `autoclosureBaseCTE` + `autoclosureNoOpenChild` in
 `autoclosure_repo.go`, used by both the listing and the per-ticket re-check): a `"case"` (Query and

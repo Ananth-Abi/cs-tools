@@ -43,6 +43,13 @@ const (
 	AutoclosureStepOnHold        = "ON_HOLD"
 )
 
+// AutoclosureDefaultActor is who the auto-closure workflow acts as, and what the
+// customer and staff see (comment author, "Added by", the activity entry), when
+// no AUTOCLOSURE_SYSTEM_USER_EMAIL is configured: the system itself, not a person.
+// It is stored where an email would be, matches no "user" row, and so leaves
+// closed_by_user_id empty.
+const AutoclosureDefaultActor = "System user"
+
 // AutoclosureCandidatesRequest asks which tickets are due for a stage.
 type AutoclosureCandidatesRequest struct {
 	Stage AutoclosureStage `json:"stage"`

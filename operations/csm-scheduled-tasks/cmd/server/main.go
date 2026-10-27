@@ -360,10 +360,9 @@ func main() {
 	// Awaiting Info or Solution Proposed with no activity -- see
 	// internal/autoclosure's package doc and entity-service's CLAUDE.md, "Case
 	// auto-closure". OFF unless AUTOCLOSURE_ENABLED=true: it comments on and
-	// closes customers' tickets, so it is never on by accident. entity-service
-	// must also have AUTOCLOSURE_SYSTEM_USER_EMAIL set (else it does not
-	// register the two routes this calls) and this component's client id must be
-	// in its M2M_CLIENT_IDS.
+	// closes customers' tickets, so it is never on by accident. this component's client id must be in
+	// entity-service's M2M_CLIENT_IDS. entity-service's AUTOCLOSURE_SYSTEM_USER_EMAIL
+	// is optional: empty acts as "System user".
 	autoclosureEnabled := envBool("AUTOCLOSURE_ENABLED", false)
 	var autoclosureClient *autoclosure.Client
 	if autoclosureEnabled {

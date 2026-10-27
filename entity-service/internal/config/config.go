@@ -601,11 +601,12 @@ type Config struct {
 	// Alerts tab shows (e.g. "staging", "production") so an admin knows which
 	// environment's rooms they are changing. Optional.
 	CaseAlertsEnvironment string
-	// AutoclosureSystemUserEmail is AUTOCLOSURE_SYSTEM_USER_EMAIL: the system
-	// user the auto-closure workflow comments and closes tickets as (the
-	// reminder comments' author, and closed_by on a ticket it closes). Empty
-	// leaves the workflow's two routes unregistered, so the feature is off
-	// until this is set; it should name a "user" row of type SYSTEM.
+	// AutoclosureSystemUserEmail is AUTOCLOSURE_SYSTEM_USER_EMAIL: optionally, the
+	// "user" row (type SYSTEM) the auto-closure workflow comments and closes
+	// tickets as (the reminder comments' author, and closed_by on a ticket it
+	// closes). Empty is fine and the normal case: the workflow then acts as the
+	// system itself, shown as "System user", with no user row and no closed_by.
+	// What switches the feature on is the scheduler's AUTOCLOSURE_ENABLED.
 	AutoclosureSystemUserEmail string
 	// M2MClientIDsRaw is the M2M_CLIENT_IDS value, a comma-separated list of
 	// Asgardeo application client ids for pure machine-to-machine callers --
