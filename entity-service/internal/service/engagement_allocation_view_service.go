@@ -26,6 +26,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/validate"
 )
 
 const (
@@ -94,7 +95,7 @@ func (s *engagementAllocationViewService) Search(ctx context.Context, req domain
 	}
 	// Checked in a fixed order so the message names the same field every time.
 	for _, c := range []struct{ field, id string }{{"accountId", f.AccountID}, {"engineerId", f.EngineerID}, {"engagementId", f.EngagementID}} {
-		if err := validateUserID(c.id); err != nil {
+		if c.id != "" && !validate.IsUUID(c.id) {
 			return domain.SearchEngagementAllocationsResponse{}, &apierror.ValidationError{Msg: c.field + " must be a UUID"}
 		}
 	}
@@ -144,7 +145,7 @@ func (s *engagementAllocationViewService) Get(ctx context.Context, id string) (d
 
 // requireAllocationID refuses an id that is not a UUID before it reaches a uuid column.
 func requireAllocationID(id string) error {
-	if id == "" || validateUserID(id) != nil {
+	if !validate.IsUUID(id) {
 		return &apierror.ValidationError{Msg: "allocation id must be a UUID"}
 	}
 	return nil
