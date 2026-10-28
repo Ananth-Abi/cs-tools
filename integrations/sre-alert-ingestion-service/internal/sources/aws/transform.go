@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package aws transforms an inbound AWS SNS notification (wrapping a CloudWatch alarm) into the canonical alert, a Go port of ServiceNow's AWSAlertUtilsV2.
+// Package aws transforms an inbound AWS notification into the canonical alert; its CloudWatch alarm mapping is a Go port of ServiceNow's AWSAlertUtilsV2.
 package aws
 
 import (
@@ -64,18 +64,18 @@ func LoadConfig() (Config, error) {
 	return cfg, nil
 }
 
-// Transform parses a raw inbound SNS notification and produces the canonical Alert, cfg supplying operator overrides.
-func Transform(raw []byte, cfg Config) (Alert, error) {
+// Transform maps an SNS notification (CloudWatch alarm, EventBridge event, RDS event, Auto Scaling or any other message) or a bare EventBridge event to canonical alerts.
+func Transform(raw []byte, cfg Config) ([]Alert, error) {
 	if strings.TrimSpace(string(raw)) == "" {
-		return Alert{}, ErrMissingBody
+		return nil, ErrMissingBody
 	}
 
 	var envelope map[string]any
 	if err := jsonnum.Unmarshal(raw, &envelope); err != nil {
-		return Alert{}, fmt.Errorf("%w: %v", ErrMissingBody, err)
+		return nil, fmt.Errorf("%w: %v", ErrMissingBody, err)
 	}
 	if t := utils.Str(envelope, "Type"); t != "" && t != "Notification" {
-		return Alert{}, fmt.Errorf("%w %q", ErrUnsupportedType, t)
+		return nil, fmt.Errorf("%w %q", ErrUnsupportedType, t)
 	}
 
 	base := Alert{
@@ -85,57 +85,76 @@ func Transform(raw []byte, cfg Config) (Alert, error) {
 		Category:    configValue(cfg, "category"),
 		Environment: configValue(cfg, "environment"),
 		Source:      configValue(cfg, "source"),
-		// Where the notification came from, for the core's assignment-group routing; known
-		// even when the Message itself cannot be parsed.
-		SourceTopic:   utils.Str(envelope, "TopicArn"),
-		SourceAccount: arnAccount(utils.Str(envelope, "TopicArn")),
 	}
+	if isEvent(envelope) {
+		return fromEvent(envelope, base), nil
+	}
+
+	// Where the notification came from, for the core's assignment-group routing; known even when the Message itself cannot be parsed.
+	base.SourceTopic = utils.Str(envelope, "TopicArn")
+	base.SourceAccount = arnAccount(base.SourceTopic)
+	subject := utils.Str(envelope, "Subject")
 
 	messageRaw := utils.Str(envelope, "Message")
-	var messageObj map[string]any
-	if err := jsonnum.Unmarshal([]byte(messageRaw), &messageObj); err != nil {
-		// SNS Message isn't valid JSON; still produces a real alert, matching the reference script's own fallback.
-		base.MetricName = "SNS Message Parse Error"
-		// A non-JSON SNS Message is the human-readable text itself; the raw body is kept in raw_alerts.
+	var message map[string]any
+	if err := jsonnum.Unmarshal([]byte(messageRaw), &message); err != nil || message == nil {
+		// A plain-text Message (AWS Budgets, a custom publisher) is the human-readable text itself; the raw body is kept in raw_alerts.
+		base.MetricName = utils.FirstNonEmpty(subject, "SNS Message Parse Error")
 		base.Description = strings.TrimSpace(messageRaw)
-		return base, nil
+		return []Alert{base}, nil
 	}
 
+	switch {
+	case utils.Str(message, "AlarmName") != "":
+		return []Alert{fromAlarm(message, base)}, nil
+	case isEvent(message):
+		return fromEvent(message, base), nil
+	case text(message, "Event ID") != "" && text(message, "Event Source") != "":
+		return []Alert{fromRDSEvent(message, base)}, nil
+	case text(message, "AutoScalingGroupName") != "" && text(message, "Event") != "":
+		return []Alert{fromAutoScaling(message, base)}, nil
+	}
+	// Any other JSON message: its subject names it, its own message or description says what happened.
+	base.MetricName = utils.FirstNonEmpty(subject, base.MetricName)
+	base.Description = utils.FirstNonEmpty(text(message, "message", "Message", "description", "Description", "detail"), subject)
+	return []Alert{base}, nil
+}
+
+// fromAlarm maps a CloudWatch alarm notification (metric or composite) to the canonical alert.
+func fromAlarm(message map[string]any, base Alert) Alert {
 	// AlarmDescription optionally carries a JSON object of field overrides; invalid JSON there degrades to no overrides, not an error.
 	alarmDesc := map[string]any{}
-	if adRaw := strings.TrimSpace(utils.Str(messageObj, "AlarmDescription")); adRaw != "" {
+	if adRaw := strings.TrimSpace(utils.Str(message, "AlarmDescription")); adRaw != "" {
 		var parsed map[string]any
-		if err := jsonnum.Unmarshal([]byte(adRaw), &parsed); err == nil {
+		if err := jsonnum.Unmarshal([]byte(adRaw), &parsed); err == nil && parsed != nil {
 			alarmDesc = parsed
 		}
 	}
 
 	// A recovered alarm (NewStateValue "OK") always forces severity "ok", overriding AlarmDescription's own override.
-	if utils.Str(messageObj, "NewStateValue") == "OK" {
+	if utils.Str(message, "NewStateValue") == "OK" {
 		alarmDesc["severity"] = "ok"
 	}
 
-	alert := Alert{
+	return Alert{
 		Service:          utils.FirstNonEmpty(utils.Str(alarmDesc, "service"), base.Service),
-		MetricName:       utils.FirstNonEmpty(utils.Str(messageObj, "AlarmName"), base.MetricName),
+		MetricName:       utils.FirstNonEmpty(utils.Str(message, "AlarmName"), base.MetricName),
 		Severity:         utils.FirstNonEmpty(utils.Str(alarmDesc, "severity"), base.Severity),
 		Category:         utils.FirstNonEmpty(utils.Str(alarmDesc, "category"), base.Category),
 		Environment:      utils.FirstNonEmpty(utils.Str(alarmDesc, "environment"), base.Environment),
 		Source:           base.Source,
-		UniqueIdentifier: utils.Str(messageObj, "AlarmArn"),
+		UniqueIdentifier: utils.Str(message, "AlarmArn"),
 		// The alarm's state reason, never the payload; the raw body is kept in raw_alerts.
-		Description: utils.Str(messageObj, "NewStateReason"),
-		// An alarm may name its own CSM assignment group in AlarmDescription; it beats every
-		// other routing signal the core has.
+		Description: utils.Str(message, "NewStateReason"),
+		// An alarm may name its own CSM assignment group in AlarmDescription; it beats every other routing signal the core has.
 		AssignmentGroup: strings.TrimSpace(utils.Str(alarmDesc, "assignment_group")),
 		SourceTopic:     base.SourceTopic,
 		SourceAccount: utils.FirstNonEmpty(
-			utils.Str(messageObj, "AWSAccountId"),
-			arnAccount(utils.Str(messageObj, "AlarmArn")),
+			utils.Str(message, "AWSAccountId"),
+			arnAccount(utils.Str(message, "AlarmArn")),
 			base.SourceAccount,
 		),
 	}
-	return alert, nil
 }
 
 // arnAccount returns the account id of an ARN (arn:partition:service:region:account:resource), or "".

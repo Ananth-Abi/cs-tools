@@ -28,6 +28,22 @@ service never creates incidents and never touches alert-core's own tables.
   from `sns.<region>.amazonaws.com`) and answers `200` without storing an alert. An
   `UnsubscribeConfirmation` is logged and answered `200`, never stored; any other SNS message type
   except `Notification` is rejected with `400`.
+- **AWS alert types.** The AWS webhook takes an SNS notification or a bare EventBridge event (an
+  API destination). Each kind keeps a stable metric name and unique identifier, so repeats and
+  recoveries land on one incident:
+
+  | Payload | Metric name | Unique identifier | Severity |
+  |---|---|---|---|
+  | CloudWatch alarm (metric or composite, via SNS or the "CloudWatch Alarm State Change" event) | `AlarmName` | `AlarmArn` | `AlarmDescription` override, `ok` on `OK` |
+  | GuardDuty finding | finding `type` | finding `id` | 0-10 score: critical from 9, major from 7, minor from 4, else warning |
+  | Security Hub finding (one alert per finding) | `Title` | `Id` | label mapped; `ok` when resolved, suppressed or archived |
+  | AWS Health event | `eventTypeCode` | `eventArn` | configured for an issue, warning otherwise, `ok` when closed |
+  | Any other EventBridge event | `detail-type` | its `resources` | configured |
+  | RDS event subscription | the `RDS-EVENT-NNNN` code | `Source ARN` | configured |
+  | Auto Scaling notification | `Event` | group ARN | configured for `*_ERROR`, warning otherwise |
+  | Any other message | SNS `Subject` | none | configured |
+
+  GuardDuty and Security Hub findings are filed with category `security`.
 - **Backpressure.** Accepted-but-unfinished work is capped by both a queue size and a memory
   budget; past either limit, new webhooks get `503` immediately rather than queuing indefinitely.
 - **Wake-up call.** After writing a batch, the service posts once to alert-core's `POST /alertz`
