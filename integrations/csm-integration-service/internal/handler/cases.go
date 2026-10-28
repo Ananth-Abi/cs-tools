@@ -79,17 +79,10 @@ func NewCaseHandler(entity entityCaseClient, umtActorEmail string, clientActorEm
 	return &CaseHandler{entity: entity, umtActorEmail: umtActorEmail, clientActorEmails: clientActorEmails}
 }
 
-// patchCaseMarkFixIssuedRequest is the shape attributeMarkFixIssued decodes a
-// PatchCase body into just to recognize a markFixIssued update -- never used
-// to reject or alter any other field combination, which the entity service
-// validates and forwards (or rejects) on its own.
-type patchCaseMarkFixIssuedRequest struct {
-	MarkFixIssued *bool `json:"markFixIssued"`
-}
-
-// patchCaseMarkFixIssuedUpstreamRequest is the body attributeMarkFixIssued
-// rebuilds when it resolves an actor for a markFixIssued call, mirroring
-// domain.UpdateCaseRequest's own MarkFixIssued/ActorEmail fields.
+// patchCaseMarkFixIssuedUpstreamRequest mirrors the two fields
+// attributeMarkFixIssued's enrichment cares about -- domain.UpdateCaseRequest's
+// own MarkFixIssued/ActorEmail -- for tests to decode out of an upstream body
+// that may also carry other, untouched fields.
 type patchCaseMarkFixIssuedUpstreamRequest struct {
 	MarkFixIssued *bool   `json:"markFixIssued"`
 	ActorEmail    *string `json:"actorEmail,omitempty"`
@@ -138,15 +131,20 @@ func stripCallerActorEmail(body []byte) []byte {
 	return cleaned
 }
 
-// attributeMarkFixIssued rewrites a markFixIssued-only PatchCase body to
-// carry an actorEmail resolved from the caller's own x-jwt-assertion client
-// id via CaseHandler.clientActorEmails (see that field's own doc comment).
-// Every other body shape passes through unchanged. A markFixIssued body this
-// handler cannot attribute -- no x-jwt-assertion header, an undecodable one,
-// or a client id with no entry in that map -- also passes through unchanged
-// (no actorEmail added, leaving entity-service's own resolveActorOrM2M
-// fallback to apply as before), but is logged at WARN so an
-// unmapped/misconfigured caller is visible rather than silently never
+// attributeMarkFixIssued adds an actorEmail resolved from the caller's own
+// x-jwt-assertion client id (via CaseHandler.clientActorEmails, see that
+// field's own doc comment) to a markFixIssued PatchCase body, preserving
+// every other field the body carried -- unlike an earlier revision of this
+// function, which rebuilt the body from a struct holding only MarkFixIssued/
+// ActorEmail and so silently dropped anything else a caller sent alongside
+// markFixIssued (letting entity-service's own field-combination rejection
+// never see it, and masking what should have been a 400 with a false
+// success). Every other body shape passes through unchanged. A markFixIssued
+// body this handler cannot attribute -- no x-jwt-assertion header, an
+// undecodable one, or a client id with no entry in that map -- also passes
+// through unchanged (no actorEmail added, leaving entity-service's own
+// resolveActorOrM2M fallback to apply as before), but is logged at WARN so
+// an unmapped/misconfigured caller is visible rather than silently never
 // attributed. This is a best-effort enrichment, never a validation gate: it
 // must never block or fail the call, since entity-service enforces its own
 // field-combination and actorEmail-trust rules regardless of what this does
@@ -157,8 +155,20 @@ func (h *CaseHandler) attributeMarkFixIssued(r *http.Request, body []byte) []byt
 	if len(h.clientActorEmails) == 0 {
 		return body
 	}
-	var req patchCaseMarkFixIssuedRequest
-	if err := json.Unmarshal(body, &req); err != nil || req.MarkFixIssued == nil {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	raw, ok := m["markFixIssued"]
+	if !ok {
+		return body
+	}
+	// A *bool, not bool: an explicit "markFixIssued": null must be treated
+	// the same as the key being absent (not a markFixIssued update), not as
+	// false -- matching domain.UpdateCaseRequest.MarkFixIssued's own *bool
+	// shape and entity-service's own nil-check for it.
+	var markFixIssued *bool
+	if err := json.Unmarshal(raw, &markFixIssued); err != nil || markFixIssued == nil {
 		return body
 	}
 	clientID := clientIDFromJWTAssertion(r.Header.Get(jwtAssertionHeader))
@@ -171,10 +181,13 @@ func (h *CaseHandler) attributeMarkFixIssued(r *http.Request, body []byte) []byt
 		slog.WarnContext(r.Context(), "patch case markFixIssued: caller client id has no configured actor email, forwarding with no actorEmail", "clientId", clientID)
 		return body
 	}
-	upstream, err := json.Marshal(patchCaseMarkFixIssuedUpstreamRequest{
-		MarkFixIssued: req.MarkFixIssued,
-		ActorEmail:    &email,
-	})
+	emailJSON, err := json.Marshal(email)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "marshal patch case markFixIssued actorEmail failed", "err", err)
+		return body
+	}
+	m["actorEmail"] = emailJSON
+	upstream, err := json.Marshal(m)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "marshal patch case markFixIssued body failed", "err", err)
 		return body

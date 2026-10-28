@@ -251,6 +251,35 @@ func TestPatchCase(t *testing.T) {
 		}
 	})
 
+	t.Run("markFixIssued: a mapped client's other fields are preserved, not dropped", func(t *testing.T) {
+		var capturedBody []byte
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				capturedBody = body
+				return []byte(`{"message":"Case updated successfully"}`), nil
+			},
+		}
+		h := NewCaseHandler(client, "", map[string]string{"client-abc": "integration-a@example.com"})
+		r := httptest.NewRequest(http.MethodPatch, "/cases/"+caseID, strings.NewReader(`{"markFixIssued":true,"state":"closed"}`))
+		r.SetPathValue("id", caseID)
+		r.Header.Set(jwtAssertionHeader, testJWTAssertion(t, "client-abc"))
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+
+		var got map[string]any
+		if err := json.Unmarshal(capturedBody, &got); err != nil {
+			t.Fatalf("decode upstream body: %v", err)
+		}
+		if got["state"] != "closed" {
+			t.Errorf("upstream body = %s, state must be preserved so entity-service's own field-combination rule can still reject it", capturedBody)
+		}
+		if got["actorEmail"] != "integration-a@example.com" {
+			t.Errorf("upstream body = %s, actorEmail = %v, want %q", capturedBody, got["actorEmail"], "integration-a@example.com")
+		}
+	})
+
 	t.Run("markFixIssued: forwards unchanged when the caller's client id is unmapped", func(t *testing.T) {
 		var capturedBody []byte
 		reqBody := `{"markFixIssued":true}`

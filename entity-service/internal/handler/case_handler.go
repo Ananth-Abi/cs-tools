@@ -167,6 +167,12 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actorEmail := strings.ToLower(strings.TrimSpace(*req.ActorEmail))
+		if actorEmail == "" {
+			writeServiceError(w, r, &apierror.ValidationError{
+				Msg: "actorEmail must not be blank",
+			})
+			return
+		}
 		req.ActorEmail = &actorEmail
 	}
 
