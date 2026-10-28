@@ -88,15 +88,8 @@ func New() (*Registry, error) {
 
 	return &Registry{transforms: map[string]Transform{
 		"aws": func(raw []byte) ([]model.Alert, error) {
-			batch, err := aws.Transform(raw, awsCfg)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]model.Alert, len(batch))
-			for i, a := range batch {
-				out[i] = model.Alert(a)
-			}
-			return out, nil
+			a, err := aws.Transform(raw, awsCfg)
+			return one(err, model.Alert(a))
 		},
 		"azure": func(raw []byte) ([]model.Alert, error) {
 			a, err := azure.Transform(raw, azureCfg)
