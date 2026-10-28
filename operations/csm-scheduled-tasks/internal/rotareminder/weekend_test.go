@@ -135,7 +135,8 @@ func TestWeekendNotice_AFullWeekendIsAnnouncedOnce(t *testing.T) {
 	}
 
 	summary := emailWith(t, mail.sent, "Weekend Rotation – Saturday, 24 and Sunday, 25 October 2026")
-	if strings.Join(summary.to, ",") != "ann@example.com,ben@example.com,cid@example.com,ivy@example.com,jay@example.com" ||
+	if summary.subject != "[CRE Operations] Weekend Rotation – Saturday, 24 and Sunday, 25 October 2026" ||
+		strings.Join(summary.to, ",") != "ann@example.com,ben@example.com,cid@example.com,ivy@example.com,jay@example.com" ||
 		len(summary.attachments) != 0 ||
 		!strings.Contains(summary.body, "A calendar invitation for your team&#39;s rotation follows in a separate email") {
 		t.Errorf("summary = %+v", summary)
@@ -165,7 +166,7 @@ func TestWeekendNotice_AFullWeekendIsAnnouncedOnce(t *testing.T) {
 	}
 	for _, c := range cases {
 		m := emailWith(t, mail.sent, c.subject)
-		if strings.Join(m.to, ",") != c.to || len(m.attachments) != 1 {
+		if !strings.HasPrefix(m.subject, "[CRE Operations] "+c.subject) || strings.Join(m.to, ",") != c.to || len(m.attachments) != 1 {
 			t.Errorf("%q to %v with %d attachments", c.subject, m.to, len(m.attachments))
 			continue
 		}
@@ -220,7 +221,7 @@ func TestWeekendNotice_AnIncompleteWeekendAsksTheRotaAdmins(t *testing.T) {
 	}
 	m := mail.sent[0]
 	if strings.Join(m.to, ",") != "zoe@example.com" ||
-		m.subject != "[CRE Rota] Action needed: the weekend rota for Saturday, 24 and Sunday, 25 October 2026 is not complete" ||
+		m.subject != "[CRE Operations] Action needed: the weekend rota for Saturday, 24 and Sunday, 25 October 2026 is not complete" ||
 		!strings.Contains(m.body, "<p>Dear Zoe Admin,</p>") ||
 		!strings.Contains(m.body, row("Saturday, 24 October", "LK Weekend Rotation", "2", "3")) ||
 		!strings.Contains(m.body, row("Sunday, 25 October", "Americas Weekend Rotation", "0", "1")) ||

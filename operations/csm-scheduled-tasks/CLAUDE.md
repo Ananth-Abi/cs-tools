@@ -294,7 +294,8 @@ schedules assume `TZ=UTC` like every other here.
   swap instruction with the Team Schedule link written out, and a sign-off. The weekend summary
   (`notify.RenderWeekendRota`, described above): "Hello team,", the day team lists, the Rotation
   Definitions table, the zone note and the handover paragraphs. Rotation names come from config
-  (`CODE=Name`). Names are escaped.
+  (`CODE=Name`). Names are escaped. Every subject starts `[<family> Operations]`
+  (`[CRE Operations] Weekend Rotation – …`; a test adds `[Test] ` in front).
 - **A retry announces what its scheduled run would have.** The engine retries a failed run every
   tick until the next period, which for `rota_weekend_notice` is days later. So the rota days are
   counted from the run's period key (`Config.Anchor`, from `schedule.PeriodKey`), not the clock:
