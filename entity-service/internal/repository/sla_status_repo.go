@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -39,7 +38,7 @@ type SLAStatusRepository interface {
 	// csm-notification-service's own Redis-recovery reconciliation pass
 	// (source=CSM), which only ever needs this engine's own rows and would
 	// otherwise pay the cost of scanning the full, much larger
-	// ServiceNow-synced row set for nothing. Empty means no filter, the
+	// previous-system-synced row set for nothing. Empty means no filter, the
 	// original, unscoped behavior.
 	SearchActiveSLAStatuses(ctx context.Context, pagination domain.Pagination, sourceFilter string) ([]domain.SLAStatus, int, error)
 
@@ -206,12 +205,18 @@ func scanSLAStatus(row interface{ Scan(...any) error }) (domain.SLAStatus, error
 	}
 	s.DurationSeconds = durationSeconds
 	s.Schedule = schedule
-	isLive := stage == "IN_PROGRESS" || stage == "BREACHED"
-	if schedule == slaScheduleWSO2BusinessDays && isLive && s.StartedOn != nil {
-		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
-		duration := time.Duration(durationSeconds) * time.Second
-		_, _, pct, _ := businessDayElapsedSnapshot(*s.StartedOn, time.Now().UTC(), businessPause, duration)
+	if _, breached, pct, ok := businessDayCorrectedLiveState(schedule, stage, s.StartedOn, businessPauseSeconds, float64(durationSeconds)); ok {
+		// Both BusinessElapsedPercent AND HasBreached are corrected together
+		// here -- an earlier version of this method corrected only the
+		// percentage, leaving HasBreached (and, in GetClockState's own
+		// equivalent correction, Stage) to still come from sla_live's own
+		// flat-time computation. That let a business-day clock report
+		// HasBreached=true right next to a corrected percentage well under
+		// 100 -- one response disagreeing with itself. See
+		// businessDayCorrectedLiveState's own doc comment for the confirmed
+		// example.
 		s.BusinessElapsedPercent = pct
+		s.HasBreached = breached
 	}
 	s.CaseNumber = stringOrEmpty(caseNumber)
 	s.WSO2CaseID = stringOrEmpty(wso2CaseID)
@@ -397,12 +402,19 @@ func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, s
 	state.DurationSeconds = int64(durationSeconds)
 	state.BusinessElapsedPercent = viewPercent
 	state.Schedule = schedule
+	state.BusinessPauseDurationSeconds = int64(businessPauseSeconds)
 
-	isLive := state.Stage == "IN_PROGRESS" || state.Stage == "BREACHED"
-	if schedule == slaScheduleWSO2BusinessDays && isLive && state.StartedOn != nil {
-		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
-		duration := time.Duration(durationSeconds * float64(time.Second))
-		_, _, pct, _ := businessDayElapsedSnapshot(*state.StartedOn, time.Now().UTC(), businessPause, duration)
+	if correctedStage, breached, pct, ok := businessDayCorrectedLiveState(schedule, state.Stage, state.StartedOn, businessPauseSeconds, durationSeconds); ok {
+		// Stage AND HasBreached are now corrected together with the
+		// percentage -- see businessDayCorrectedLiveState's own doc comment
+		// for the confirmed, live-observed example this fixes (a clock
+		// reporting BREACHED while its own corrected percentage read 58%).
+		// csm-notification-service reads this exact response before sending
+		// a breach alert, so an uncorrected Stage/HasBreached here could
+		// previously trigger a false alert for a business-day clock that
+		// was, in reality, nowhere near its deadline.
+		state.Stage = correctedStage
+		state.HasBreached = breached
 		state.BusinessElapsedPercent = pct
 	}
 	return state, nil

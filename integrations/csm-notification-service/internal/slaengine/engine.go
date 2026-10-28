@@ -89,27 +89,6 @@ func withRedisRetry(ctx context.Context, fn func() error) error {
 	return err
 }
 
-// highestNewlyCrossedTier returns the highest tier in tierSequence that
-// percent has reached (>=) and that is strictly greater than
-// lastKnownAlerted, or 0 if none qualifies. Used by the Redis-outage
-// fallback path (processDueMemberFallback) to decide which single tier to
-// alert on from a live percent-elapsed reading, when this engine's own
-// Redis-held alertedTier cursor can't be consulted at all — deliberately
-// never returns more than one tier: if percent has already crossed both 50
-// and 75, only 75 (the highest) is reported, so a single degraded check
-// never sends two alerts, or a stale lower one, for what is really one
-// now-overdue clock. A pure function so this logic is directly unit
-// testable with no store/entity fake needed.
-func highestNewlyCrossedTier(percent float64, lastKnownAlerted int) int {
-	highest := 0
-	for _, tier := range tierSequence {
-		if percent >= float64(tier) && tier > lastKnownAlerted {
-			highest = tier
-		}
-	}
-	return highest
-}
-
 // store abstracts Store for testability.
 type store interface {
 	AddWake(ctx context.Context, member string, at time.Time) error
@@ -119,6 +98,7 @@ type store interface {
 	GetClock(ctx context.Context, caseID, clockType string) (ClockMeta, bool, error)
 	SetPaused(ctx context.Context, caseID, clockType string, paused bool) error
 	ShiftWake(ctx context.Context, caseID, clockType string, deltaSeconds, newBaselineSeconds int64) error
+	SetWakeAbsolute(ctx context.Context, caseID, clockType string, wakes map[int]time.Time, newBaselineSeconds int64) error
 	SetShiftedPauseSeconds(ctx context.Context, caseID, clockType string, seconds int64) error
 	SetState(ctx context.Context, caseID, clockType, state string) error
 	AdvanceAlertedTier(ctx context.Context, caseID, clockType string, tier int, incarnation time.Time) (applied bool, err error)
@@ -348,18 +328,27 @@ func dueInstant(startedAt time.Time, d time.Duration, schedule string) time.Time
 	return startedAt.Add(d)
 }
 
+// tierFraction returns tier's share of d (50% -> d/2, 75% -> d*3/4, 100% ->
+// d) — split out from tierTime so Engine.resumeShift's business-day branch
+// can compute the same fraction without going through dueInstant, which
+// anchors at a start instant this call site doesn't have (it adds the
+// fraction to the clock's already-known duration-plus-pause total instead).
+func tierFraction(d time.Duration, tier int) time.Duration {
+	switch tier {
+	case 50:
+		return d / 2
+	case 75:
+		return d * 3 / 4
+	default: // 100
+		return d
+	}
+}
+
 // tierTime returns the instant tier is reached, given a clock that started
 // at startedAt and runs for duration d under the given schedule — ported
 // from the pre-poll design's own helper, now schedule-aware via dueInstant.
 func tierTime(startedAt time.Time, d time.Duration, tier int, schedule string) time.Time {
-	switch tier {
-	case 50:
-		return dueInstant(startedAt, d/2, schedule)
-	case 75:
-		return dueInstant(startedAt, d*3/4, schedule)
-	default: // 100
-		return dueInstant(startedAt, d, schedule)
-	}
+	return dueInstant(startedAt, tierFraction(d, tier), schedule)
 }
 
 // dueAtAndTierDuration computes a clock's overall due instant and the
@@ -476,6 +465,7 @@ func (e *Engine) RegisterClocks(ctx context.Context, caseID, priority string, cr
 			Team:       team,
 			Priority:   priority,
 			StartedAt:  startedAt,
+			Schedule:   state.Schedule,
 		}
 		if err := e.store.SetClock(ctx, caseID, clockType, meta); err != nil {
 			slog.ErrorContext(ctx, "slaengine: failed to register sla clock", "caseId", caseID, "clockType", clockType, "err", err)
@@ -647,6 +637,10 @@ func (e *Engine) resumeShift(ctx context.Context, caseID, clockType string) {
 	if !state.Found {
 		return
 	}
+	if meta.Schedule == slaScheduleWSO2BusinessDays {
+		e.resumeShiftBusinessDays(ctx, caseID, clockType, meta, state)
+		return
+	}
 	delta := state.PauseDurationSeconds - meta.ShiftedPauseSeconds
 	if delta <= 0 {
 		return
@@ -656,6 +650,47 @@ func (e *Engine) resumeShift(ctx context.Context, caseID, clockType string) {
 	// Store.ShiftWake's own doc comment for the double-shift this prevents.
 	if err := e.store.ShiftWake(ctx, caseID, clockType, delta, state.PauseDurationSeconds); err != nil {
 		slog.ErrorContext(ctx, "slaengine: failed to shift wake entries after resume", "caseId", caseID, "clockType", clockType, "deltaSeconds", delta, "err", err)
+	}
+}
+
+// resumeShiftBusinessDays is resumeShift's 'WSO2 Business days' branch. A
+// flat ZINCRBY shift (the 24x7 path above) is wrong for a business-day
+// clock: entity-service computes a business-day clock's real due instant as
+// AddBusinessDuration(start, duration + businessPause), so incrementing an
+// already-computed wake score by a flat wall-clock pause delta can land it
+// anywhere from days early to days late depending on how much of the pause
+// segment fell on a weekend — a real gap a PR review caught (a confirmed
+// example: a 116h business-day resolution clock's 100% wake landed a full
+// two days before entity-service's own real due instant after one overnight
+// pause). Instead, every tier not yet alerted (meta.AlertedTier) is
+// recomputed from scratch — businessdays.AddBusinessDuration(startedAt,
+// tierFraction(duration, tier) + businessPause) — the exact formula
+// entity-service's own businessDayElapsedSnapshot inverts for breach
+// detection, so this engine's wake schedule and entity-service's own
+// verdict agree. SetWakeAbsolute only touches a tier whose wake entry still
+// exists, so an already-alerted-and-removed tier is never resurrected.
+func (e *Engine) resumeShiftBusinessDays(ctx context.Context, caseID, clockType string, meta ClockMeta, state clockState) {
+	if state.DurationSeconds <= 0 {
+		return
+	}
+	duration := time.Duration(state.DurationSeconds) * time.Second
+	businessPause := time.Duration(state.BusinessPauseDurationSeconds) * time.Second
+
+	wakes := make(map[int]time.Time, len(tierSequence))
+	for _, tier := range tierSequence {
+		if tier <= meta.AlertedTier {
+			continue
+		}
+		wakes[tier] = businessdays.AddBusinessDuration(meta.StartedAt, tierFraction(duration, tier)+businessPause)
+	}
+	if len(wakes) == 0 {
+		return
+	}
+	// One atomic call, same reasoning as ShiftWake's own doc comment: the
+	// wake entries and the new baseline must not be allowed to land only
+	// one at a time.
+	if err := e.store.SetWakeAbsolute(ctx, caseID, clockType, wakes, state.BusinessPauseDurationSeconds); err != nil {
+		slog.ErrorContext(ctx, "slaengine: failed to recompute business-day wake entries after resume", "caseId", caseID, "clockType", clockType, "err", err)
 	}
 }
 
@@ -773,13 +808,10 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 		return err
 	})
 	if err != nil {
-		// Redis is unreachable for this member even after retrying -- rather
-		// than returning an error here (which just means "try again next
-		// tick," indistinguishable from silently losing the alert if Redis
-		// stays down past this clock's real due time), fall back to
-		// entity-service's own live record for this one case -- see
-		// processDueMemberFallback's own doc comment.
-		return e.processDueMemberFallback(ctx, caseID, clockType, member, tier)
+		// Redis is unreachable for this member even after retrying -- see
+		// processDueMemberFallback's own doc comment for why this no longer
+		// attempts a degraded send.
+		return e.processDueMemberFallback(ctx, caseID, clockType, member)
 	}
 	if !found {
 		return e.store.RemoveWake(ctx, member)
@@ -844,140 +876,30 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 
 // processDueMemberFallback handles one due wake-index member when this
 // engine's own Redis-held clock metadata is unreachable even after
-// withRedisRetry's bounded retries — rather than silently losing this
-// tier's alert (returning an error here just means "try again next tick,"
-// which is fine for a genuine transient blip but indistinguishable from
-// silently dropping the alert if Redis stays down past the clock's real due
-// time), this asks entity-service directly for this one case's current,
-// authoritative state and sends from that instead.
+// withRedisRetry's bounded retries.
 //
-// Degraded by necessity: entity-service's own GetClockState carries no case
-// number/team/product/title — that's Redis-only display metadata this path
-// cannot reconstruct without Redis — so the alert sent here is best-effort,
-// built from whatever's available (caseID stands in for CaseNumber, team/
-// product are blank, so chataudience.Resolve routes to its own default
-// audience rather than a team's own space). A degraded, late alert is still
-// strictly better than none. Reuses sendBreachAlert itself (rather than a
-// separate degraded code path) for the actual send: that function already
-// re-verifies the clock against entity-service before building/sending
-// anything, so the two checks reinforce rather than duplicate each other.
+// This no longer sends a degraded alert of its own. An earlier version asked
+// entity-service directly for the clock's live state and sent from that --
+// but recording that a degraded send happened (AdvanceAlertedTier,
+// RemoveWake) needs exactly the same Redis commands that just failed and
+// triggered this fallback in the first place, so a Redis outage spanning
+// more than one tick could send the same degraded alert again on every tick
+// it stayed down, and a recovered normal Tick could then claim the tier
+// fresh and send yet again -- two real, code-review-found duplicate-alert
+// shapes from one design. Comparing a live percentage against a single wake
+// member's own tier (an earlier fix attempt) only closed one of the two: it
+// could still silently drop a tier that was due by schedule but not yet
+// reflected in entity-service's own live percentage, and the underlying
+// double-send risk from an outage spanning several ticks remained.
 //
-// Tier selection does not consult this engine's own alertedTier cursor at
-// all (Redis, the only place that cursor lives, is exactly what's
-// unreachable) — instead it computes the single highest tier the clock's
-// current live percent-elapsed has newly crossed (highestNewlyCrossedTier)
-// and only sends when that highest tier is THIS specific wake member's own
-// tier (memberTier). This matters because processDueMember calls this
-// function once per due wake member, independently — if both the 50% and
-// 75% wake members are due in the same tick (or across a short string of
-// ticks while Redis stays down) and the live percentage is already past
-// 75%, highestNewlyCrossedTier would answer "75" for BOTH calls; without
-// the memberTier comparison, both calls would send the identical "75%"
-// alert, a real, code-review-found duplicate-alerting bug. Comparing
-// against memberTier makes exactly one of those two calls actually alert
-// (the 75% one); the 50% call recognizes its own threshold is superseded
-// and only cleans up. Every due member handled here is removed from the
-// wake index too — superseded members unconditionally, and a genuinely
-// alerted member's own entry once its AdvanceAlertedTier write is confirmed
-// applied (see below) — so repeated Redis failures can't leave a stale
-// member to be resent once Redis recovers (a second real bug the same
-// review caught: the original version alerted without ever calling
-// RemoveWake, so an outage spanning several ticks could resend the same
-// degraded alert every tick, and a later successful Redis read could
-// re-examine and re-alert on members this fallback had already handled).
-//
-// An AdvanceAlertedTier write is still attempted after a genuine send,
-// best-effort, so a later successful Redis read doesn't resend the same
-// tier once Redis recovers — and its returned `applied` result gates
-// RemoveWake exactly the way processDueMember's own identical check does:
-// `applied=false` means the clock has moved on to a new incarnation since
-// this fallback read entity-service's state (a severity revision cancelled
-// the old clock and registered a fresh one for the same key), so this
-// member's wake entry is left untouched rather than removed — it may
-// already be the NEW incarnation's own, independently-scheduled entry
-// (AddWake overwrites the same ZSET member), and deleting it would
-// silently cancel a still-valid future alert. A code review caught a real
-// regression here: an earlier version of this function called RemoveWake
-// unconditionally regardless of `applied`, reintroducing for the fallback
-// path exactly the incarnation-clobbering bug processDueMember's own check
-// already exists to prevent.
-func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType, member string, memberTier int) error {
-	if e.entity == nil {
-		return fmt.Errorf("redis unavailable for %s and no entity-service client configured for fallback", member)
-	}
-
-	state, err := e.entity.GetClockState(ctx, caseID, clockType)
-	if err != nil {
-		return fmt.Errorf("redis unavailable for %s, entity-service fallback also failed: %w", member, err)
-	}
-	if !state.Found || state.StartedOn == nil {
-		return fmt.Errorf("redis unavailable for %s, and entity-service has no record of this clock either", member)
-	}
-	if state.IsPaused {
-		slog.InfoContext(ctx, "slaengine: fallback: clock is paused in entity-service's own record, not alerting", "caseId", caseID, "clockType", clockType)
-		return nil
-	}
-	if isTerminalSLAStage(state.Stage) && !state.HasBreached {
-		slog.InfoContext(ctx, "slaengine: fallback: clock already resolved cleanly in entity-service's own record, nothing to alert", "caseId", caseID, "clockType", clockType)
-		return nil
-	}
-
-	highest := highestNewlyCrossedTier(state.BusinessElapsedPercent, 0)
-	if highest == 0 {
-		return nil
-	}
-
-	if highest != memberTier {
-		// A different wake member -- due now or very recently -- is this
-		// clock's own highest newly-crossed tier per entity-service's live
-		// reading, and that call is the one that actually alerts; this
-		// member's own threshold is superseded, so it's removed (handled,
-		// same as the normal Redis-available path would for a due member)
-		// without sending anything, avoiding the duplicate "both 50% and
-		// 75% fire the same 75% alert" bug this comparison exists to close.
-		if err := e.store.RemoveWake(ctx, member); err != nil {
-			slog.WarnContext(ctx, "slaengine: fallback: failed to remove a wake entry superseded by a higher newly-crossed tier", "caseId", caseID, "clockType", clockType, "memberTier", memberTier, "highestTier", highest, "err", err)
-		}
-		return nil
-	}
-
-	slog.WarnContext(ctx, "slaengine: redis unavailable, sending a degraded breach alert from entity-service's own live state", "caseId", caseID, "clockType", clockType, "tier", highest, "businessElapsedPercent", state.BusinessElapsedPercent)
-	meta := ClockMeta{CaseNumber: caseID, StartedAt: *state.StartedOn}
-	e.sendBreachAlert(ctx, meta, caseID, clockType, highest)
-
-	// Best-effort: record the tier as alerted, and remove this member's own
-	// wake entry, so neither a later successful Redis read nor a repeated
-	// fallback run (Redis still down on the next tick) resends this exact
-	// alert. A write failure here is logged only, never returned/retried --
-	// the degraded alert has already gone out, and returning an error would
-	// just cause a retry that resends the SAME degraded alert again, which
-	// is worse than the small, accepted risk of a duplicate if Redis stays
-	// down and a write fails.
-	applied, err := e.store.AdvanceAlertedTier(ctx, caseID, clockType, highest, *state.StartedOn)
-	if err != nil {
-		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not record the alerted-tier cursor, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)
-	} else if !applied {
-		// The clock has moved on to a new incarnation since this fallback
-		// read entity-service's state (a severity revision cancelled the old
-		// clock and registered a fresh one for the same (case, clockType) --
-		// see AdvanceAlertedTier's own doc comment and processDueMember's
-		// identical check above) -- the alert already sent reflects the OLD
-		// incarnation, which can't be undone, but this member's own wake
-		// entry must NOT be removed: by now it may already be the NEW
-		// incarnation's own, independently-scheduled entry for this same
-		// key (AddWake overwrites the same ZSET member), and deleting it
-		// here would silently cancel a still-valid future alert that has
-		// nothing to do with this stale fallback run. A real regression a
-		// code review caught: an earlier version of this function called
-		// RemoveWake unconditionally regardless of `applied`, reintroducing
-		// exactly the incarnation-clobbering bug processDueMember's own
-		// check already exists to prevent.
-		slog.InfoContext(ctx, "slaengine: fallback alert sent under a clock incarnation that has since been replaced, leaving the new incarnation's own wake entry untouched", "caseId", caseID, "clockType", clockType, "tier", highest)
-		return nil
-	}
-	if err := e.store.RemoveWake(ctx, member); err != nil {
-		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not remove its own wake entry, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)
-	}
+// Instead: log the degraded state and leave the member in the wake index
+// untouched. The next tick re-examines it through the normal,
+// Redis-backed processDueMember path (ClaimTier's own idempotency), which
+// sends exactly once, as soon as Redis recovers. A Redis outage therefore
+// delays a breach alert rather than ever risking a duplicate or a lost
+// one -- the safer failure mode for a notification.
+func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType, member string) error {
+	slog.WarnContext(ctx, "slaengine: redis unavailable for a due wake member, deferring to the next tick once it recovers", "caseId", caseID, "clockType", clockType, "member", member)
 	return nil
 }
 
@@ -1235,6 +1157,7 @@ func (e *Engine) reconcileClock(ctx context.Context, c activeSLAClock, now time.
 		Priority:   c.Priority,
 		State:      c.State,
 		StartedAt:  startedAt,
+		Schedule:   c.Schedule,
 	}
 	if err := e.store.SetClock(ctx, c.CaseID, c.ClockType, meta); err != nil {
 		slog.ErrorContext(ctx, "slaengine: reconcile: failed to rebuild clock metadata", "caseId", c.CaseID, "clockType", c.ClockType, "err", err)

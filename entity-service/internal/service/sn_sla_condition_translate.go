@@ -1,0 +1,372 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package service
+
+import "strings"
+
+// translateSLACondition converts one sla_policy condition column's raw text,
+// exactly as the external sync job that populates sla_policy/sla writes it
+// (sys_ids, "u_"-prefixed field names, numeric state/priority codes, the
+// "EQ" end-of-query terminator, "^NQ"/"^OR"/"^" grouping), into the neutral
+// predicate text internal/slacondition parses -- field=value joined by "^"/
+// "^OR"/"^NQ", using this engine's own CaseFacts vocabulary (state/priority
+// labels, case_type/product/project_type names) rather than raw codes.
+//
+// This is the one place in this codebase that knows both vocabularies at
+// once; internal/slacondition itself stays generic, with no idea any of this
+// translation ever happened (see that package's own doc comment). Only this
+// adapter -- not slacondition, not the resolver, not the published contract
+// -- names the previous system or its field/value conventions.
+//
+// Translation runs at evaluation time, on every read, rather than being a
+// one-time data migration: sla_policy is written on a recurring schedule by
+// the external sync job, which maps its own start/stop/pause/resume/cancel
+// condition text verbatim on every delta sync and full backfill -- a
+// one-off rewrite of the stored text would be silently reverted the next
+// time that job runs. Evaluating the raw text fresh, every time, is what
+// survives that.
+//
+// idempotent: a value this function doesn't recognize (not a known sys_id,
+// not a known numeric code) is left exactly as it was, so running this twice
+// never over-translates; a row that happens to already carry
+// human-readable text (e.g. hand-authored, or touched by one of the earlier,
+// now purely cosmetic, one-time cleanup migrations) translates to the exact
+// same neutral text unchanged, since every value this function would
+// otherwise rewrite is matched by its *raw* (sys_id/numeric) form only.
+func translateSLACondition(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	tokens := strings.Split(raw, "^")
+	out := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		prefix := ""
+		rest := tok
+		switch {
+		case strings.HasPrefix(tok, "NQ"):
+			prefix, rest = "NQ", tok[2:]
+		case strings.HasPrefix(tok, "OR"):
+			prefix, rest = "OR", tok[2:]
+		}
+		rest = strings.TrimSpace(rest)
+		if rest == "" || rest == "EQ" {
+			// The empty string is a stray separator; "EQ" is the external
+			// sync job's own end-of-query terminator, confirmed to appear
+			// exactly once, at the very end of every condition string it
+			// writes -- a no-op token this grammar has no use for.
+			continue
+		}
+		translated, drop := translateSLAClauseToken(rest)
+		if drop {
+			continue
+		}
+		out = append(out, prefix+translated)
+	}
+	return strings.Join(out, "^")
+}
+
+// slaConditionFieldAlias names one raw field spelling this translator
+// recognizes and the neutral field name internal/slacondition's own
+// knownFields expects it to become. Matched longest-prefix-first (same
+// convention as slacondition's own matchField), so "project.u_project_type"
+// is never shadowed by a shorter, unrelated prefix. A field already spelled
+// in its neutral form translates to itself -- see translateSLACondition's
+// own doc comment on idempotency.
+type slaConditionFieldAlias struct {
+	raw     string
+	neutral string
+}
+
+var slaConditionFieldAliases = []slaConditionFieldAlias{
+	{"project.u_project_type", "project_type"},
+	{"project_type", "project_type"},
+	{"u_case_type", "case_type"},
+	{"case_type", "case_type"},
+	{"u_wso2_response_comment", "cs_engineer_response_comment"},
+	{"cs_engineer_response_comment", "cs_engineer_response_comment"},
+	{"u_fix_eta_shared", "fix_eta_shared"},
+	{"fix_eta_shared", "fix_eta_shared"},
+	{"u_workaround_provided", "u_workaround_provided"},
+	{"sys_created_on", "sys_created_on"},
+	{"opened_at", "opened_at"},
+	{"priority", "priority"},
+	{"state", "state"},
+	{"product", "product"},
+	{"account", "account"},
+}
+
+// matchSLAConditionField returns the longest raw alias matching the front of
+// token, the neutral field name it maps to, and the unconsumed remainder
+// (the operator+value suffix) -- or ok=false when nothing in
+// slaConditionFieldAliases matches at all (a field outside this engine's own
+// case-policy vocabulary, e.g. an incident/escalation-only field -- left
+// completely unmatched here, exactly as it would be against slacondition's
+// own knownFields, so it still fails closed as OpUnknown downstream).
+func matchSLAConditionField(token string) (neutral, rest string, ok bool) {
+	bestRaw := ""
+	bestNeutral := ""
+	for _, alias := range slaConditionFieldAliases {
+		if strings.HasPrefix(token, alias.raw) && len(alias.raw) > len(bestRaw) {
+			bestRaw = alias.raw
+			bestNeutral = alias.neutral
+		}
+	}
+	if bestRaw == "" {
+		return "", token, false
+	}
+	return bestNeutral, token[len(bestRaw):], true
+}
+
+// translateSLAClauseToken translates one clause (already stripped of its
+// "^OR"/"^NQ" prefix) from raw to neutral field/value spelling. drop=true
+// means the clause carries no information translation can preserve (the
+// known-dead case_type sys_id this table has no mapping for at all, or a
+// malformed, value-less clause already confirmed present in the raw
+// external data) and should be omitted from the translated condition
+// entirely, the same cleanup the one-time migrations already recorded by
+// name applied once, replicated here so it survives every later re-sync.
+func translateSLAClauseToken(token string) (translated string, drop bool) {
+	field, rest, ok := matchSLAConditionField(token)
+	if !ok {
+		// Not a field this engine's case-policy vocabulary knows at all --
+		// left completely unmatched, same as it would be against
+		// slacondition's own knownFields. Covers incident/escalation-only
+		// fields (business_service, category, active_escalation.*,
+		// escalation_severity, source_table) that the resolver has already
+		// decided this row is not a case policy for (see isCasePolicy) --
+		// never actually evaluated, but harmless to pass through unchanged
+		// regardless.
+		return token, false
+	}
+
+	switch {
+	case strings.HasPrefix(rest, "ISNOTEMPTY"):
+		return field + "ISNOTEMPTY", false
+	case strings.HasPrefix(rest, "ISEMPTY"):
+		return field + "ISEMPTY", false
+	case strings.HasPrefix(rest, "!="):
+		v, drop := translateSLAConditionValue(field, rest[len("!="):])
+		return field + "!=" + v, drop
+	case strings.HasPrefix(rest, ">="):
+		return field + ">=" + translateSLADateValue(rest[len(">="):]), false
+	case strings.HasPrefix(rest, "NOT IN"):
+		v, drop := translateSLAConditionValueList(field, rest[len("NOT IN"):])
+		return field + "NOT IN" + v, drop
+	case strings.HasPrefix(rest, "IN"):
+		v, drop := translateSLAConditionValueList(field, rest[len("IN"):])
+		return field + "IN" + v, drop
+	case strings.HasPrefix(rest, "="):
+		v, drop := translateSLAConditionValue(field, rest[len("="):])
+		return field + "=" + v, drop
+	default:
+		return token, false
+	}
+}
+
+// translateSLAConditionValue translates one clause's value according to
+// field's own vocabulary. drop=true only for a known-dead case_type sys_id
+// this table has no name for at all (see slaCaseTypeSysIDs' own doc
+// comment) or a malformed, empty value -- both confirmed, pre-existing
+// artifacts of the raw external data (migrations 0253/0258's own history),
+// not something a real policy edit would ever produce going forward.
+func translateSLAConditionValue(field, value string) (translated string, drop bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", true
+	}
+	switch field {
+	case "state":
+		if label, ok := slaCaseStateCodes[value]; ok {
+			return label, false
+		}
+	case "priority":
+		if label, ok := slaCaseSeverityCodes[value]; ok {
+			return label, false
+		}
+	case "case_type":
+		if value == slaDeadCaseTypeSysID {
+			return "", true
+		}
+		if name, ok := slaCaseTypeSysIDs[value]; ok {
+			return name, false
+		}
+	case "product":
+		if name, ok := slaProductSysIDs[value]; ok {
+			return name, false
+		}
+	case "project_type":
+		if name, ok := slaProjectTypeSysIDs[value]; ok {
+			return name, false
+		}
+	}
+	// No translation known for this value -- left exactly as it was (a
+	// value already in its neutral spelling translates to itself; a value
+	// in neither vocabulary is passed through unchanged and will simply
+	// fail to match any real case, the same fail-closed outcome an
+	// unrecognized field already has).
+	return value, false
+}
+
+// translateSLAConditionValueList is translateSLAConditionValue applied to
+// every comma-separated member of an IN/NOT IN clause's value list. A
+// member this table drops (the dead case_type sys_id, or a blank entry) is
+// simply omitted from the translated list rather than dropping the whole
+// clause -- a membership list with the other, real values intact is still
+// meaningful, unlike a single-value equality clause with nothing left at
+// all.
+func translateSLAConditionValueList(field, raw string) (translated string, drop bool) {
+	parts := strings.Split(raw, ",")
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v, omit := translateSLAConditionValue(field, p)
+		if omit {
+			continue
+		}
+		kept = append(kept, v)
+	}
+	if len(kept) == 0 {
+		return "", true
+	}
+	return strings.Join(kept, ","), false
+}
+
+// translateSLADateValue strips the external sync job's own
+// "javascript:gs.dateGenerate('YYYY-MM-DD','HH:MM:SS')" literal-date wrapper
+// down to the plain YYYY-MM-DD date internal/slacondition's OpGTE clause
+// parses -- both real occurrences in the live data use a midnight time, so
+// nothing is lost dropping the wrapper. A value with no such wrapper (already
+// a plain date) passes through unchanged.
+func translateSLADateValue(value string) string {
+	value = strings.TrimSpace(value)
+	const prefix = "javascript:gs.dateGenerate("
+	if !strings.HasPrefix(value, prefix) {
+		return value
+	}
+	inner := strings.TrimSuffix(value[len(prefix):], ")")
+	first := strings.SplitN(inner, ",", 2)[0]
+	return strings.Trim(strings.TrimSpace(first), "'\"")
+}
+
+// slaCaseStateCodes maps the external sync job's own numeric case-state
+// choice-list values to this database's case_state_enum labels -- the
+// mapping is specific to a policy that targets the case work item type; the
+// same numeric codes mean something else entirely on an
+// incident/account-escalation policy's conditions, which this engine never
+// evaluates (see isCasePolicy).
+var slaCaseStateCodes = map[string]string{
+	"1":    "OPEN",
+	"3":    "CLOSED",
+	"6":    "SOLUTION_PROPOSED",
+	"10":   "WORK_IN_PROGRESS",
+	"18":   "AWAITING_INFO",
+	"1003": "WAITING_ON_WSO2",
+	"1006": "REOPENED",
+}
+
+// slaCaseSeverityCodes maps the external sync job's own numeric priority
+// choice-list values to this database's case_severity_enum labels, for a
+// case-targeting policy specifically (see slaCaseStateCodes' own doc
+// comment on why these numeric vocabularies don't carry across entity
+// types).
+var slaCaseSeverityCodes = map[string]string{
+	"14": "S0",
+	"10": "S1",
+	"11": "S2",
+	"12": "S3",
+	"13": "S4",
+}
+
+// slaDeadCaseTypeSysID is a case_type sys_id referenced by exactly one real
+// policy's exclusion list (the "Query" definition's own
+// "none of the other types" clause) that resolves to nothing in
+// slaCaseTypeSysIDs or any table in this schema -- confirmed, not a gap in
+// this map. Any clause naming it is dropped outright rather than left as an
+// unresolvable raw id, matching the one-time cleanup migration 0253 already
+// recorded by name; this constant is what makes that cleanup survive a
+// re-sync instead of needing to be re-applied by hand.
+const slaDeadCaseTypeSysID = "3f5b47bd1b18f010cb6898aebd4bcbc2"
+
+// slaCaseTypeSysIDs maps the external sync job's own case_type sys_ids to
+// this engine's own CaseFacts.CaseType vocabulary. Hand-maintained, like
+// every other sys_id-keyed lookup this codebase keeps as a Go map rather
+// than a database table (see internal/service/sn_case_service.go's own
+// snCaseTypeSysidMap, the source this was built from) -- a case type added
+// upstream with no entry here simply never matches any real case (fails
+// closed), the same limitation that map already has.
+var slaCaseTypeSysIDs = map[string]string{
+	"8d4b87bd1b18f010cb6898aebd4bcb59": "case",
+	"0d5b8fbd1b18f010cb6898aebd4bcba5": "case",
+	"5aeff1201b74c210264c997a234bcb54": "service_request",
+	"ab36479047ccf510a0a29cd3846d43ee": "security_report_analysis",
+	"3b8b43311b58f010cb6898aebd4bcb8f": "announcement",
+	"8f8fc2c41b0bd550d64e64a2604bcb38": "engagement",
+	"bfa1473c1bbcb410cb6898aebd4bcb52": "hosting",
+	"80810ff81bbcb410cb6898aebd4bcb3c": "hosting_query",
+	"f46103f81bbcb410cb6898aebd4bcb27": "hosting_task",
+}
+
+// slaProductSysIDs maps every product sys_id this database's own "product"
+// table carries (product.id uses the same dashed-sys_id-as-primary-key
+// convention as project_type.id below) to its name. Mirrored here, rather
+// than resolved with a database read at evaluation time, because this
+// translator runs per clause, per policy, per case-lifecycle event -- a
+// per-call database round trip for a handful of stable reference rows (this
+// table changes about as often as a new product line ships) is not worth
+// the latency. A sys_id added to the real table with no entry here fails
+// closed (never matches), the same accepted limitation as slaCaseTypeSysIDs.
+var slaProductSysIDs = map[string]string{
+	"720bf91d1bf92010cb6898aebd4bcb10": "Asgardeo",
+	"7bf5811d1b8ae210a002c9d3604bcbc8": "Bijira",
+	"9c2f321a1b700350a002c9d3604bcb2d": "Devant",
+	"6436091d1b8ae210a002c9d3604bcb45": "Devant",
+	"c81ffe3a1bb6f610a002c9d3604bcb5c": "WSO2 API Manager",
+	"487a6454c3e33210af2f404599013138": "WSO2 API Manager",
+	"f699281c1b2b7654182c0dc5604bcb36": "WSO2 API Manager Analytics",
+	"8399e05c1b2b7654182c0dc5604bcb23": "WSO2 API Platform for Kubernetes",
+	"691b4f861b746010cb6898aebd4bcbc0": "WSO2 Developer Platform",
+	"7e99281c1b2b7654182c0dc5604bcb38": "WSO2 Enterprise Integrator",
+	"4c8f3efa1bb6f610a002c9d3604bcbe7": "WSO2 Identity Server",
+	"4799e05c1b2b7654182c0dc5604bcb24": "WSO2 Identity Server Analytics",
+	"4b99281c1b2b7654182c0dc5604bcb3d": "WSO2 Integrator: BI",
+	"c399281c1b2b7654182c0dc5604bcb3b": "WSO2 Integrator: MI",
+	"0f99281c1b2b7654182c0dc5604bcb3e": "WSO2 MI Monitoring Dashboard",
+	"487a6454c3e33210af2f404599013137": "WSO2 MI Monitoring Dashboard",
+	"0b99e05c1b2b7654182c0dc5604bcb25": "WSO2 Open Banking AM",
+	"487a6454c3e33210af2f404599013136": "WSO2 Open Banking AM",
+	"3299281c1b2b7654182c0dc5604bcb3a": "WSO2 Open Banking BI",
+	"487a6454c3e33210af2f404599013129": "WSO2 Open Banking BI",
+	"487a6454c3e33210af2f404599013127": "WSO2 Open Banking IAM",
+	"ba99281c1b2b7654182c0dc5604bcb37": "WSO2 Open Banking IAM",
+}
+
+// slaProjectTypeSysIDs maps every project_type sys_id this database's own
+// "project_type" table carries to its name -- see slaProductSysIDs' own doc
+// comment for why this is a hand-maintained map rather than a live join.
+var slaProjectTypeSysIDs = map[string]string{
+	"2406c2724709d190a0a29cd3846d434e": "Platformer Subscription",
+	"368a07bd1b18f010cb6898aebd4bcb27": "Development Support",
+	"50b8332a1bfdf0106a67caa1604bcb8e": "Professional Services",
+	"87a8676c1b347410cb6898aebd4bcb76": "Managed Cloud Subscription",
+	"b567f5f21bec1d109871eac5624bcb62": "Cloud Support - Platformer",
+	"bf1d3c401bac7610a002c9d3604bcb69": "Regular",
+	"cb0b88af1bf4f81000ae86acdd4bcbba": "Evaluation Subscription",
+	"cb4a87bd1b18f010cb6898aebd4bcb4f": "Subscription",
+	"ccd8dc14477a0910a0a29cd3846d434c": "Cloud Evaluation Support",
+	"e411f0a61b0205109871eac5624bcb4f": "Cloud Support",
+	"f50ba53d1b4cdd10d64e64a2604bcb1f": "Internal",
+}

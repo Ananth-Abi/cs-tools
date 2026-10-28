@@ -51,22 +51,31 @@ func (f *fakeCandidatePolicyRepo) FindPolicyByName(context.Context, string, stri
 func (f *fakeCandidatePolicyRepo) GetCaseFacts(context.Context, string) (repository.CaseFacts, error) {
 	panic("not implemented")
 }
-func (f *fakeCandidatePolicyRepo) RegisterClock(context.Context, string, repository.SLAPolicyRef) (bool, error) {
+func (f *fakeCandidatePolicyRepo) RegisterClock(context.Context, string, repository.SLAPolicyRef, time.Time) (bool, error) {
 	panic("not implemented")
 }
 func (f *fakeCandidatePolicyRepo) CompleteClock(context.Context, string, string) (bool, error) {
 	panic("not implemented")
 }
+func (f *fakeCandidatePolicyRepo) CompleteClockByPolicy(context.Context, string, string, string) (bool, error) {
+	panic("not implemented")
+}
 func (f *fakeCandidatePolicyRepo) SetPaused(context.Context, string, string, bool) (bool, error) {
+	panic("not implemented")
+}
+func (f *fakeCandidatePolicyRepo) SetPausedByPolicy(context.Context, string, string, string, bool) (bool, error) {
 	panic("not implemented")
 }
 func (f *fakeCandidatePolicyRepo) CancelClock(context.Context, string, string) (bool, error) {
 	panic("not implemented")
 }
-func (f *fakeCandidatePolicyRepo) ActiveClockPolicy(context.Context, string, string) (repository.SLAPolicyRef, bool, error) {
+func (f *fakeCandidatePolicyRepo) CancelClockByPolicy(context.Context, string, string, string) (bool, error) {
 	panic("not implemented")
 }
-func (f *fakeCandidatePolicyRepo) RecomputeActive(context.Context) (int, error) {
+func (f *fakeCandidatePolicyRepo) ActiveClockPolicies(context.Context, string, string) ([]repository.SLAPolicyRef, error) {
+	panic("not implemented")
+}
+func (f *fakeCandidatePolicyRepo) RecordFirstEngineerResponse(context.Context, string) error {
 	panic("not implemented")
 }
 func (f *fakeCandidatePolicyRepo) ReviseClocks(context.Context, string, []repository.SLAPolicyRef) (int, error) {
@@ -106,15 +115,12 @@ func TestSLAPolicyResolver_Resolve_MatchesRealCondition(t *testing.T) {
 	r := newSLAPolicyResolver(repo)
 
 	facts := repository.CaseFacts{State: "OPEN", Severity: "S0", CaseType: "case", CSEngineerResponseComment: false}
-	got, ok, err := r.resolve(context.Background(), "RESPONSE", facts)
+	got, err := r.resolve(context.Background(), "RESPONSE", facts)
 	if err != nil {
 		t.Fatalf("resolve() error = %v, want nil", err)
 	}
-	if !ok {
-		t.Fatalf("resolve() ok = false, want true")
-	}
-	if got.ID != "p1-r-ms" {
-		t.Errorf("resolve() = %+v, want P1 - Response (Managed Services)", got)
+	if len(got) != 1 || got[0].ID != "p1-r-ms" {
+		t.Errorf("resolve() = %+v, want exactly [P1 - Response (Managed Services)]", got)
 	}
 }
 
@@ -127,12 +133,12 @@ func TestSLAPolicyResolver_Resolve_NQGroupMatches(t *testing.T) {
 	r := newSLAPolicyResolver(repo)
 
 	facts := repository.CaseFacts{State: "OPEN", CaseType: "security_report_analysis", CSEngineerResponseComment: false}
-	got, ok, err := r.resolve(context.Background(), "RESPONSE", facts)
+	got, err := r.resolve(context.Background(), "RESPONSE", facts)
 	if err != nil {
 		t.Fatalf("resolve() error = %v, want nil", err)
 	}
-	if !ok || got.ID != "p1-r-os" {
-		t.Fatalf("resolve() = %+v ok=%v, want P1 - Response (Open Source) via its second NQ group", got, ok)
+	if len(got) != 1 || got[0].ID != "p1-r-os" {
+		t.Fatalf("resolve() = %+v, want exactly [P1 - Response (Open Source)] via its second NQ group", got)
 	}
 }
 
@@ -146,12 +152,12 @@ func TestSLAPolicyResolver_Resolve_SkipsNonCasePolicy(t *testing.T) {
 	// No case in these tests' facts ever has state=101 (that's an
 	// escalation-table-only code), so this also exercises "zero matches".
 	facts := repository.CaseFacts{State: "CLOSED", CaseType: "case"}
-	_, ok, err := r.resolve(context.Background(), "RESPONSE", facts)
+	got, err := r.resolve(context.Background(), "RESPONSE", facts)
 	if err != nil {
 		t.Fatalf("resolve() error = %v, want nil", err)
 	}
-	if ok {
-		t.Fatalf("resolve() ok = true, want false: nothing should match a closed case with no response comment yet")
+	if len(got) != 0 {
+		t.Fatalf("resolve() = %+v, want none: nothing should match a closed case with no response comment yet", got)
 	}
 }
 
@@ -160,12 +166,12 @@ func TestSLAPolicyResolver_Resolve_NoMatch(t *testing.T) {
 	r := newSLAPolicyResolver(repo)
 
 	facts := repository.CaseFacts{State: "OPEN", Severity: "S4", CaseType: "announcement"}
-	_, ok, err := r.resolve(context.Background(), "WORKAROUND", facts)
+	got, err := r.resolve(context.Background(), "WORKAROUND", facts)
 	if err != nil {
 		t.Fatalf("resolve() error = %v, want nil -- a genuinely absent policy is not a lookup failure", err)
 	}
-	if ok {
-		t.Fatalf("resolve() ok = true, want false: no WORKAROUND policy matches an announcement")
+	if len(got) != 0 {
+		t.Fatalf("resolve() = %+v, want none: no WORKAROUND policy matches an announcement", got)
 	}
 }
 
@@ -179,21 +185,22 @@ func TestSLAPolicyResolver_Resolve_InfrastructureErrorPropagates(t *testing.T) {
 	repo.errOnTarget = "RESPONSE"
 	r := newSLAPolicyResolver(repo)
 
-	_, ok, err := r.resolve(context.Background(), "RESPONSE", repository.CaseFacts{State: "OPEN"})
+	got, err := r.resolve(context.Background(), "RESPONSE", repository.CaseFacts{State: "OPEN"})
 	if err == nil {
 		t.Fatalf("resolve() error = nil, want the repository's error propagated")
 	}
-	if ok {
-		t.Fatalf("resolve() ok = true, want false when the repository call itself fails")
+	if len(got) != 0 {
+		t.Fatalf("resolve() = %+v, want none when the repository call itself fails", got)
 	}
 }
 
-// TestSLAPolicyResolver_Resolve_AmbiguousMatchPicksDeterministically covers
-// the real, live overlap between "Hosting Q/T - Response (Managed Service)"
-// and "Query - Response (Open Source)" (both can match a hosting_query
-// case) -- the resolver must pick one, consistently, rather than erroring
-// or flapping between calls.
-func TestSLAPolicyResolver_Resolve_AmbiguousMatchPicksDeterministically(t *testing.T) {
+// TestSLAPolicyResolver_Resolve_BothMatchesReturned covers the real, live
+// overlap between "Hosting Q/T - Response (Managed Service)" and
+// "Query - Response (Open Source)" (both can match a hosting_query case) --
+// the resolver must return BOTH, so each registers its own independent
+// clock, and must do so deterministically (same order every call), not
+// silently pick one and drop the other the way an earlier version did.
+func TestSLAPolicyResolver_Resolve_BothMatchesReturned(t *testing.T) {
 	repo := &fakeCandidatePolicyRepo{byTarget: map[string][]repository.SLAPolicyRef{
 		"RESPONSE": {
 			{ID: "a-hosting-qt", Name: "Hosting Q/T - Response (Managed Service)", Target: "RESPONSE", Duration: 24 * time.Hour,
@@ -205,18 +212,19 @@ func TestSLAPolicyResolver_Resolve_AmbiguousMatchPicksDeterministically(t *testi
 	r := newSLAPolicyResolver(repo)
 
 	facts := repository.CaseFacts{State: "OPEN", CaseType: "hosting_query"}
-	got1, ok, err := r.resolve(context.Background(), "RESPONSE", facts)
-	if err != nil || !ok {
-		t.Fatalf("resolve() = %+v ok=%v err=%v, want a match", got1, ok, err)
+	got1, err := r.resolve(context.Background(), "RESPONSE", facts)
+	if err != nil || len(got1) != 2 {
+		t.Fatalf("resolve() = %+v err=%v, want both policies matched", got1, err)
 	}
-	got2, ok2, err2 := r.resolve(context.Background(), "RESPONSE", facts)
-	if err2 != nil || !ok2 {
-		t.Fatalf("second resolve() = %+v ok=%v err=%v, want a match", got2, ok2, err2)
+	got2, err2 := r.resolve(context.Background(), "RESPONSE", facts)
+	if err2 != nil || len(got2) != 2 {
+		t.Fatalf("second resolve() = %+v err=%v, want both policies matched", got2, err2)
 	}
-	if got1.ID != got2.ID {
-		t.Fatalf("resolve() picked different policies across calls (%q then %q) for identical facts -- must be deterministic", got1.ID, got2.ID)
+	if got1[0].ID != got2[0].ID || got1[1].ID != got2[1].ID {
+		t.Fatalf("resolve() returned a different order across calls (%q,%q then %q,%q) -- must be deterministic",
+			got1[0].ID, got1[1].ID, got2[0].ID, got2[1].ID)
 	}
-	if got1.ID != "a-hosting-qt" {
-		t.Errorf("resolve() = %q, want the lowest-id match (a-hosting-qt)", got1.ID)
+	if got1[0].ID != "a-hosting-qt" || got1[1].ID != "b-query-open-source" {
+		t.Errorf("resolve() = [%q, %q], want [a-hosting-qt, b-query-open-source] (ListCandidatePolicies' own id order)", got1[0].ID, got1[1].ID)
 	}
 }

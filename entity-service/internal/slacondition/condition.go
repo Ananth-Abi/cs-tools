@@ -14,16 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package slacondition parses and evaluates sla_policy's
+// Package slacondition parses and evaluates a small, vendor-neutral
+// predicate language over a case's current field values -- the format
+// internal/service's adapter layer translates sla_policy's
 // start_condition/stop_condition/pause_condition/resume_condition/
-// cancel_condition columns -- ServiceNow's own encoded-query syntax,
-// partially decoded (enum values, case types, product/project-type names)
-// by migrations 0250-0258 but otherwise left exactly as ServiceNow's own
-// condition-builder serializer wrote it. See those migrations' own doc
-// comments for the full decoding history; this package only evaluates the
-// resulting text, it does not know anything about ServiceNow itself.
+// cancel_condition columns into before handing them to this package (see
+// service.translateSLACondition). This package itself knows nothing about
+// where that text originally came from or how it got translated; it only
+// parses and evaluates the grammar below, against the fixed vocabulary
+// CaseFacts/Facts can answer questions about.
 //
-// Grammar (confirmed against every row in the real table, not assumed):
+// Grammar:
 //
 //   - Clauses are joined by "^" (AND).
 //   - "^OR" ORs a clause with the clause immediately before it, in the same
@@ -31,43 +32,40 @@
 //     then AND'd with the rest of the group, e.g.
 //     "product=A^ORproduct=B^state=OPEN" is (A OR B) AND state=OPEN.
 //   - "^NQ" ("new query") starts a brand new AND-group that is OR'd against
-//     every group before it -- ServiceNow's own top-level disjunction, e.g.
+//     every group before it, e.g.
 //     "state=OPEN^priority=S1^NQstate=OPEN^case_type=hosting" is
 //     (state=OPEN AND priority=S1) OR (state=OPEN AND case_type=hosting).
 //
 // So the overall shape is: OR of AND-groups (split on "^NQ"), each AND-group
 // itself a list of terms ANDed together, each term either a single clause or
 // an OR'd run of clauses (split on "^OR" within the group). "^OR"/"^NQ" are
-// glued directly onto the next field name with no separator -- confirmed
-// live, there is never a space or extra "^" around them.
+// glued directly onto the next field name with no separator.
 //
 // A single clause is one of:
 //
 //   - field=value / field!=value           -- equality/inequality
 //   - fieldINv1,v2,v3                      -- membership
 //   - fieldNOT INv1,v2                     -- negated membership (note the
-//     literal space in "NOT IN" -- ServiceNow's own serializer writes it
-//     that way, unlike every other operator here). Only ever seen on the
-//     incident/escalation rows this engine never evaluates (see
-//     sla_policy_resolver.go's own case-policy classification), but parsed
-//     defensively here regardless so a malformed or future row never panics.
+//     literal space in "NOT IN" -- parsed defensively here even though no
+//     case policy this engine evaluates currently uses it, so a malformed or
+//     future input never panics).
 //   - fieldISNOTEMPTY / fieldISEMPTY       -- presence check, no value, no
 //     separator before the suffix at all -- checked before ever trying to
 //     split the clause on "=".
-//   - field>=value                         -- only ever seen as
-//     opened_at>=YYYY-MM-DD / sys_created_on>=YYYY-MM-DD (migration 0258
-//     already stripped ServiceNow's own javascript:gs.dateGenerate(...)
-//     wrapper down to a plain date).
+//   - field>=value                         -- a date threshold, e.g.
+//     opened_at>=YYYY-MM-DD.
 //
 // Parsing never errors and never panics: a clause whose field isn't in this
 // package's own known vocabulary (knownFields below -- the same vocabulary
-// migrations 0250-0258 and the SLA engine's own CaseFacts establish) is kept
-// as an "unknown" clause that always evaluates false. That is deliberate --
-// this package is hard-coded to the vocabulary a CASE policy's conditions
-// actually use; the incident/escalation-only fields (business_service,
-// category, active_escalation.*, escalation_severity, source_table) are
-// expected to show up here on rows the resolver has already decided not to
-// evaluate, and must never crash the engine if one slips through.
+// the SLA engine's own CaseFacts establishes) is kept as an "unknown" clause
+// that always evaluates false. That is deliberate -- an unrecognized or
+// untranslated field must never be silently treated as a match. It must also
+// not be silently invisible: callers that evaluate a translated condition
+// should call Condition.UnknownClauses first and log a warning for any that
+// come back, since a clause that fails closed with no visible trace is
+// exactly how a translation gap (an un-mapped raw value, a new field the
+// adapter doesn't yet translate) goes unnoticed in production -- see
+// slaPolicyResolver.resolve's own call to it.
 package slacondition
 
 import (
@@ -265,6 +263,27 @@ func (c Condition) Evaluate(f Facts) bool {
 		}
 	}
 	return false
+}
+
+// UnknownClauses returns the raw text of every clause in c that parsed as
+// OpUnknown -- an unrecognized field, or a suffix matching no known operator
+// shape. Every such clause always evaluates false (see this package's own
+// doc comment), so a condition built from un-translated or mismapped input
+// fails closed with no visible symptom other than "never matches" -- callers
+// should log the result of this call as a warning whenever it's non-empty,
+// so that failure mode is never silent in production.
+func (c Condition) UnknownClauses() []string {
+	var unknown []string
+	for _, group := range c {
+		for _, term := range group {
+			for _, cl := range term {
+				if cl.Op == OpUnknown && cl.Raw != "" {
+					unknown = append(unknown, cl.Raw)
+				}
+			}
+		}
+	}
+	return unknown
 }
 
 func (g AndGroup) evaluate(f Facts) bool {

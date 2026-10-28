@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -39,11 +40,12 @@ type fakeFullSLAEngineRepo struct {
 	factsByCase        map[string]repository.CaseFacts
 	activeByCaseTarget map[string]repository.SLAPolicyRef
 
-	registered     []string // "caseID|policyID"
-	completed      []string // "caseID|target"
-	paused         []string // "caseID|target|true" or "...|false"
-	clockCancelled []string // "caseID|target" (CancelClock)
-	cancelled      []string // "caseID" (ReviseClocks' bulk cancel)
+	registered            []string // "caseID|policyID"
+	completed             []string // "caseID|target"
+	paused                []string // "caseID|target|true" or "...|false"
+	clockCancelled        []string // "caseID|target" (CancelClock)
+	cancelled             []string // "caseID" (ReviseClocks' bulk cancel)
+	firstResponseRecorded []string // "caseID" (RecordFirstEngineerResponse)
 
 	listErrOnTarget string
 	getCaseFactsErr error
@@ -84,7 +86,7 @@ func (r *fakeFullSLAEngineRepo) GetCaseFacts(_ context.Context, workItemID strin
 	return r.factsByCase[workItemID], nil
 }
 
-func (r *fakeFullSLAEngineRepo) RegisterClock(_ context.Context, workItemID string, policy repository.SLAPolicyRef) (bool, error) {
+func (r *fakeFullSLAEngineRepo) RegisterClock(_ context.Context, workItemID string, policy repository.SLAPolicyRef, _ time.Time) (bool, error) {
 	if r.registerErr != nil {
 		return false, r.registerErr
 	}
@@ -122,13 +124,32 @@ func (r *fakeFullSLAEngineRepo) CancelClock(_ context.Context, workItemID, targe
 	return true, nil
 }
 
-func (r *fakeFullSLAEngineRepo) ActiveClockPolicy(_ context.Context, workItemID, target string) (repository.SLAPolicyRef, bool, error) {
+func (r *fakeFullSLAEngineRepo) ActiveClockPolicies(_ context.Context, workItemID, target string) ([]repository.SLAPolicyRef, error) {
 	policy, ok := r.activeByCaseTarget[workItemID+"|"+target]
-	return policy, ok, nil
+	if !ok {
+		return nil, nil
+	}
+	return []repository.SLAPolicyRef{policy}, nil
 }
 
-func (r *fakeFullSLAEngineRepo) RecomputeActive(context.Context) (int, error) {
-	panic("not implemented")
+func (r *fakeFullSLAEngineRepo) CompleteClockByPolicy(_ context.Context, workItemID, target, _ string) (bool, error) {
+	r.completed = append(r.completed, workItemID+"|"+target)
+	return true, nil
+}
+
+func (r *fakeFullSLAEngineRepo) CancelClockByPolicy(_ context.Context, workItemID, target, _ string) (bool, error) {
+	r.clockCancelled = append(r.clockCancelled, workItemID+"|"+target)
+	return true, nil
+}
+
+func (r *fakeFullSLAEngineRepo) SetPausedByPolicy(_ context.Context, workItemID, target, _ string, paused bool) (bool, error) {
+	r.paused = append(r.paused, fmt.Sprintf("%s|%s|%v", workItemID, target, paused))
+	return true, nil
+}
+
+func (r *fakeFullSLAEngineRepo) RecordFirstEngineerResponse(_ context.Context, workItemID string) error {
+	r.firstResponseRecorded = append(r.firstResponseRecorded, workItemID)
+	return nil
 }
 
 // severityLadderCandidates seeds a clean, three-target severity ladder for

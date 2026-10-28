@@ -253,13 +253,13 @@ type Config struct {
 	// external system's own synced rows as the only SLA truth, with this
 	// engine never writing a row of its own at all.
 	//
-	// This engine's own clocks (source='CSM') and the external ServiceNow
-	// sync's rows (source='SERVICENOW', confirmed real and continuously
-	// running -- digiops-cs/csm-sync-service's own
-	// configs/mappings/task_sla.yaml maps ServiceNow's task_sla table
-	// straight into this database's "sla" table) are kept apart by that tag
-	// precisely so the two can never collide on the same (work_item_id,
-	// target) pair -- a dual-write-mode case can genuinely have both.
+	// This engine's own clocks (source='CSM') and the external sync job's
+	// own rows (source='SERVICENOW', confirmed real and continuously
+	// running -- the external sync job that populates sla_policy/sla maps
+	// the previous system's task SLA records straight into this database's
+	// "sla" table) are kept apart by that tag precisely so the two can
+	// never collide on the same (work_item_id, target) pair -- a
+	// dual-write-mode case can genuinely have both.
 	//
 	// Known limitation: flipping this to false only stops NEW writes --
 	// any row this engine already registered and left IN_PROGRESS/BREACHED

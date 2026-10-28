@@ -235,24 +235,14 @@ type searchActiveSLAStatusResponse struct {
 // in-process SLA engine tags every clock it registers — 'csm', migration
 // 0134's own original, unchanged intent: 'CSM' rows are owned by that
 // in-process engine, 'SERVICENOW' rows are owned by a real, independent,
-// continuously-running external sync job (confirmed:
-// digiops-cs/csm-sync-service's own configs/mappings/task_sla.yaml maps
-// ServiceNow's task_sla table directly into the shared "sla" table). Every
-// call in this file that scopes a GET /sla-status(/clock-state) read to
-// this engine's own rows must use this constant, not a literal, so the two
-// can never drift apart.
-//
-// **This was briefly, wrongly set to "servicenow" and then reverted.** The
-// change was made on a misreading of entity-service's own ownership tag as
-// if it meant "the old, deleted, name-keyed CSM-policy engine" rather than
-// what it actually is — this engine's OWNERSHIP TAG, unchanged in meaning
-// across that engine's redesign. Setting it to "servicenow" made this
-// client's GetActiveCSMSLAClocks/GetClockState calls scope to the SAME rows
-// the ServiceNow sync job owns — a pre-alert check (GetClockState) could
-// then pick up an unrelated synced row for the same case instead of this
-// engine's own, and the bulk reconciliation pass could ingest sync-owned
-// rows as if they were its own. See entity-service's own CLAUDE.md
-// (`repository.SLAEngineRepository`'s doc comment) for the full story.
+// continuously-running external sync job that populates sla_policy/sla.
+// Every call in this file that scopes a GET /sla-status(/clock-state) read
+// to this engine's own rows must use this constant, not a literal, so the
+// two can never drift apart — setting it to the sync job's own tag would
+// make GetActiveCSMSLAClocks/GetClockState scope to rows that job owns
+// instead, letting a pre-alert check pick up an unrelated synced row for the
+// same case, or the bulk reconciliation pass ingest sync-owned rows as if
+// they were this engine's own.
 const slaEngineSourceFilter = "csm"
 
 // activeSLAStatusPageSize is this client's own page size for
@@ -339,6 +329,15 @@ type clockState struct {
 	// domain.SLAClockState.Schedule — see activeSLAClock.Schedule's own doc
 	// comment for the full reasoning (business-day-aware due-date math).
 	Schedule string `json:"schedule"`
+	// BusinessPauseDurationSeconds mirrors entity-service's own
+	// domain.SLAClockState.BusinessPauseDurationSeconds — the clock's total
+	// business-hours-aware pause time, distinct from PauseDurationSeconds'
+	// own flat wall-clock total. Engine.resumeShift uses this (not
+	// PauseDurationSeconds) to recompute a business-day-scheduled clock's
+	// wake-up schedule after a resume — shifting by the flat total instead
+	// produced wake times off by however much of the pause fell on a
+	// weekend.
+	BusinessPauseDurationSeconds int64 `json:"businessPauseDurationSeconds"`
 }
 
 // GetClockState calls GET /sla-status/clock-state?workItemId=<caseID>&target=<clockType>&source=csm

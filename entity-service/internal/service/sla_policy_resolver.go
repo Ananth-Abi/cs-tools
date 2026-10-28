@@ -218,7 +218,7 @@ func (f caseConditionFacts) Date(name string) (time.Time, bool) {
 // CSM-seeded row by a constructed name ("S0 - RESPONSE (CSM)",
 // severity-keyed only) -- that whole mechanism is gone along with the 16
 // source='CSM' sla_policy rows it depended on (migration 0259). The real,
-// ServiceNow-synced policies this resolver now evaluates are keyed on much
+// previous-system-synced policies this resolver now evaluates are keyed on much
 // more than severity: case type, product, project type, account presence,
 // creation date and whether a CS engineer has already replied all
 // genuinely gate which policy applies, and several real policies have no
@@ -233,30 +233,46 @@ func newSLAPolicyResolver(repo repository.SLAEngineRepository) *slaPolicyResolve
 	return &slaPolicyResolver{repo: repo}
 }
 
-// resolve returns the sla_policy row whose start_condition currently
+// slaPolicyConditionText resolves candidate's condition column text into the
+// neutral form internal/slacondition parses: translated through
+// translateSLACondition when the policy's own Source is the external sync
+// job's ("SERVICENOW", every row that job writes today), or returned
+// unchanged for any other source -- an admin-authored CSM-native policy
+// (see SLAPolicyRef.Source's own doc comment) is assumed to already be
+// written in this engine's own neutral vocabulary and must never be run
+// through a vendor-specific translator.
+func slaPolicyConditionText(candidate repository.SLAPolicyRef, raw string) string {
+	if candidate.Source == "SERVICENOW" {
+		return translateSLACondition(raw)
+	}
+	return raw
+}
+
+// resolve returns every sla_policy row whose start_condition currently
 // matches facts, for the given sla_policy_target_enum label (RESPONSE/
-// WORKAROUND/RESOLUTION).
+// WORKAROUND/RESOLUTION) -- not just one. More than one candidate matching
+// the same facts is a real possibility in the live data: a Hosting case's
+// RESOLUTION target legitimately matches both an open-source-track policy
+// (e.g. "P1 - Resolution (Open Source)", case_type IN (case, hosting)) and a
+// managed-services-track one (e.g. "P1 - Resolution (Managed Services)",
+// case_type = hosting) at the same time, and the real system runs both
+// clocks side by side on such a case. An earlier version of this method
+// returned only one match (the lowest sla_policy.id), silently dropping
+// whichever policy didn't win -- callers now register/evaluate every policy
+// this returns, each as its own independent clock (see
+// SLAEngineService.RegisterCaseClocks/ApplyCaseStateEffects).
 //
-// ok=false with a nil error means no case policy's start_condition matches
-// -- logged at INFO, the same "no fallback duration" posture the old
-// design's absent map entry had. A non-nil error means the candidate list
-// itself couldn't be read (a database blip), not that no policy applies --
-// see resolveApplicablePolicies' own doc comment in sla_engine_service.go
-// for why callers must tell the two apart.
-//
-// More than one candidate matching the same facts is a real possibility in
-// the live data (e.g. "Hosting Q/T - Response (Managed Service)" and
-// "Query - Response (Open Source)" both match a hosting_query/hosting_task
-// case's RESPONSE target) -- handled explicitly, not by silently taking
-// whichever happened to be read first: every match is logged by name so the
-// ambiguity is visible, and the lowest sla_policy.id (ListCandidatePolicies'
-// own ORDER BY) deterministically wins, so the same case always resolves
-// to the same policy on every call.
-func (r *slaPolicyResolver) resolve(ctx context.Context, target string, facts repository.CaseFacts) (repository.SLAPolicyRef, bool, error) {
+// An empty, non-nil result means no case policy's start_condition matches --
+// logged at INFO, the same "no fallback duration" posture the old design's
+// absent map entry had. A non-nil error means the candidate list itself
+// couldn't be read (a database blip), not that no policy applies -- see
+// resolveApplicablePolicies' own doc comment in sla_engine_service.go for
+// why callers must tell the two apart.
+func (r *slaPolicyResolver) resolve(ctx context.Context, target string, facts repository.CaseFacts) ([]repository.SLAPolicyRef, error) {
 	candidates, err := r.repo.ListCandidatePolicies(ctx, target)
 	if err != nil {
 		slog.ErrorContext(ctx, "sla policy resolver: list candidate policies failed", "target", target, "err", err)
-		return repository.SLAPolicyRef{}, false, err
+		return nil, err
 	}
 
 	f := caseConditionFacts{c: facts}
@@ -271,7 +287,17 @@ func (r *slaPolicyResolver) resolve(ctx context.Context, target string, facts re
 			slog.WarnContext(ctx, "sla policy resolver: unsupported schedule, evaluating with flat wall-clock time anyway",
 				"policy", candidate.Name, "schedule", candidate.Schedule)
 		}
-		if slacondition.Parse(candidate.StartCondition).Evaluate(f) {
+		startCondition := slaPolicyConditionText(candidate, candidate.StartCondition)
+		parsed := slacondition.Parse(startCondition)
+		// A clause that fails closed with no visible trace is exactly how a
+		// translation gap (an un-mapped raw value, a field the translator
+		// doesn't yet know) goes unnoticed -- see slacondition's own doc
+		// comment on UnknownClauses.
+		if unknown := parsed.UnknownClauses(); len(unknown) > 0 {
+			slog.WarnContext(ctx, "sla policy resolver: start condition has unknown/untranslated clauses, they evaluate false",
+				"policy", candidate.Name, "target", target, "unknownClauses", unknown)
+		}
+		if parsed.Evaluate(f) {
 			matches = append(matches, candidate)
 		}
 	}
@@ -282,18 +308,16 @@ func (r *slaPolicyResolver) resolve(ctx context.Context, target string, facts re
 	switch len(matches) {
 	case 0:
 		slog.InfoContext(ctx, "sla policy resolver: no case policy matched", "target", target)
-		return repository.SLAPolicyRef{}, false, nil
 	case 1:
-		return matches[0], true, nil
 	default:
 		names := make([]string, len(matches))
 		for i, m := range matches {
 			names[i] = m.Name
 		}
-		slog.WarnContext(ctx, "sla policy resolver: more than one policy matched the same case, picking the lowest id deterministically",
+		slog.InfoContext(ctx, "sla policy resolver: more than one policy matched the same case, registering/evaluating each independently",
 			"target", target, "matches", names)
-		return matches[0], true, nil
 	}
+	return matches, nil
 }
 
 // slaScheduleWSO2BusinessDaysLabel mirrors

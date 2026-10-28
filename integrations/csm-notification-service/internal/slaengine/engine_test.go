@@ -21,6 +21,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/businessdays"
 )
 
 // fakeStore is an in-memory implementation of the store interface —
@@ -110,6 +112,20 @@ func (s *fakeStore) ShiftWake(_ context.Context, caseID, clockType string, delta
 			if at, ok := s.wake[member]; ok {
 				s.wake[member] = at.Add(time.Duration(deltaSeconds) * time.Second)
 			}
+		}
+	}
+	key := caseID + "|" + clockType
+	meta := s.clocks[key]
+	meta.ShiftedPauseSeconds = newBaselineSeconds
+	s.clocks[key] = meta
+	return nil
+}
+
+func (s *fakeStore) SetWakeAbsolute(_ context.Context, caseID, clockType string, wakes map[int]time.Time, newBaselineSeconds int64) error {
+	for tier, at := range wakes {
+		member := wakeMember(caseID, clockType, tier)
+		if _, ok := s.wake[member]; ok {
+			s.wake[member] = at
 		}
 	}
 	key := caseID + "|" + clockType
@@ -667,6 +683,65 @@ func TestApplyStateEffects_Resume_ShiftsWakeEntriesByTheNewPauseSegment(t *testi
 	if _, exists := st.clocks["case-1|response"]; !exists {
 		t.Fatal("response clock missing from fake store")
 	}
+}
+
+// TestApplyStateEffects_Resume_BusinessDayClock_RecomputesWakeTimesRatherThanShiftingFlat
+// is the regression test for a real, PR-review-found bug: a business-day
+// clock's wake entries used to be shifted by a FLAT wall-clock pause delta
+// (ShiftWake's own ZINCRBY), while entity-service computes a business-day
+// clock's real due instant as AddBusinessDuration(start, duration +
+// businessPause) -- a flat increment and a business-day-aware recomputation
+// disagree by however much of the pause segment actually fell on a weekend.
+// This clock is registered with a 116-hour ('WSO2 Business days') resolution
+// duration, started Monday 2024-01-08 00:00 America/New_York, and paused
+// across a weekend-spanning segment; the 100% tier's wake time after resume
+// must equal AddBusinessDuration(start, duration+businessPause), not
+// start+duration shifted by the pause's flat wall-clock length.
+func TestApplyStateEffects_Resume_BusinessDayClock_RecomputesWakeTimesRatherThanShiftingFlat(t *testing.T) {
+	st := newFakeStore()
+	e := newTestEngine(st, &fakeChat{}, &fakePublisher{})
+	startedAt := time.Date(2024, 1, 8, 0, 0, 0, 0, mustLoadLocation(t, "America/New_York")) // a Monday
+	duration := 116 * time.Hour
+
+	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
+		"case-1|" + ClockResolution: {Found: true, DurationSeconds: int64(duration.Seconds()), Schedule: slaScheduleWSO2BusinessDays},
+	}}
+	e.RegisterClocks(context.Background(), "case-1", "CATASTROPHIC", startedAt, "CS0001", "", "", "CASE", "", "")
+
+	e.ApplyStateEffects(context.Background(), "case-1", "Awaiting Info")
+	// entity-service's own CSM-native engine has, by the time this Kafka
+	// event is processed, already accumulated a business-hours-aware pause
+	// total for this clock -- spanning a weekend, so it differs from the
+	// flat wall-clock pause length.
+	businessPause := 8 * time.Hour
+	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
+		"case-1|" + ClockResolution: {
+			Found: true, DurationSeconds: int64(duration.Seconds()), Schedule: slaScheduleWSO2BusinessDays,
+			BusinessPauseDurationSeconds: int64(businessPause.Seconds()),
+		},
+	}}
+
+	e.ApplyStateEffects(context.Background(), "case-1", "Work In Progress")
+
+	got := st.wake[wakeMember("case-1", ClockResolution, 100)]
+	want := businessdays.AddBusinessDuration(startedAt, duration+businessPause)
+	if !got.Equal(want) {
+		t.Errorf("resolution 100%% tier due at %v after resume, want %v (business-day-recomputed, not flat-shifted)", got, want)
+	}
+
+	meta, _, _ := st.GetClock(context.Background(), "case-1", ClockResolution)
+	if meta.ShiftedPauseSeconds != int64(businessPause.Seconds()) {
+		t.Errorf("ShiftedPauseSeconds = %d, want %d (the business pause total, not a flat delta)", meta.ShiftedPauseSeconds, int64(businessPause.Seconds()))
+	}
+}
+
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("time.LoadLocation(%q): %v", name, err)
+	}
+	return loc
 }
 
 // TestApplyStateEffects_Resume_NoEntityClient_SkipsShiftWithoutPanicking
@@ -1693,35 +1768,7 @@ func TestIsTerminalSLAStage(t *testing.T) {
 	}
 }
 
-// --- highestNewlyCrossedTier (stale-tier-discard logic) ---
-
-func TestHighestNewlyCrossedTier(t *testing.T) {
-	cases := []struct {
-		name             string
-		percent          float64
-		lastKnownAlerted int
-		want             int
-	}{
-		{"below every tier", 10, 0, 0},
-		{"exactly at 50", 50, 0, 50},
-		{"between 50 and 75 -- only 50 crossed", 60, 0, 50},
-		{"exactly at 75", 75, 0, 75},
-		{"multiple tiers crossed at once -- only the highest is reported, not 50", 92, 0, 75},
-		{"all three crossed at once -- only 100, never a stale 50 or 75", 140, 0, 100},
-		{"already alerted up to 75 -- a fresh 80% reports nothing new", 80, 75, 0},
-		{"already alerted up to 50 -- 92% now reports 75, not a repeat of 50", 92, 50, 75},
-		{"zero percent", 0, 0, 0},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := highestNewlyCrossedTier(c.percent, c.lastKnownAlerted); got != c.want {
-				t.Errorf("highestNewlyCrossedTier(%v, %d) = %d, want %d", c.percent, c.lastKnownAlerted, got, c.want)
-			}
-		})
-	}
-}
-
-// --- Redis retry + entity-service fallback (processDueMemberFallback) ---
+// --- Redis retry + degraded-fallback deferral (processDueMemberFallback) ---
 
 // alwaysFailingGetClockStore wraps fakeStore and fails every GetClock call,
 // simulating Redis being unreachable for that one operation (e.g. a
@@ -1737,225 +1784,69 @@ func (s *alwaysFailingGetClockStore) GetClock(ctx context.Context, caseID, clock
 	return ClockMeta{}, false, errors.New("redis unavailable")
 }
 
-// TestTick_RedisUnavailable_FallsBackToEntityServiceAndSendsCorrectTier is
-// the end-to-end regression for the retry+fallback path: Redis fails every
-// GetClock call (even after withRedisRetry's bounded retries), and this
-// engine falls back to entity-service's own live record for that one case
-// instead of silently losing the tier crossing.
-func TestTick_RedisUnavailable_FallsBackToEntityServiceAndSendsCorrectTier(t *testing.T) {
+// TestTick_RedisUnavailable_DefersRatherThanSendingADegradedAlert is the
+// end-to-end regression for the simplified fallback: when Redis's GetClock
+// fails even after withRedisRetry's bounded retries, Tick no longer sends a
+// degraded alert from entity-service's own live state -- it logs and leaves
+// the wake entry exactly where it was, so the next tick (once Redis
+// recovers) handles it through the normal, idempotent processDueMember
+// path. Tick itself reports no error (a Redis-unreachable GetClock is a
+// handled, not a failed, outcome) and the wake entry survives untouched.
+func TestTick_RedisUnavailable_DefersRatherThanSendingADegradedAlert(t *testing.T) {
 	base := newFakeStore()
-	startedAt := time.Now().Add(-2 * time.Hour)
-	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
+	wakeAt := time.Now().Add(-time.Minute)
+	base.wake[wakeMember("case-1", ClockResponse, 50)] = wakeAt
 	st := &alwaysFailingGetClockStore{fakeStore: base}
 
 	chat := &fakeChat{}
 	e := newTestEngine(st, chat, &fakePublisher{})
 	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 62, Stage: "IN_PROGRESS"},
+		"case-1|response": {Found: true, BusinessElapsedPercent: 62, Stage: "IN_PROGRESS"},
 	}}
 
 	if err := e.Tick(context.Background(), time.Now()); err != nil {
-		t.Fatalf("Tick() error = %v, want nil (a successful fallback is not an error)", err)
+		t.Fatalf("Tick() error = %v, want nil (a Redis-unreachable member is deferred, not failed)", err)
 	}
 	if st.getClockCalls != redisRetryAttempts {
 		t.Errorf("GetClock calls = %d, want %d (every retry attempt)", st.getClockCalls, redisRetryAttempts)
 	}
-	if len(chat.calls) != 1 || chat.calls[0].tier != "50" {
-		t.Fatalf("chat calls = %+v, want exactly one call for tier 50 (62%% crosses 50 but not 75)", chat.calls)
+	if len(chat.calls) != 0 {
+		t.Fatalf("chat calls = %+v, want none -- no alert should be sent while Redis is unreachable", chat.calls)
+	}
+	gotWakeAt, stillPresent := base.wake[wakeMember("case-1", ClockResponse, 50)]
+	if !stillPresent {
+		t.Fatal("wake entry was removed, want it left in place for the next tick to re-examine once Redis recovers")
+	}
+	if !gotWakeAt.Equal(wakeAt) {
+		t.Errorf("wake entry due time = %v, want unchanged %v", gotWakeAt, wakeAt)
 	}
 }
 
-// TestTick_RedisUnavailable_EntityServiceAlsoUnavailable_ReturnsError
-// confirms a genuinely total outage (Redis AND entity-service both
-// unreachable) is reported as an error -- so RunTicker logs it and Tick
-// gets another chance next interval -- rather than silently swallowed.
-func TestTick_RedisUnavailable_EntityServiceAlsoUnavailable_ReturnsError(t *testing.T) {
+// TestTick_RedisUnavailable_MultipleDueMembers_NoneAlertAndAllSurvive covers
+// the shape that used to risk a duplicate send under the old fallback design
+// (both the 50% and 75% wake members due in the same tick, e.g. after a
+// prolonged outage): with no degraded send at all, both are simply left for
+// the next successful tick, which is what actually claims and sends each
+// tier exactly once via the normal path.
+func TestTick_RedisUnavailable_MultipleDueMembers_NoneAlertAndAllSurvive(t *testing.T) {
 	base := newFakeStore()
-	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
-	st := &alwaysFailingGetClockStore{fakeStore: base}
-
-	e := newTestEngine(st, &fakeChat{}, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{err: errors.New("entity-service also unreachable")}
-
-	if err := e.Tick(context.Background(), time.Now()); err == nil {
-		t.Fatal("Tick() error = nil, want an error when both redis and the entity-service fallback fail")
-	}
-}
-
-// TestTick_RedisUnavailable_MultipleTiersCrossed_OnlySendsTheHighest is the
-// direct regression for a real, code-review-found bug: when BOTH the 50%
-// and 75% wake members are due in the same tick (the realistic shape --
-// RegisterClocks schedules all three tier wake entries up front, so a
-// prolonged Redis outage naturally leaves every one of them sitting in the
-// wake index until each is individually handled, and they become due
-// together once their due-instants have all passed) and live percent has
-// already crossed both, the case must get exactly ONE degraded alert, for
-// 75 -- never two identical "tier 75" sends (the original bug: each due
-// member independently computed the same highestNewlyCrossedTier and both
-// fired), and never a backdated 50 either.
-func TestTick_RedisUnavailable_MultipleTiersCrossed_OnlySendsTheHighest(t *testing.T) {
-	base := newFakeStore()
-	startedAt := time.Now().Add(-2 * time.Hour)
 	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
 	base.wake[wakeMember("case-1", ClockResponse, 75)] = time.Now().Add(-30 * time.Second)
 	st := &alwaysFailingGetClockStore{fakeStore: base}
 
 	chat := &fakeChat{}
 	e := newTestEngine(st, chat, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 80, Stage: "IN_PROGRESS"},
-	}}
 
 	if err := e.Tick(context.Background(), time.Now()); err != nil {
 		t.Fatalf("Tick() error = %v, want nil", err)
 	}
-	if len(chat.calls) != 1 {
-		t.Fatalf("chat calls = %+v, want exactly one degraded alert, not one per due member", chat.calls)
-	}
-	if chat.calls[0].tier != "75" {
-		t.Errorf("chat calls[0].tier = %q, want %q (the highest actually crossed; 80%% has not reached 100)", chat.calls[0].tier, "75")
+	if len(chat.calls) != 0 {
+		t.Fatalf("chat calls = %+v, want none", chat.calls)
 	}
 	for _, tier := range []int{50, 75} {
-		if _, ok := base.wake[wakeMember("case-1", ClockResponse, tier)]; ok {
-			t.Errorf("wake entry for tier %d still present, want it removed (both due members must be cleaned up, win or lose, so repeated outages can't resend)", tier)
+		if _, ok := base.wake[wakeMember("case-1", ClockResponse, tier)]; !ok {
+			t.Errorf("wake entry for tier %d was removed, want it left for the next tick", tier)
 		}
-	}
-}
-
-// TestTick_RedisUnavailable_SingleDueMemberBelowTheLiveHighest_IsDroppedNotMisreported
-// confirms a single due member whose own tier is BELOW the clock's true
-// live-percent highest (e.g. its sibling, higher-tier wake member already
-// fired in an earlier tick and was removed) is dropped silently rather than
-// mis-reported under its own, now-stale tier number -- the fix must not
-// trade "duplicate alerts" for "alerts sent under the wrong tier label."
-func TestTick_RedisUnavailable_SingleDueMemberBelowTheLiveHighest_IsDroppedNotMisreported(t *testing.T) {
-	base := newFakeStore()
-	startedAt := time.Now().Add(-2 * time.Hour)
-	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
-	st := &alwaysFailingGetClockStore{fakeStore: base}
-
-	chat := &fakeChat{}
-	e := newTestEngine(st, chat, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 140, Stage: "BREACHED"},
-	}}
-
-	if err := e.Tick(context.Background(), time.Now()); err != nil {
-		t.Fatalf("Tick() error = %v, want nil", err)
-	}
-	if len(chat.calls) != 0 {
-		t.Fatalf("chat calls = %+v, want none -- the due member's own tier (50) no longer matches the live highest (100)", chat.calls)
-	}
-	if _, ok := base.wake[wakeMember("case-1", ClockResponse, 50)]; ok {
-		t.Error("stale wake entry for tier 50 still present, want it removed")
-	}
-}
-
-// TestTick_RedisUnavailable_ClockAlreadyResolvedCleanly_DoesNotAlert
-// confirms the fallback path reuses the same "already resolved, no breach"
-// suppression sendBreachAlert's own entity-service check already applies --
-// a stale wake entry for a clock entity-service says finished cleanly must
-// not produce a degraded alert either.
-func TestTick_RedisUnavailable_ClockAlreadyResolvedCleanly_DoesNotAlert(t *testing.T) {
-	base := newFakeStore()
-	startedAt := time.Now().Add(-2 * time.Hour)
-	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
-	st := &alwaysFailingGetClockStore{fakeStore: base}
-
-	chat := &fakeChat{}
-	e := newTestEngine(st, chat, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|response": {Found: true, StartedOn: &startedAt, Stage: "ACHIEVED", HasBreached: false, BusinessElapsedPercent: 80},
-	}}
-
-	if err := e.Tick(context.Background(), time.Now()); err != nil {
-		t.Fatalf("Tick() error = %v, want nil", err)
-	}
-	if len(chat.calls) != 0 {
-		t.Errorf("chat calls = %+v, want none -- entity-service's own record says this clock already resolved cleanly", chat.calls)
-	}
-}
-
-// TestTick_RedisUnavailable_ClockPausedInEntityService_DoesNotAlert
-// confirms the fallback path also respects entity-service's own pause
-// status before alerting.
-func TestTick_RedisUnavailable_ClockPausedInEntityService_DoesNotAlert(t *testing.T) {
-	base := newFakeStore()
-	startedAt := time.Now().Add(-2 * time.Hour)
-	base.wake[wakeMember("case-1", ClockWorkaround, 50)] = time.Now().Add(-time.Minute)
-	st := &alwaysFailingGetClockStore{fakeStore: base}
-
-	chat := &fakeChat{}
-	e := newTestEngine(st, chat, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|workaround": {Found: true, StartedOn: &startedAt, IsPaused: true, BusinessElapsedPercent: 92},
-	}}
-
-	if err := e.Tick(context.Background(), time.Now()); err != nil {
-		t.Fatalf("Tick() error = %v, want nil", err)
-	}
-	if len(chat.calls) != 0 {
-		t.Errorf("chat calls = %+v, want none -- entity-service reports this clock as currently paused", chat.calls)
-	}
-}
-
-// fallbackIncarnationRaceStore forces GetClock to fail (so Tick always takes
-// the processDueMemberFallback path) and makes AdvanceAlertedTier always
-// report applied=false, simulating a clock that was replaced by a new
-// incarnation between the fallback's entity-service read and its own
-// AdvanceAlertedTier write -- see
-// TestProcessDueMemberFallback_IncarnationReplacedMidFallback below.
-type fallbackIncarnationRaceStore struct {
-	*fakeStore
-}
-
-func (s *fallbackIncarnationRaceStore) GetClock(ctx context.Context, caseID, clockType string) (ClockMeta, bool, error) {
-	return ClockMeta{}, false, errors.New("redis unavailable")
-}
-
-func (s *fallbackIncarnationRaceStore) AdvanceAlertedTier(ctx context.Context, caseID, clockType string, tier int, incarnation time.Time) (bool, error) {
-	return false, nil
-}
-
-// TestProcessDueMemberFallback_IncarnationReplacedMidFallback is the direct
-// regression test for a real regression a code review caught in
-// processDueMemberFallback's own last fix: an earlier version called
-// RemoveWake unconditionally after sending a degraded alert, regardless of
-// AdvanceAlertedTier's own `applied` result -- reintroducing, for the
-// fallback path specifically, the exact incarnation-clobbering bug
-// processDueMember's own identical check already exists to prevent (see
-// TestEngine_ProcessDueMember_IncarnationChangedMidFlight_DoesNotClobberNewClock
-// above). When AdvanceAlertedTier reports applied=false -- the clock was
-// replaced by a new incarnation between this fallback's entity-service read
-// and this write -- this member's own wake entry must be left untouched: it
-// may already be the new incarnation's own, independently scheduled entry
-// for this same key, and removing it would silently cancel a still-valid
-// future alert that has nothing to do with this stale fallback run.
-func TestProcessDueMemberFallback_IncarnationReplacedMidFallback(t *testing.T) {
-	base := newFakeStore()
-	wakeAt := time.Now().Add(-time.Minute)
-	base.wake[wakeMember("case-1", ClockResponse, 50)] = wakeAt
-	st := &fallbackIncarnationRaceStore{fakeStore: base}
-
-	startedAt := time.Now().Add(-2 * time.Hour)
-	chat := &fakeChat{}
-	e := newTestEngine(st, chat, &fakePublisher{})
-	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
-		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 62, Stage: "IN_PROGRESS"},
-	}}
-
-	if err := e.Tick(context.Background(), time.Now()); err != nil {
-		t.Fatalf("Tick() error = %v, want nil", err)
-	}
-	if len(chat.calls) != 1 {
-		t.Fatalf("chat calls = %+v, want exactly one degraded alert -- the incarnation race happens AFTER sending, not before", chat.calls)
-	}
-	gotWakeAt, stillPresent := base.wake[wakeMember("case-1", ClockResponse, 50)]
-	if !stillPresent {
-		t.Fatal("wake entry was removed despite AdvanceAlertedTier reporting applied=false -- a new incarnation's own future alert may have just been cancelled")
-	}
-	if !gotWakeAt.Equal(wakeAt) {
-		t.Errorf("wake entry due time = %v, want unchanged %v", gotWakeAt, wakeAt)
 	}
 }
 

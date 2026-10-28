@@ -33,7 +33,7 @@ import (
 // own clocks must never carry the 'SERVICENOW' tag, which belongs to a
 // real, independent, continuously-running external sync job) in reaction
 // to case-lifecycle events, sourcing real durations AND
-// real applicability from the actual, ServiceNow-synced, source='SERVICENOW'
+// real applicability from the actual, previous-system-synced, source='SERVICENOW'
 // sla_policy rows (decoded by migrations 0250-0258) -- evaluated via
 // internal/slacondition against the case's own current field values
 // (slaPolicyResolver, repository.CaseFacts), not a hardcoded severity map
@@ -51,7 +51,7 @@ import (
 // Every method is best-effort: a failure here is logged and never returned
 // to the caller as an error, because none of this may ever fail case
 // creation, comment creation, or a state-changing PATCH -- the case/comment
-// mutation itself has already succeeded (in ServiceNow) by the time any of
+// mutation itself has already succeeded (in the previous system) by the time any of
 // these run, and treating an SLA-tracking hiccup as a failed case mutation
 // would be strictly worse than tracking nothing.
 type SLAEngineService interface {
@@ -69,6 +69,15 @@ type SLAEngineService interface {
 	// all) -- several real policies (ServiceRequest SLA, the Query/
 	// SecReport Analysis family) have no severity condition at all, so a
 	// nil severity no longer means "register nothing" the way it used to.
+	// A target can resolve to more than one applicable policy at once (see
+	// slaPolicyResolver.resolve's own doc comment) -- every one of them gets
+	// its own, independent clock, not just the first. A policy whose
+	// sla_policy.retroactive is set starts its clock backdated to the
+	// case's own creation instant (facts.CreatedOn) instead of the instant
+	// this method happens to run at -- real policies set this on every
+	// P1-P3 response definition, where the source system's own semantics
+	// are "this clock has always been running since the case was opened,"
+	// not "this clock starts now."
 	RegisterCaseClocks(ctx context.Context, caseID string, severity *domain.CaseSeverity, projectID string)
 	// ReviseCaseClocks cancels every existing active clock for the case and
 	// registers an entirely fresh set matching its NEW severity, atomically
@@ -152,7 +161,7 @@ func NewSLAEngineService(repo repository.SLAEngineRepository) SLAEngineService {
 // loadCaseFacts reads caseID's current CaseFacts fresh from Postgres and
 // applies the two optional overrides callers may already know more
 // authoritatively than a fresh read would: severityOverride (an in-flight
-// severity a ServiceNow dual-write case's own Postgres mirror may not have
+// severity a dual-write case's own Postgres mirror may not have
 // caught up to yet) and stateOverride (ApplyCaseStateEffects is always
 // handed the case's brand new state directly from the PATCH that triggered
 // it, for the exact same reason). Every other fact -- case type, project
@@ -199,22 +208,34 @@ func (s *slaEngineService) resolveApplicablePolicies(ctx context.Context, facts 
 	policies = make([]repository.SLAPolicyRef, 0, len(slaTargetOrder))
 	for _, clockType := range slaTargetOrder {
 		target := slaClockTypeTarget[clockType]
-		policy, ok, err := s.resolver.resolve(ctx, target, facts)
+		matches, err := s.resolver.resolve(ctx, target, facts)
 		if err != nil {
 			// resolve already logged why -- this target's policy couldn't
 			// be determined right now, not that none applies.
 			lookupFailed = true
 			continue
 		}
-		if !ok {
-			// resolve already logged why -- skipping this target is the
-			// same "no applicable policy" behavior the old slaDurations
-			// map's absent map entries had.
-			continue
-		}
-		policies = append(policies, policy)
+		// matches may hold more than one policy for this one target -- see
+		// slaPolicyResolver.resolve's own doc comment (a Hosting case's
+		// RESOLUTION target legitimately matches two policies at once).
+		// Every match is appended; RegisterClock's own per-policy
+		// uniqueness guard is what makes registering all of them safe.
+		policies = append(policies, matches...)
 	}
 	return policies, lookupFailed
+}
+
+// registerCaseSLAClockStartOn chooses the start_on instant RegisterClock
+// should use for policy -- caseCreatedOn (backdated to the case's own
+// creation instant) when policy.Retroactive is set, a zero time.Time
+// (RegisterClock's own "start now" default) otherwise. See
+// SLAEngineService.RegisterCaseClocks' own doc comment for which real
+// policies this affects and why.
+func registerCaseSLAClockStartOn(policy repository.SLAPolicyRef, caseCreatedOn time.Time) time.Time {
+	if policy.Retroactive {
+		return caseCreatedOn
+	}
+	return time.Time{}
 }
 
 // RegisterCaseClocks implements SLAEngineService.
@@ -234,13 +255,14 @@ func (s *slaEngineService) RegisterCaseClocks(ctx context.Context, caseID string
 		return
 	}
 	for _, policy := range policies {
-		registered, err := s.repo.RegisterClock(ctx, caseID, policy)
+		startOn := registerCaseSLAClockStartOn(policy, facts.CreatedOn)
+		registered, err := s.repo.RegisterClock(ctx, caseID, policy, startOn)
 		if err != nil {
 			slog.ErrorContext(ctx, "sla engine: register clock failed", "caseId", caseID, "clockType", policy.Target, "policy", policy.Name, "err", err)
 			continue
 		}
 		if !registered {
-			slog.InfoContext(ctx, "sla engine: clock already registered, skipped", "caseId", caseID, "clockType", policy.Target)
+			slog.InfoContext(ctx, "sla engine: clock already registered, skipped", "caseId", caseID, "clockType", policy.Target, "policy", policy.Name)
 		}
 	}
 }
@@ -291,6 +313,16 @@ func (s *slaEngineService) CompleteResponseClock(ctx context.Context, caseID str
 	if _, err := s.repo.CompleteClock(ctx, caseID, slaClockTypeTarget[slaClockTypeResponse]); err != nil {
 		slog.ErrorContext(ctx, "sla engine: complete response clock failed", "caseId", caseID, "err", err)
 	}
+	// Stamps the durable, case-level "already responded" fact -- see
+	// repository.CaseFacts.CSEngineerResponseComment's own doc comment for
+	// why this is no longer inferred from the response clock's own stage.
+	// Called here, unconditionally, regardless of whether a response clock
+	// even existed to complete above (an S0/S4 case has none) -- the
+	// qualifying reply this method is called for already happened either
+	// way.
+	if err := s.repo.RecordFirstEngineerResponse(ctx, caseID); err != nil {
+		slog.ErrorContext(ctx, "sla engine: record first engineer response failed", "caseId", caseID, "err", err)
+	}
 }
 
 // CompleteWorkaroundClock implements SLAEngineService.
@@ -319,17 +351,56 @@ func (s *slaEngineService) CompleteFixEtaSharedClocks(ctx context.Context, caseI
 // engine, this method unconditionally completed every clock on a CLOSED
 // transition; that blanket behavior is gone now that completion is
 // per-policy-condition, and while every real case policy's stop_condition
-// this codebase has been able to confirm does reach a CLOSED-matching clause
-// (migration 0254/0256's own stop_condition values all do), a future synced
-// policy whose stop_condition simply doesn't name CLOSED would otherwise
-// leave its clock running forever on an already-closed case with nobody
-// able to notice -- a stuck clock is a worse failure mode than a redundant
-// CompleteClock call, so this net applies unconditionally rather than only
-// after confirming every policy's text by hand. CompleteClock/CancelClock
-// are themselves idempotent against a clock that isn't open (their own
-// slaEngineOpenStageFilter scope), so calling CompleteClock here for a
-// target this same pass already completed or cancelled is a harmless no-op
-// -- still skipped via `settled` purely to avoid a pointless second query.
+// this codebase has been able to confirm does reach a CLOSED-matching clause,
+// a future synced policy whose stop_condition simply doesn't name CLOSED
+// would otherwise leave its clock running forever on an already-closed case
+// with nobody able to notice -- a stuck clock is a worse failure mode than a
+// redundant CompleteClock call, so this net applies unconditionally rather
+// than only after confirming every policy's text by hand. CompleteClock/
+// CancelClock are themselves idempotent against a clock that isn't open
+// (their own slaEngineOpenStageFilter scope), so calling CompleteClock here
+// for a clock this same pass already completed or cancelled is a harmless
+// no-op -- still skipped via `settled` purely to avoid a pointless second
+// query.
+//
+// Every currently open clock of every target is evaluated independently,
+// against its OWN bound policy's own conditions (ActiveClockPolicies can
+// return more than one policy per target -- see that method's own doc
+// comment on why: a Hosting case can have an open-source-track and a
+// managed-services-track RESOLUTION clock running side by side, and a
+// severity change to one must never be decided by the other's conditions).
+//
+// Cancellation and resumption are driven by each policy's own declared
+// semantics, not a single hardcoded rule for every policy:
+//   - WhenToCancel == "NEVER": this clock is never cancelled by this method
+//     at all (only CompleteClock -- a genuine stop_condition match, or the
+//     CLOSED safety net -- can end it).
+//   - WhenToCancel == "START_CONDITIONS_ARE_NOT_MET" (used by every policy
+//     whose own cancel_condition is empty): cancel once this policy's own
+//     StartCondition no longer matches -- i.e. the fact that qualified this
+//     case for the policy in the first place has changed (a case_type/
+//     project_type change, most commonly).
+//   - WhenToCancel == "CANCEL_CONDITIONS_ARE_MET" (the default): cancel when
+//     CancelCondition itself evaluates true -- the original, condition-only
+//     behavior.
+//   - WhenToResume == "PAUSE_CONDITIONS_ARE_NOT_MET": a clock already PAUSED
+//     resumes once this policy's own PauseCondition stops matching, instead
+//     of waiting on a separate ResumeCondition (several real policies carry
+//     no resume_condition at all under this mode -- there is nothing else
+//     that could ever resume them).
+//   - WhenToResume == "RESUME_CONDITIONS_ARE_MET" (the default): resume when
+//     ResumeCondition itself evaluates true -- the original behavior.
+//
+// After every existing open clock has been evaluated, this method also
+// re-resolves every policy applicable to the case's CURRENT facts and
+// attempts to register each one, exactly as RegisterCaseClocks does at case
+// creation -- so a start_condition that only becomes true later (e.g. a
+// policy gated on a state the case wasn't in at creation) is picked up on
+// the very next state-changing update, not left to a severity change that
+// may never come. RegisterClock's own per-(work item, policy) uniqueness
+// guard makes this a no-op for every policy that already has a clock,
+// registered or cancelled-and-superseded, so this adds no duplicate
+// registrations -- only genuinely new ones.
 func (s *slaEngineService) ApplyCaseStateEffects(ctx context.Context, caseID string, state domain.CaseState) {
 	facts, err := s.loadCaseFacts(ctx, caseID, nil, &state)
 	if err != nil {
@@ -340,45 +411,105 @@ func (s *slaEngineService) ApplyCaseStateEffects(ctx context.Context, caseID str
 
 	for _, clockType := range slaTargetOrder {
 		target := slaClockTypeTarget[clockType]
-		policy, ok, err := s.repo.ActiveClockPolicy(ctx, caseID, target)
+		policies, err := s.repo.ActiveClockPolicies(ctx, caseID, target)
 		if err != nil {
-			slog.ErrorContext(ctx, "sla engine: apply case state effects: active clock policy lookup failed", "caseId", caseID, "clockType", target, "err", err)
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: active clock policies lookup failed", "caseId", caseID, "clockType", target, "err", err)
 			continue
 		}
-		if !ok {
-			continue // no open clock of this target -- nothing to evaluate
+		for _, policy := range policies {
+			s.applyCaseStateEffectsForPolicy(ctx, caseID, target, policy, f, state)
 		}
+	}
 
-		settled := false
-		switch {
-		case policy.StopCondition != "" && slacondition.Parse(policy.StopCondition).Evaluate(f):
-			if _, err := s.repo.CompleteClock(ctx, caseID, target); err != nil {
-				slog.ErrorContext(ctx, "sla engine: apply case state effects: complete clock failed", "caseId", caseID, "clockType", target, "err", err)
-			}
-			settled = true
-		case policy.CancelCondition != "" && slacondition.Parse(policy.CancelCondition).Evaluate(f):
-			if _, err := s.repo.CancelClock(ctx, caseID, target); err != nil {
-				slog.ErrorContext(ctx, "sla engine: apply case state effects: cancel clock failed", "caseId", caseID, "clockType", target, "err", err)
-			}
-			settled = true
-		case policy.PauseCondition != "" && slacondition.Parse(policy.PauseCondition).Evaluate(f):
-			if _, err := s.repo.SetPaused(ctx, caseID, target, true); err != nil {
-				slog.ErrorContext(ctx, "sla engine: apply case state effects: pause clock failed", "caseId", caseID, "clockType", target, "err", err)
-			}
-		case policy.ResumeCondition != "" && slacondition.Parse(policy.ResumeCondition).Evaluate(f):
-			if _, err := s.repo.SetPaused(ctx, caseID, target, false); err != nil {
-				slog.ErrorContext(ctx, "sla engine: apply case state effects: resume clock failed", "caseId", caseID, "clockType", target, "err", err)
-			}
-		default:
-			// Neither pause nor resume condition is configured/matches: left
-			// exactly as it is -- see this type's own ApplyCaseStateEffects doc
-			// comment, case 5.
+	// Re-evaluate start conditions against the case's current facts, same as
+	// case creation -- see this method's own doc comment.
+	policies, _ := s.resolveApplicablePolicies(ctx, facts)
+	for _, policy := range policies {
+		startOn := registerCaseSLAClockStartOn(policy, facts.CreatedOn)
+		if _, err := s.repo.RegisterClock(ctx, caseID, policy, startOn); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: register newly-applicable clock failed", "caseId", caseID, "clockType", policy.Target, "policy", policy.Name, "err", err)
 		}
+	}
+}
 
-		if !settled && state == domain.CaseStateClosed {
-			if _, err := s.repo.CompleteClock(ctx, caseID, target); err != nil {
-				slog.ErrorContext(ctx, "sla engine: apply case state effects: safety-net complete clock on CLOSED failed", "caseId", caseID, "clockType", target, "err", err)
-			}
+// applyCaseStateEffectsForPolicy evaluates one open clock's own bound
+// policy conditions against f -- the per-policy body of
+// SLAEngineService.ApplyCaseStateEffects, split out so that method's own
+// loop can call it once per policy returned by ActiveClockPolicies.
+func (s *slaEngineService) applyCaseStateEffectsForPolicy(ctx context.Context, caseID, target string, policy repository.SLAPolicyRef, f caseConditionFacts, state domain.CaseState) {
+	settled := false
+	switch {
+	case policy.StopCondition != "" && slacondition.Parse(slaPolicyConditionText(policy, policy.StopCondition)).Evaluate(f):
+		if _, err := s.repo.CompleteClockByPolicy(ctx, caseID, target, policy.ID); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: complete clock failed", "caseId", caseID, "clockType", target, "policy", policy.Name, "err", err)
 		}
+		settled = true
+	case slaPolicyShouldCancel(policy, f):
+		if _, err := s.repo.CancelClockByPolicy(ctx, caseID, target, policy.ID); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: cancel clock failed", "caseId", caseID, "clockType", target, "policy", policy.Name, "err", err)
+		}
+		settled = true
+	case policy.PauseCondition != "" && slacondition.Parse(slaPolicyConditionText(policy, policy.PauseCondition)).Evaluate(f):
+		if _, err := s.repo.SetPausedByPolicy(ctx, caseID, target, policy.ID, true); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: pause clock failed", "caseId", caseID, "clockType", target, "policy", policy.Name, "err", err)
+		}
+	case slaPolicyShouldResume(policy, f):
+		if _, err := s.repo.SetPausedByPolicy(ctx, caseID, target, policy.ID, false); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: resume clock failed", "caseId", caseID, "clockType", target, "policy", policy.Name, "err", err)
+		}
+	default:
+		// Neither pause nor resume condition is configured/matches: left
+		// exactly as it is -- see this type's own ApplyCaseStateEffects doc
+		// comment.
+	}
+
+	if !settled && state == domain.CaseStateClosed {
+		if _, err := s.repo.CompleteClockByPolicy(ctx, caseID, target, policy.ID); err != nil {
+			slog.ErrorContext(ctx, "sla engine: apply case state effects: safety-net complete clock on CLOSED failed", "caseId", caseID, "clockType", target, "policy", policy.Name, "err", err)
+		}
+	}
+}
+
+// slaPolicyShouldCancel decides whether policy's open clock should be
+// cancelled right now, per policy.WhenToCancel -- see
+// SLAEngineService.ApplyCaseStateEffects' own doc comment for what each
+// value means.
+func slaPolicyShouldCancel(policy repository.SLAPolicyRef, f caseConditionFacts) bool {
+	switch policy.WhenToCancel {
+	case "NEVER":
+		return false
+	case "START_CONDITIONS_ARE_NOT_MET":
+		// No StartCondition at all is never treated as "always cancel" --
+		// an empty condition means this package's own Condition.Evaluate
+		// already returns false for it (see slacondition's own doc
+		// comment), which would otherwise cancel every such clock on its
+		// very next evaluation.
+		if policy.StartCondition == "" {
+			return false
+		}
+		return !slacondition.Parse(slaPolicyConditionText(policy, policy.StartCondition)).Evaluate(f)
+	default: // "CANCEL_CONDITIONS_ARE_MET", or unset/unrecognized
+		return policy.CancelCondition != "" && slacondition.Parse(slaPolicyConditionText(policy, policy.CancelCondition)).Evaluate(f)
+	}
+}
+
+// slaPolicyShouldResume decides whether policy's open (and, by the time this
+// is reached in applyCaseStateEffectsForPolicy's switch, still-paused)
+// clock should resume right now, per policy.WhenToResume -- see
+// SLAEngineService.ApplyCaseStateEffects' own doc comment for what each
+// value means. Evaluated regardless of whether the clock is ACTUALLY paused
+// right now (SetPausedByPolicy's own UPDATE only ever matches an open row
+// and sets exactly the requested paused value either way, so calling it on
+// an already-running clock is a harmless, idempotent no-op) -- same posture
+// the original ResumeCondition-only check always had.
+func slaPolicyShouldResume(policy repository.SLAPolicyRef, f caseConditionFacts) bool {
+	switch policy.WhenToResume {
+	case "PAUSE_CONDITIONS_ARE_NOT_MET":
+		if policy.PauseCondition == "" {
+			return false
+		}
+		return !slacondition.Parse(slaPolicyConditionText(policy, policy.PauseCondition)).Evaluate(f)
+	default: // "RESUME_CONDITIONS_ARE_MET", or unset/unrecognized
+		return policy.ResumeCondition != "" && slacondition.Parse(slaPolicyConditionText(policy, policy.ResumeCondition)).Evaluate(f)
 	}
 }

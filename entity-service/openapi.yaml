@@ -34093,8 +34093,9 @@ components:
       description: >
         One case-like work item's current standing against one SLA policy
         target (response/workaround/resolution), read live from the "sla"
-        table ServiceNow's own SLA engine populates via sync — not computed
-        or scheduled by this service. Replaces the old SLAClock (a
+        table — populated either by this service's own in-process SLA engine
+        (source=CSM) or by an external sync job (source=SERVICENOW), never
+        computed from a static map. Replaces the old SLAClock (a
         hand-registered clock using a hardcoded severity->duration guess,
         built before real SLA data existed in Postgres). The eight display
         fields (caseNumber through state) are read live alongside the SLA
@@ -34110,18 +34111,37 @@ components:
         businessElapsedPercent:
           type: number
           description: >-
-            Percentage of the SLA's business duration elapsed, as ServiceNow
-            computed it. Not capped at 100 — a long-overdue SLA keeps
-            climbing well past it.
+            Percentage of the SLA's business duration elapsed. Not capped at
+            100 — a long-overdue SLA keeps climbing well past it.
         hasBreached:
           type: boolean
-          description: ServiceNow's own breach verdict for this clock.
+          description: This clock's own breach verdict.
         isPaused:
           type: boolean
         startedOn:
           type: string
           format: date-time
           nullable: true
+        pausedOn:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the clock is currently paused, the instant that pause
+            began; null otherwise.
+        pauseDurationSeconds:
+          type: integer
+          format: int64
+          description: >-
+            Total accumulated time (whole seconds) this clock has spent
+            paused across every completed pause/resume cycle so far — NOT
+            including any currently-open pause (see pausedOn for that).
+        durationSeconds:
+          type: integer
+          format: int64
+          description: >-
+            The resolved policy's own duration, in whole seconds. 0 when the
+            row has no duration recorded.
         caseNumber:
           type: string
         wso2CaseId:
@@ -34179,9 +34199,36 @@ components:
           type: string
           format: date-time
           nullable: true
+        pausedOn:
+          type: string
+          format: date-time
+          nullable: true
+          description: Mirrors SLAStatus.pausedOn.
+        pauseDurationSeconds:
+          type: integer
+          format: int64
+          description: Mirrors SLAStatus.pauseDurationSeconds.
+        isPaused:
+          type: boolean
+          description: Stage == "PAUSED", spelled out as its own bool.
+        businessElapsedPercent:
+          type: number
+          description: Mirrors SLAStatus.businessElapsedPercent.
+        durationSeconds:
+          type: integer
+          format: int64
+          description: Mirrors SLAStatus.durationSeconds.
         schedule:
           type: string
           description: Mirrors SLAStatus.schedule.
+        businessPauseDurationSeconds:
+          type: integer
+          format: int64
+          description: >-
+            Total business-hours-aware pause time accumulated so far,
+            distinct from pauseDurationSeconds' own flat wall-clock total —
+            needed to correct a business-day-scheduled clock's own wake-up
+            schedule after a resume. Always 0 for a 24x7-scheduled clock.
 
     SLADurationPolicyItem:
       type: object

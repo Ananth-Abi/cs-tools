@@ -8855,6 +8855,18 @@ type SLAClockState struct {
 	// comment for the full reasoning (business-day-aware wake-up
 	// scheduling on the consumer side).
 	Schedule string `json:"schedule"`
+	// BusinessPauseDurationSeconds is sla.business_pause_duration -- the
+	// clock's total business-hours-aware pause time accumulated across
+	// every completed pause/resume cycle so far, distinct from
+	// PauseDurationSeconds' own flat wall-clock total. A caller correcting
+	// a business-day clock's own wake-up schedule after a resume (see
+	// csm-notification-service's own Engine.resumeShift) needs THIS value,
+	// not PauseDurationSeconds, to recompute the real due instant via
+	// businessdays.AddBusinessDuration -- shifting by the flat pause
+	// duration instead produced wake times off by as much as the number of
+	// weekends/holidays the pause spanned. Always 0 for a 24x7-scheduled
+	// clock (nothing ever writes this column for one).
+	BusinessPauseDurationSeconds int64 `json:"businessPauseDurationSeconds"`
 }
 
 // SLADurationPolicyItem is one (severity, clockType) duration row, computed
