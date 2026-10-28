@@ -761,11 +761,12 @@ func main() {
 	if rotaRemindersAvailable {
 		family := envString("ROTA_REMINDER_FAMILY", "CRE")
 		copyTaskRecipients := envBool("ROTA_REMINDER_COPY_TASK_RECIPIENTS", false)
-		// Invitations need an organizer: the address the emails come from.
-		organizer := strings.TrimSpace(os.Getenv("EMAIL_FROM_ADDRESS"))
+		// Invitations need an organizer: the address the emails come from,
+		// without the display name a "Name <address>" sender carries.
+		organizer, organizerOK := rotareminder.InviteOrganizer(os.Getenv("EMAIL_FROM_ADDRESS"))
 		invites := envBool("ROTA_REMINDER_INVITES_ENABLED", true)
-		if invites && !rotareminder.ValidInviteAddress(organizer) {
-			slog.Warn("rota reminder calendar invitations are off: EMAIL_FROM_ADDRESS is not set or is not a plain email address, and an invitation needs an organizer")
+		if invites && !organizerOK {
+			slog.Warn("rota reminder calendar invitations are off: EMAIL_FROM_ADDRESS is not set or holds no email address, and an invitation needs an organizer")
 			invites = false
 		}
 		scheduleURL := strings.TrimSpace(os.Getenv("ROTA_REMINDER_SCHEDULE_URL"))
