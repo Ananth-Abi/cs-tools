@@ -3439,7 +3439,8 @@ type SearchCaseView struct {
 	RelatedCase      *EntityRef     `json:"relatedCase"`
 	Conversation     *EntityRef     `json:"conversation"`
 	// AccountDetails is the case's account reference, including support tier
-	// (Type). Populated for the ServiceNow data source only; null otherwise.
+	// (Type) and the account's CRE/SRE teams where known. Populated on both
+	// data sources; null when the case has no account.
 	AccountDetails *AccountRef `json:"account"`
 	// BestCaseFixEta is the internal-only best-case fix-commitment date, as a
 	// date-only "YYYY-MM-DD" string. Populated on both data sources -- on

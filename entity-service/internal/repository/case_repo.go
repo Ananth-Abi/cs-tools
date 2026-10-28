@@ -3867,7 +3867,9 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 		        prod.id, prod.name,
 		        ae.id, COALESCE(ae.name, NULLIF(TRIM(CONCAT_WS(' ', ae.first_name, ae.last_name)), '')), ae.email,
 		        pw.id, pw.number,
-		        rc_wi.id, rc_wi.number
+		        rc_wi.id, rc_wi.number,
+		        a.id, a.name, a.support_tier::TEXT,
+		        cre.id, cre.name, sre.id, sre.name
 		 FROM (SELECT wi.id FROM work_item wi %s %s
 		       ORDER BY %s %s NULLS LAST, wi.id
 		       LIMIT $%d OFFSET $%d) page
@@ -3900,6 +3902,8 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 			var projID, projName *string
 			var depID, depName *string
 			var dpID, dpName *string
+			var accountID, accountName, accountTier *string
+			var creTeamID, creTeamName, sreTeamID, sreTeamName *string
 			var creatorEmail string
 			var bestCaseEta, mostLikelyEta, worstCaseEta *time.Time
 			if err := rows.Scan(
@@ -3915,6 +3919,8 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 				&aeID, &aeName, &aeEmail,
 				&pcID, &pcNumber,
 				&rcID, &rcNumber,
+				&accountID, &accountName, &accountTier,
+				&creTeamID, &creTeamName, &sreTeamID, &sreTeamName,
 			); err != nil {
 				return fmt.Errorf("scan case: %w", err)
 			}
@@ -3991,6 +3997,20 @@ func (r *caseRepo) SearchCases(ctx context.Context, req domain.SearchCasesReques
 			}
 			if rcID != nil {
 				cv.RelatedCase = &domain.EntityRef{ID: *rcID, Name: stringOrEmpty(rcNumber)}
+			}
+			// Same account shape GetCaseByID builds (support tier as Type,
+			// CRE/SRE owning groups); a, cre and sre are already in
+			// caseSearchJoins for the account/team filters. Null when the
+			// work item has no account.
+			if accountID != nil {
+				accountRef := &domain.AccountRef{ID: *accountID, Name: stringOrEmpty(accountName), Type: stringOrEmpty(accountTier)}
+				if creTeamID != nil {
+					accountRef.CreTeam = &domain.EntityRef{ID: *creTeamID, Name: stringOrEmpty(creTeamName)}
+				}
+				if sreTeamID != nil {
+					accountRef.SreTeam = &domain.EntityRef{ID: *sreTeamID, Name: stringOrEmpty(sreTeamName)}
+				}
+				cv.AccountDetails = accountRef
 			}
 			result = append(result, cv)
 		}

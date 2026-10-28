@@ -21946,9 +21946,7 @@ components:
           description: Populated for ServiceNow data source only.
         account:
           $ref: '#/components/schemas/AccountRef'
-          description: >-
-            The case's account, including support tier (type). Populated for
-            the ServiceNow data source only; null otherwise.
+          description: "The case's account, including support tier (type) and its CRE/SRE teams where known. Populated on both data sources; null when the case has no account."
         bestCaseFixEta:
           type: string
           format: date
