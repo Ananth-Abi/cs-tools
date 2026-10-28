@@ -64,7 +64,31 @@ if (typeof window !== "undefined") {
   });
 }
 
+/**
+ * The page title is the only h1. When an article body brings its own h1, every
+ * body heading moves down one level (h1 to h2, h2 to h3, ... capped at h6) so
+ * the outline stays nested. Bodies without an h1 are left alone.
+ */
+function demoteHeadings(root: ParentNode): void {
+  if (!root.querySelector("h1")) return;
+  const headings = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6")).reverse();
+  for (const heading of headings) {
+    const level = Math.min(Number(heading.tagName[1]) + 1, 6);
+    if (`h${level}` === heading.tagName.toLowerCase()) continue;
+    const replacement = heading.ownerDocument.createElement(`h${level}`);
+    for (const attr of Array.from(heading.attributes)) {
+      replacement.setAttribute(attr.name, attr.value);
+    }
+    replacement.append(...Array.from(heading.childNodes));
+    heading.replaceWith(replacement);
+  }
+}
+
 /** Sanitize an article body for rendering via dangerouslySetInnerHTML. */
 export function sanitizeArticleHtml(html: string): string {
-  return DOMPurify.sanitize(html, SANITIZE_CONFIG);
+  const fragment = DOMPurify.sanitize(html, { ...SANITIZE_CONFIG, RETURN_DOM_FRAGMENT: true });
+  demoteHeadings(fragment);
+  const container = document.createElement("div");
+  container.appendChild(fragment);
+  return container.innerHTML;
 }

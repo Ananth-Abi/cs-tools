@@ -24,6 +24,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { useEffect, useRef, useState, type JSX, type MouseEvent } from "react";
 import { Link, Outlet } from "react-router";
+import { accessibleLinkSx } from "@config/a11yThemeOverrides";
 import { useRouteChangeReset } from "@hooks/useRouteChangeReset";
 
 const BRAND_LOGO_HEIGHT = {
@@ -88,17 +89,20 @@ export default function KBLayout(): JSX.Element {
       <OxygenLink
         href={`#${MAIN_ID}`}
         onClick={skipToContent}
-        sx={{
-          position: "absolute",
-          left: 8,
-          top: -64,
-          zIndex: (theme) => theme.zIndex.tooltip + 1,
-          px: 2,
-          py: 1,
-          borderRadius: 1,
-          bgcolor: "background.paper",
-          "&:focus": { top: 8 },
-        }}
+        sx={[
+          {
+            position: "absolute",
+            left: 8,
+            top: -64,
+            zIndex: (theme) => theme.zIndex.tooltip + 1,
+            px: 2,
+            py: 1,
+            borderRadius: 1,
+            bgcolor: "background.paper",
+            "&:focus": { top: 8 },
+          },
+          accessibleLinkSx,
+        ]}
       >
         Skip to main content
       </OxygenLink>

@@ -36,6 +36,12 @@ const (
 	uuidA = "11111111-1111-1111-1111-111111111111"
 	uuidB = "22222222-2222-2222-2222-222222222222"
 	uuidC = "33333333-3333-3333-3333-333333333333"
+	// uuidMissing is a well-formed id no fake holds.
+	uuidMissing = "99999999-9999-9999-9999-999999999999"
+	uuidD       = "44444444-4444-4444-4444-444444444444"
+	kbOne       = "aaaaaaaa-0000-4000-8000-000000000001"
+	kbOff       = "aaaaaaaa-0000-4000-8000-0000000000ff"
+	kbUnknown   = "aaaaaaaa-0000-4000-8000-000000000404"
 )
 
 // fakeEntity records the calls it receives and serves canned answers.
@@ -48,6 +54,9 @@ type fakeEntity struct {
 	search    entity.SearchResponse
 	searchErr error
 
+	// kbGate, when set, blocks ListKnowledgeBases until it is closed.
+	kbGate chan struct{}
+
 	getIDs      []string
 	kbCalls     int
 	searchCalls []entity.SearchRequest
@@ -57,9 +66,15 @@ func (f *fakeEntity) ListKnowledgeBases(context.Context) ([]entity.KnowledgeBase
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.kbCalls++
+	if f.kbGate != nil {
+		gate := f.kbGate
+		f.mu.Unlock()
+		<-gate
+		f.mu.Lock()
+	}
 	if f.kbs == nil && f.kbsErr == nil {
 		// Default: the one knowledge base every test article lives in is active.
-		return []entity.KnowledgeBase{{ID: "kb-1", Title: "One", Active: true}}, nil
+		return []entity.KnowledgeBase{{ID: kbOne, Title: "One", Active: true}}, nil
 	}
 	return f.kbs, f.kbsErr
 }
@@ -75,12 +90,16 @@ func (f *fakeEntity) GetKBArticle(_ context.Context, id string) (entity.KBArticl
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.getIDs = append(f.getIDs, id)
+	// Mirrors real entity-service: a malformed id is 400, a missing article is 404.
+	if _, ok := normalizeID(id); !ok {
+		return entity.KBArticle{}, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "invalid article id"}
+	}
 	if err := f.getErr[id]; err != nil {
 		return entity.KBArticle{}, err
 	}
 	a, ok := f.articles[id]
 	if !ok {
-		return entity.KBArticle{}, &apierror.Error{StatusCode: http.StatusNotFound, Body: "nope"}
+		return entity.KBArticle{}, &apierror.Error{StatusCode: http.StatusNotFound, Body: "article not found"}
 	}
 	return a, nil
 }
@@ -97,7 +116,7 @@ func (f fakeSimilarity) Similar(context.Context, string, int) ([]pinecone.Match,
 func article(id, state string) entity.KBArticle {
 	pub := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	return entity.KBArticle{
-		ID: id, KnowledgeBaseID: "kb-1", Title: "Title " + id, Body: "<p>body</p>", State: state,
+		ID: id, KnowledgeBaseID: kbOne, Title: "Title " + id, Body: "<p>body</p>", State: state,
 		CreatedOn: pub, UpdatedOn: pub, PublishedOn: &pub,
 	}
 }
@@ -125,35 +144,46 @@ func do(mux http.Handler, method, target, body string) *httptest.ResponseRecorde
 	return rec
 }
 
-func TestValidID(t *testing.T) {
+func TestNormalizeID(t *testing.T) {
 	tests := []struct {
 		id   string
-		want bool
+		want string // "" means rejected
 	}{
-		{uuidA, true},
-		{"abc_DEF-123", true},
-		{strings.Repeat("a", 64), true},
-		{strings.Repeat("a", 65), false},
-		{"", false},
-		{"..", false},
-		{"a/b", false},
-		{"a%2Fb", false},
-		{"..%2F..%2Fcases", false},
-		{"a?x=1", false},
-		{"a#frag", false},
-		{"a b", false},
-		{"a\nb", false},
-		{"idé", false},
+		{uuidA, uuidA},
+		{"ABCDEF01-2345-6789-ABCD-EF0123456789", "abcdef01-2345-6789-abcd-ef0123456789"},
+		{"abcdef01-2345-6789-abcd-ef0123456789", "abcdef01-2345-6789-abcd-ef0123456789"},
+		// The old slug form is gone.
+		{"abc_DEF-123", ""},
+		{"kb-1", ""},
+		{strings.Repeat("a", 36), ""},
+		{"", ""},
+		{"..", ""},
+		{"a/b", ""},
+		{"a%2Fb", ""},
+		{"..%2F..%2Fcases", ""},
+		{"a?x=1", ""},
+		{"a#frag", ""},
+		{"a b", ""},
+		{"a\nb", ""},
+		{"idé", ""},
+		{uuidA + "\n", ""},                       // trailing newline must not slip past $
+		{" " + uuidA, ""},                        // leading space
+		{"{" + uuidA + "}", ""},                  // braces form
+		{strings.ReplaceAll(uuidA, "-", ""), ""}, // 32 hex, no dashes
+		{"urn:uuid:" + uuidA, ""},
+		{"1111111g-1111-1111-1111-111111111111", ""}, // non-hex
+		{uuidA + "0", ""},
 	}
 	for _, tt := range tests {
-		if got := validID(tt.id); got != tt.want {
-			t.Errorf("validID(%q) = %v, want %v", tt.id, got, tt.want)
+		got, ok := normalizeID(tt.id)
+		if ok != (tt.want != "") || got != tt.want {
+			t.Errorf("normalizeID(%q) = %q, %v; want %q", tt.id, got, ok, tt.want)
 		}
 	}
 }
 
 func TestGetArticleRejectsBadIDsBeforeUpstream(t *testing.T) {
-	for _, id := range []string{"a%2F..%2Fcases", "a%3Fx%3D1", "a%23b", "a%2e%2e", strings.Repeat("a", 65)} {
+	for _, id := range []string{"a%2F..%2Fcases", "a%3Fx%3D1", "a%23b", "a%2e%2e", strings.Repeat("a", 65), "slug-id", "not-a-uuid", "%7B" + uuidA + "%7D", strings.ReplaceAll(uuidA, "-", "")} {
 		t.Run(id, func(t *testing.T) {
 			f := &fakeEntity{}
 			rec := do(newMux(f, nil), http.MethodGet, "/public/kb-articles/"+id, "")
@@ -182,6 +212,7 @@ func TestGetArticlePublishedOnlyAndDTOWhitelist(t *testing.T) {
 		{"retired is 404", article(uuidA, "retired"), nil, http.StatusNotFound},
 		{"empty state is 404", article(uuidA, ""), nil, http.StatusNotFound},
 		{"upstream 404", entity.KBArticle{}, &apierror.Error{StatusCode: 404}, http.StatusNotFound},
+		{"upstream 400 (malformed id) is 404, not relayed", entity.KBArticle{}, &apierror.Error{StatusCode: 400, Body: "secret detail"}, http.StatusNotFound},
 		{"upstream 403 is 502", entity.KBArticle{}, &apierror.Error{StatusCode: 403, Body: "secret detail"}, http.StatusBadGateway},
 		{"upstream 500 is 502", entity.KBArticle{}, &apierror.Error{StatusCode: 500, Body: "stack trace"}, http.StatusBadGateway},
 		{"upstream timeout is 504", entity.KBArticle{}, context.DeadlineExceeded, http.StatusGatewayTimeout},
@@ -234,7 +265,7 @@ func TestGetArticlePublishedOnlyAndDTOWhitelist(t *testing.T) {
 // (with every internal field populated) through the client types and checks the
 // served JSON never mentions them.
 func TestArticleDTODropsInternalFields(t *testing.T) {
-	const upstream = `{"id":"` + uuidA + `","knowledgeBaseId":"kb-1","title":"T","body":"<p>b</p>","state":"published",
+	const upstream = `{"id":"` + uuidA + `","knowledgeBaseId":"` + kbOne + `","title":"T","body":"<p>b</p>","state":"published",
 		"authorId":"author-secret","revisedById":"reviser-secret","sourceCaseId":"case-secret","rejectionComment":"reject-secret",
 		"updatedBy":"updater-secret","baseVersionId":"base-secret","latest":true,"createdOn":"2026-01-01T00:00:00Z",
 		"updatedOn":"2026-01-02T00:00:00Z","publishedOn":"2026-01-03T00:00:00Z","retiredOn":null}`
@@ -268,7 +299,7 @@ func TestSearchForcesPublishedAndFiltersResults(t *testing.T) {
 		t.Fatal("upstream called for a rejected request")
 	}
 
-	rec = do(newMux(f, nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"kb-1","searchQuery":"  oauth  ","limit":10,"offset":5}`)
+	rec = do(newMux(f, nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"`+kbOne+`","searchQuery":"  oauth  ","limit":10,"offset":5}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
@@ -279,7 +310,7 @@ func TestSearchForcesPublishedAndFiltersResults(t *testing.T) {
 	if len(got.States) != 1 || got.States[0] != "published" {
 		t.Errorf("States = %v, want [published]", got.States)
 	}
-	if got.KnowledgeBaseID != "kb-1" || got.SearchQuery != "oauth" || got.Pagination != (entity.Pagination{Limit: 10, Offset: 5}) {
+	if got.KnowledgeBaseID != kbOne || got.SearchQuery != "oauth" || got.Pagination != (entity.Pagination{Limit: 10, Offset: 5}) {
 		t.Errorf("upstream request = %+v", got)
 	}
 	var resp struct {
@@ -321,10 +352,13 @@ func TestSearchInputBounds(t *testing.T) {
 		{"query over cap", `{"searchQuery":"` + strings.Repeat("a", 201) + `"}`, 400},
 		{"query multibyte at cap", `{"searchQuery":"` + strings.Repeat("é", 200) + `"}`, 200},
 		{"query control char", `{"searchQuery":"a\u0000b"}`, 400},
-		{"kb id ok", `{"knowledgeBaseId":"kb-1"}`, 200},
+		{"kb id ok", `{"knowledgeBaseId":"` + kbOne + `"}`, 200},
+		{"kb id upper case is normalised", `{"knowledgeBaseId":"` + strings.ToUpper(kbOne) + `"}`, 200},
+		{"kb id slug rejected", `{"knowledgeBaseId":"kb-1"}`, 400},
 		{"kb id valid but unknown", `{"knowledgeBaseId":"` + uuidA + `"}`, 404},
 		{"kb id traversal", `{"knowledgeBaseId":"../x"}`, 400},
 		{"kb id too long", `{"knowledgeBaseId":"` + strings.Repeat("a", 65) + `"}`, 400},
+		{"kb id malformed uuid", `{"knowledgeBaseId":"` + uuidA + `0"}`, 400},
 		{"sortBy recent", `{"sortBy":"recent"}`, 200},
 		{"sortBy mostViewed unsupported", `{"sortBy":"mostViewed"}`, 400},
 		{"sortBy topRated unsupported", `{"sortBy":"topRated"}`, 400},
@@ -387,9 +421,10 @@ func TestSearchUpstreamErrorMapping(t *testing.T) {
 
 func TestListKnowledgeBasesOnlyActive(t *testing.T) {
 	f := &fakeEntity{kbs: []entity.KnowledgeBase{
-		{ID: "kb-1", Title: "One", Active: true},
-		{ID: "kb-2", Title: "Hidden", Active: false},
+		{ID: kbOne, Title: "One", Active: true},
+		{ID: "bbbbbbbb-0000-4000-8000-000000000002", Title: "Hidden", Active: false},
 		{ID: "bad/id", Title: "Weird", Active: true},
+		{ID: "kb-slug", Title: "Slug", Active: true},
 	}}
 	rec := do(newMux(f, nil), http.MethodGet, "/public/knowledge-bases", "")
 	if rec.Code != 200 {
@@ -399,7 +434,7 @@ func TestListKnowledgeBasesOnlyActive(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.KnowledgeBases) != 1 || got.KnowledgeBases[0].ID != "kb-1" || got.KnowledgeBases[0].Title != "One" {
+	if len(got.KnowledgeBases) != 1 || got.KnowledgeBases[0].ID != kbOne || got.KnowledgeBases[0].Title != "One" {
 		t.Errorf("got %+v", got.KnowledgeBases)
 	}
 	// Whitelist: id and title only, nothing else (no active flag, no timestamps).
@@ -438,6 +473,10 @@ func TestRelatedRequiresPublishedSource(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("encoded slash id: status = %d, want 400", rec.Code)
 	}
+	rec = do(newMux(&fakeEntity{}, nil), http.MethodGet, "/public/kb-articles/slug-id/related", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("slug id: status = %d, want 400", rec.Code)
+	}
 }
 
 func TestRelatedFiltersMatchesThroughPublishedLookup(t *testing.T) {
@@ -445,16 +484,18 @@ func TestRelatedFiltersMatchesThroughPublishedLookup(t *testing.T) {
 		uuidA: article(uuidA, "published"),
 		uuidB: article(uuidB, "published"),
 		uuidC: article(uuidC, "draft"),
-		"dd":  article("dd", "published"),
+		uuidD: article(uuidD, "published"),
 	}}
 	sim := fakeSimilarity{matches: []pinecone.Match{
-		{ID: uuidA, Score: 1},           // the source itself
-		{ID: uuidC, Score: 0.95},        // unpublished
-		{ID: "ghost", Score: 0.9},       // unknown upstream
-		{ID: "../cases/1", Score: 0.85}, // invalid id, never looked up
-		{ID: uuidB, Score: 0.8},         // good
-		{ID: uuidB, Score: 0.7},         // duplicate
-		{ID: "dd", Score: 0.6},          // good
+		{ID: uuidA, Score: 1},                     // the source itself
+		{ID: uuidC, Score: 0.95},                  // unpublished
+		{ID: uuidMissing, Score: 0.9},             // unknown upstream (404)
+		{ID: "ghost", Score: 0.88},                // slug-style id: not a UUID, never looked up
+		{ID: "../cases/1", Score: 0.85},           // invalid id, never looked up
+		{ID: uuidB, Score: 0.8},                   // good
+		{ID: uuidB, Score: 0.7},                   // duplicate
+		{ID: strings.ToUpper(uuidB), Score: 0.75}, // duplicate of uuidB in another case
+		{ID: strings.ToUpper(uuidD), Score: 0.6},  // good, upper-case in the index
 	}}
 	rec := do(newMux(f, sim), http.MethodGet, "/public/kb-articles/"+uuidA+"/related", "")
 	if rec.Code != 200 {
@@ -464,15 +505,15 @@ func TestRelatedFiltersMatchesThroughPublishedLookup(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Articles) != 2 || got.Articles[0].ID != uuidB || got.Articles[1].ID != "dd" {
+	if len(got.Articles) != 2 || got.Articles[0].ID != uuidB || got.Articles[1].ID != uuidD {
 		t.Fatalf("articles = %+v", got.Articles)
 	}
 	if got.Articles[0].Title != "Title "+uuidB || got.Articles[0].Score != 0.8 {
 		t.Errorf("title must come from entity-service, score from the index: %+v", got.Articles[0])
 	}
 	for _, id := range f.getIDs {
-		if !validID(id) {
-			t.Errorf("invalid id %q reached upstream", id)
+		if n, ok := normalizeID(id); !ok || n != id {
+			t.Errorf("non-canonical id %q reached upstream", id)
 		}
 	}
 	if len(f.searchCalls) != 0 {
@@ -509,7 +550,7 @@ func TestRelatedFallsBackToSameKnowledgeBase(t *testing.T) {
 			if len(got.Articles) != 1 || got.Articles[0].ID != uuidB {
 				t.Fatalf("articles = %+v", got.Articles)
 			}
-			if len(f.searchCalls) != 1 || f.searchCalls[0].States[0] != "published" || f.searchCalls[0].KnowledgeBaseID != "kb-1" {
+			if len(f.searchCalls) != 1 || f.searchCalls[0].States[0] != "published" || f.searchCalls[0].KnowledgeBaseID != kbOne {
 				t.Errorf("fallback search = %+v", f.searchCalls)
 			}
 		})
@@ -542,15 +583,15 @@ func TestNotFoundAndHealth(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// inactiveKBEntity has kb-1 active and kb-off inactive, with one published
+// inactiveKBEntity has kbOne active and kbOff inactive, with one published
 // article in each, so every route can be checked against the inactive one.
 func inactiveKBEntity() *fakeEntity {
 	off := article(uuidB, "published")
-	off.KnowledgeBaseID = "kb-off"
+	off.KnowledgeBaseID = kbOff
 	return &fakeEntity{
 		kbs: []entity.KnowledgeBase{
-			{ID: "kb-1", Title: "One", Active: true},
-			{ID: "kb-off", Title: "Off", Active: false},
+			{ID: kbOne, Title: "One", Active: true},
+			{ID: kbOff, Title: "Off", Active: false},
 		},
 		articles: map[string]entity.KBArticle{uuidA: article(uuidA, "published"), uuidB: off},
 	}
@@ -571,13 +612,13 @@ func TestInactiveKnowledgeBaseIsNotServed(t *testing.T) {
 	})
 	t.Run("search with inactive knowledgeBaseId is 404 without calling search", func(t *testing.T) {
 		f := inactiveKBEntity()
-		rec := do(newMux(f, nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"kb-off"}`)
+		rec := do(newMux(f, nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"`+kbOff+`"}`)
 		if rec.Code != http.StatusNotFound || len(f.searchCalls) != 0 {
 			t.Fatalf("status = %d, searchCalls = %d", rec.Code, len(f.searchCalls))
 		}
 	})
 	t.Run("search with unknown knowledgeBaseId is 404", func(t *testing.T) {
-		rec := do(newMux(inactiveKBEntity(), nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"nope"}`)
+		rec := do(newMux(inactiveKBEntity(), nil), http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"`+kbUnknown+`"}`)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}
@@ -676,9 +717,9 @@ func TestActiveKBCacheTTLAndFailureNotCached(t *testing.T) {
 		t.Fatalf("kb list calls within TTL = %d, want 1", f.kbCalls)
 	}
 	now = now.Add(activeKBTTL + time.Second)
-	// kb-1 is deactivated upstream: after the TTL the article stops being served.
+	// kbOne is deactivated upstream: after the TTL the article stops being served.
 	f.mu.Lock()
-	f.kbs = []entity.KnowledgeBase{{ID: "kb-1", Title: "One", Active: false}}
+	f.kbs = []entity.KnowledgeBase{{ID: kbOne, Title: "One", Active: false}}
 	f.mu.Unlock()
 	if got := get(); got != http.StatusNotFound {
 		t.Fatalf("after TTL status = %d, want 404", got)
@@ -696,34 +737,130 @@ func TestActiveKBCacheTTLAndFailureNotCached(t *testing.T) {
 	}
 	f.mu.Lock()
 	f.kbsErr = nil
-	f.kbs = []entity.KnowledgeBase{{ID: "kb-1", Title: "One", Active: true}}
+	f.kbs = []entity.KnowledgeBase{{ID: kbOne, Title: "One", Active: true}}
 	f.mu.Unlock()
 	if got := get(); got != 200 {
 		t.Fatalf("recovery status = %d, want 200", got)
 	}
 }
 
+// TestActiveKBCacheConcurrent: N callers arriving together inside the TTL must
+// cause exactly one upstream list call. The load is held open until every caller
+// has started, so they genuinely overlap the in-flight load.
 func TestActiveKBCacheConcurrent(t *testing.T) {
-	f := &fakeEntity{articles: map[string]entity.KBArticle{uuidA: article(uuidA, "published")}}
+	const n = 50
+	gate := make(chan struct{})
+	f := &fakeEntity{
+		articles: map[string]entity.KBArticle{uuidA: article(uuidA, "published")},
+		kbGate:   gate,
+	}
 	mux := newMux(f, nil)
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	var started, wg sync.WaitGroup
+	started.Add(n)
+	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			started.Done()
 			if rec := do(mux, http.MethodGet, "/public/kb-articles/"+uuidA, ""); rec.Code != 200 {
 				t.Errorf("status %d", rec.Code)
 			}
 		}()
 	}
+	started.Wait()
+	time.Sleep(50 * time.Millisecond) // let the callers reach the cache
+	close(gate)
 	wg.Wait()
-	if f.kbCalls < 1 || f.kbCalls > 50 {
-		t.Errorf("kb list calls = %d", f.kbCalls)
+	if f.kbCalls != 1 {
+		t.Errorf("kb list calls for %d concurrent callers = %d, want exactly 1", n, f.kbCalls)
+	}
+	// And a later caller inside the TTL still does not reload.
+	if rec := do(mux, http.MethodGet, "/public/kb-articles/"+uuidA, ""); rec.Code != 200 || f.kbCalls != 1 {
+		t.Errorf("follow-up: status %d, kb list calls %d, want 200 and 1", rec.Code, f.kbCalls)
+	}
+}
+
+// TestActiveKBCacheLoaderPanic: a panicking loader must not leave a dangling
+// in-flight marker, or every later caller would block forever.
+func TestActiveKBCacheLoaderPanic(t *testing.T) {
+	var calls int
+	c := newActiveKBCache(func(context.Context) ([]entity.KnowledgeBase, error) {
+		calls++
+		if calls == 1 {
+			panic("loader exploded")
+		}
+		return []entity.KnowledgeBase{{ID: kbOne, Title: "One", Active: true}}, nil
+	})
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the loader's panic should propagate to the caller that ran it")
+			}
+		}()
+		_, _ = c.get(context.Background())
+	}()
+
+	c.mu.Lock()
+	inflight := c.inflight
+	c.mu.Unlock()
+	if inflight != nil {
+		t.Fatal("in-flight marker left behind after a loader panic")
+	}
+
+	type result struct {
+		set kbSet
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		set, err := c.get(context.Background())
+		ch <- result{set, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil || !r.set.has(kbOne) {
+			t.Fatalf("next call after a panic: set %v err %v, want success", r.set, r.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("next call after a loader panic blocked")
+	}
+}
+
+// TestActiveKBCacheWaiterSeesLoaderPanic: a caller already waiting on a flight
+// whose loader panics is released with an error, not left hanging.
+func TestActiveKBCacheWaiterSeesLoaderPanic(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	c := newActiveKBCache(func(context.Context) ([]entity.KnowledgeBase, error) {
+		close(entered)
+		<-release
+		panic("loader exploded")
+	})
+	go func() {
+		defer func() { _ = recover() }()
+		_, _ = c.get(context.Background())
+	}()
+	<-entered
+	errc := make(chan error, 1)
+	go func() {
+		_, err := c.get(context.Background())
+		errc <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the waiter attach to the flight
+	close(release)
+	select {
+	case err := <-errc:
+		if !errors.Is(err, errLoadPanicked) {
+			t.Fatalf("waiter err = %v, want errLoadPanicked", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter blocked after the loader panicked")
 	}
 }
 
 func TestSearchKnowledgeBaseIDValidatedBeforeUpstream(t *testing.T) {
-	for _, id := range []string{"../x", "a/b", "a%2Fb", "a b", strings.Repeat("a", 65)} {
+	for _, id := range []string{"../x", "a/b", "a%2Fb", "a b", strings.Repeat("a", 65), "kb-1"} {
 		f := &fakeEntity{}
 		body, _ := json.Marshal(map[string]string{"knowledgeBaseId": id})
 		rec := do(newMux(f, nil), http.MethodPost, "/public/kb-articles/search", string(body))
@@ -738,5 +875,54 @@ func TestGetArticleTraversalIDIs400(t *testing.T) {
 	rec := do(newMux(f, nil), http.MethodGet, "/public/kb-articles/%2F..%2Fcases%2F1", "")
 	if rec.Code != http.StatusBadRequest || len(f.getIDs) != 0 {
 		t.Fatalf("status %d getIDs %v", rec.Code, f.getIDs)
+	}
+}
+
+// TestNonexistentUUIDIs404OnEveryRoute: the fake answers like the real upstream
+// (a missing article is a 404, a malformed id a 400), and the portal turns the
+// lookup of a well-formed but nonexistent id into its own generic 404.
+func TestNonexistentUUIDIs404OnEveryRoute(t *testing.T) {
+	routes := []struct{ name, method, target, body string }{
+		{"get", http.MethodGet, "/public/kb-articles/" + uuidMissing, ""},
+		{"get upper case", http.MethodGet, "/public/kb-articles/" + strings.ToUpper(uuidMissing), ""},
+		{"related", http.MethodGet, "/public/kb-articles/" + uuidMissing + "/related", ""},
+		{"search with unknown knowledgeBaseId", http.MethodPost, "/public/kb-articles/search", `{"knowledgeBaseId":"` + uuidMissing + `"}`},
+	}
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			f := &fakeEntity{articles: map[string]entity.KBArticle{uuidA: article(uuidA, "published")}}
+			rec := do(newMux(f, nil), rt.method, rt.target, rt.body)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 (body %s)", rec.Code, rec.Body)
+			}
+			var e errorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil || e.Message != ErrMsgNotFound {
+				t.Errorf("body = %s, want the generic not-found envelope", rec.Body)
+			}
+			if strings.Contains(rec.Body.String(), "article not found") {
+				t.Errorf("upstream body relayed: %s", rec.Body)
+			}
+		})
+	}
+}
+
+// TestFakeMirrorsUpstreamStatuses pins the fake to the real entity-service
+// contract so a test can never pass on behaviour the real service lacks.
+func TestFakeMirrorsUpstreamStatuses(t *testing.T) {
+	f := &fakeEntity{}
+	var apiErr *apierror.Error
+	if _, err := f.GetKBArticle(context.Background(), uuidMissing); !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("missing id: err = %v, want upstream 404", err)
+	}
+	if _, err := f.GetKBArticle(context.Background(), "not-a-uuid"); !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("malformed id: err = %v, want upstream 400", err)
+	}
+}
+
+func TestUpperCaseIDIsNormalisedBeforeUpstream(t *testing.T) {
+	f := &fakeEntity{articles: map[string]entity.KBArticle{uuidA: article(uuidA, "published")}}
+	rec := do(newMux(f, nil), http.MethodGet, "/public/kb-articles/"+strings.ToUpper(uuidA), "")
+	if rec.Code != 200 || len(f.getIDs) != 1 || f.getIDs[0] != uuidA {
+		t.Fatalf("status %d, upstream ids %v, want 200 with the lower-case id", rec.Code, f.getIDs)
 	}
 }

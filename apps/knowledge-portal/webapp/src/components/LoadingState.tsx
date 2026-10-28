@@ -14,11 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { CircularProgress, Stack } from "@wso2/oxygen-ui";
+import { Box, CircularProgress, Stack } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+} as const;
+
 interface LoadingStateProps {
-  /** Accessible name announced for the spinner. */
+  /** Text announced to assistive tech (the status region is otherwise silent). */
   label?: string;
   py?: number;
 }
@@ -28,8 +37,11 @@ export default function LoadingState({
   py = 8,
 }: LoadingStateProps): JSX.Element {
   return (
-    <Stack alignItems="center" sx={{ py }}>
-      <CircularProgress size={28} aria-label={label} />
+    <Stack alignItems="center" role="status" sx={{ py }}>
+      <CircularProgress size={28} aria-hidden />
+      <Box component="span" sx={VISUALLY_HIDDEN}>
+        {label}
+      </Box>
     </Stack>
   );
 }

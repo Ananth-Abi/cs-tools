@@ -22,11 +22,13 @@ import (
 )
 
 // Request-timeout defaults. This service only serves small JSON reads, so the
-// defaults are much tighter than the CSM portal backend's (60s, sized for
-// inline attachment uploads). ENTITY_SERVICE_TIMEOUT is kept shorter than
-// REST_WRITE_TIMEOUT so the handler can still return a clean error when
-// entity-service is slow. Operators may set any values; none is enforced
-// against the others.
+// defaults are tight. Ordering rules:
+//   - REST_WRITE_TIMEOUT must be >= handler.RelatedBudget (the related-articles
+//     lookup chains several upstream calls under that budget); loadConfig
+//     rejects anything lower.
+//   - ENTITY_SERVICE_TIMEOUT should stay shorter than REST_WRITE_TIMEOUT so a
+//     single slow upstream call still leaves room for a clean error. That one
+//     is advice, not enforced.
 const (
 	defaultRESTReadTimeout      = 10 * time.Second
 	defaultRESTWriteTimeout     = 30 * time.Second
@@ -42,7 +44,7 @@ type timeouts struct {
 
 // loadTimeouts resolves the timeouts from the environment via getenv. Each
 // value is a Go duration string (e.g. "45s", "2m"); unset or empty selects the
-// default. Every value must be > 0; no ordering between them is enforced.
+// default. Every value must be > 0; ordering against the related-articles budget is checked by loadConfig.
 func loadTimeouts(getenv func(string) string) (timeouts, error) {
 	var t timeouts
 	for _, f := range []struct {

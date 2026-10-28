@@ -14,12 +14,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import type { CSSObject, Theme } from "@mui/material/styles";
 import type { OxygenTheme } from "@wso2/oxygen-ui/styles/OxygenThemeBase";
 
 interface CssVarsTheme {
   applyStyles: (scheme: string, styles: Record<string, unknown>) => unknown;
   palette: { primary: { dark: string } };
 }
+
+/**
+ * `sx` fragment for a text link coloured with the brand accent: the accent
+ * itself in dark mode (about 7.7:1 on black), the darker shade in light mode
+ * (5.2:1 on white, 4.8:1 on the page grey) where the accent is only 2.4-2.6:1.
+ */
+export const accessibleLinkSx = (theme: Theme): CSSObject => ({
+  color: theme.palette.primary.main,
+  ...theme.applyStyles("light", { color: theme.palette.primary.dark }),
+});
 
 /**
  * Accessibility overlay on the Oxygen theme. The brand accent used as text or

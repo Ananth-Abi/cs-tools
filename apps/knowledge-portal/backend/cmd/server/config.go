@@ -19,10 +19,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/handler"
 )
 
 // config is the validated runtime configuration. It is built once at startup by
@@ -31,8 +34,8 @@ import (
 type config struct {
 	Port string
 
-	// Entity-service access: base URL plus an OAuth2 client-credentials app, the
-	// same service-to-service mechanism the other portal backends use.
+	// Entity-service access: base URL plus an OAuth2 client-credentials app (a
+	// service identity; there is no end-user token on this public API).
 	EntityBaseURL string
 	TokenURL      string
 	ClientID      string
@@ -62,7 +65,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	c.EntityBaseURL = strings.TrimRight(req("ENTITY_SERVICE_BASE_URL"), "/")
 	if c.EntityBaseURL != "" {
-		if err := checkHTTPURL("ENTITY_SERVICE_BASE_URL", c.EntityBaseURL); err != nil {
+		if err := checkEntityURL("ENTITY_SERVICE_BASE_URL", c.EntityBaseURL); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -70,7 +73,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	c.ClientSecret = req("OAUTH2_CLIENT_SECRET")
 	c.TokenURL = req("OAUTH2_TOKEN_URL")
 	if c.TokenURL != "" {
-		if err := checkHTTPURL("OAUTH2_TOKEN_URL", c.TokenURL); err != nil {
+		if err := checkHTTPSURL("OAUTH2_TOKEN_URL", c.TokenURL); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -90,6 +93,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 		errs = append(errs, err)
 	}
 	c.Timeouts = t
+	if err == nil && t.RESTWrite < handler.RelatedBudget {
+		errs = append(errs, fmt.Errorf("REST_WRITE_TIMEOUT (%s) must be at least the related-articles budget (%s), or that route is cut off before it can answer",
+			t.RESTWrite, handler.RelatedBudget))
+	}
 
 	c.PineconeHost = strings.TrimRight(strings.TrimSpace(getenv("PINECONE_HOST")), "/")
 	c.PineconeKey = strings.TrimSpace(getenv("PINECONE_KEY"))
@@ -97,7 +104,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		errs = append(errs, errors.New("PINECONE_HOST and PINECONE_KEY must be set together or both left empty"))
 	}
 	if c.PineconeHost != "" {
-		if err := checkHTTPURL("PINECONE_HOST", c.PineconeHost); err != nil {
+		if err := checkHTTPSURL("PINECONE_HOST", c.PineconeHost); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -105,13 +112,49 @@ func loadConfig(getenv func(string) string) (config, error) {
 	return c, errors.Join(errs...)
 }
 
-// checkHTTPURL requires an absolute http(s) URL with a host.
-func checkHTTPURL(key, raw string) error {
+// parseAbsoluteURL parses raw as an absolute URL with a host.
+func parseAbsoluteURL(key, raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("%s must be an absolute http(s) URL, got %q", key, raw)
+		return nil, fmt.Errorf("%s must be an absolute http(s) URL, got %q", key, raw)
+	}
+	return u, nil
+}
+
+// checkHTTPSURL requires an absolute https URL with a host. Used for the token
+// endpoint (client credentials travel to it) and the vector index (an API key
+// travels to it): neither may be reached in clear text.
+func checkHTTPSURL(key, raw string) error {
+	u, err := parseAbsoluteURL(key, raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("%s must use https, got %q", key, raw)
 	}
 	return nil
+}
+
+// checkEntityURL requires an absolute https URL, except that plain http is
+// allowed for a loopback host (localhost, 127.0.0.0/8, ::1) so local
+// development against a local entity-service still works.
+func checkEntityURL(key, raw string) error {
+	u, err := parseAbsoluteURL(key, raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme == "https" || isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("%s must use https unless the host is loopback (localhost, 127.0.0.1, ::1), got %q", key, raw)
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func splitComma(s string) []string {

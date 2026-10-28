@@ -20,11 +20,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wso2-open-operations/cs-tools/apps/knowledge-portal/backend/internal/handler"
 )
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"ENTITY_SERVICE_BASE_URL": "http://entity.internal:8081/",
+		"ENTITY_SERVICE_BASE_URL": "https://entity.internal:8081/",
 		"OAUTH2_CLIENT_ID":        "id",
 		"OAUTH2_CLIENT_SECRET":    "secret",
 		"OAUTH2_TOKEN_URL":        "https://idp.example.com/oauth2/token",
@@ -39,7 +42,7 @@ func TestLoadConfigValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.EntityBaseURL != "http://entity.internal:8081" {
+	if cfg.EntityBaseURL != "https://entity.internal:8081" {
 		t.Errorf("trailing slash not trimmed: %q", cfg.EntityBaseURL)
 	}
 	if cfg.Port != "9000" {
@@ -78,6 +81,15 @@ func TestLoadConfigFailsFast(t *testing.T) {
 		{"bad timeout", func(m map[string]string) { m["REST_READ_TIMEOUT"] = "soon" }, "REST_READ_TIMEOUT"},
 		{"pinecone host without key", func(m map[string]string) { m["PINECONE_HOST"] = "https://p.example.com" }, "set together"},
 		{"pinecone key without host", func(m map[string]string) { m["PINECONE_KEY"] = "k" }, "set together"},
+		{"entity url plain http on a non-loopback host", func(m map[string]string) { m["ENTITY_SERVICE_BASE_URL"] = "http://entity.internal:8081" }, "must use https"},
+		{"entity url plain http on a lookalike host", func(m map[string]string) { m["ENTITY_SERVICE_BASE_URL"] = "http://localhost.evil.example" }, "must use https"},
+		{"entity url plain http on a private ip", func(m map[string]string) { m["ENTITY_SERVICE_BASE_URL"] = "http://10.0.0.5:8081" }, "must use https"},
+		{"token url plain http", func(m map[string]string) { m["OAUTH2_TOKEN_URL"] = "http://idp.example.com/oauth2/token" }, "OAUTH2_TOKEN_URL must use https"},
+		{"token url plain http on localhost still rejected", func(m map[string]string) { m["OAUTH2_TOKEN_URL"] = "http://localhost:9000/token" }, "OAUTH2_TOKEN_URL must use https"},
+		{"token url not a url", func(m map[string]string) { m["OAUTH2_TOKEN_URL"] = "idp/token" }, "OAUTH2_TOKEN_URL must be an absolute"},
+		{"pinecone host plain http", func(m map[string]string) { m["PINECONE_HOST"] = "http://p.example.com"; m["PINECONE_KEY"] = "k" }, "PINECONE_HOST must use https"},
+		{"pinecone host plain http on localhost still rejected", func(m map[string]string) { m["PINECONE_HOST"] = "http://127.0.0.1:5080"; m["PINECONE_KEY"] = "k" }, "PINECONE_HOST must use https"},
+		{"write timeout below the related-articles budget", func(m map[string]string) { m["REST_WRITE_TIMEOUT"] = "19s" }, "REST_WRITE_TIMEOUT"},
 		{"pinecone host not a url", func(m map[string]string) { m["PINECONE_HOST"] = "nope"; m["PINECONE_KEY"] = "k" }, "PINECONE_HOST must be"},
 	}
 	for _, tt := range tests {
@@ -89,5 +101,46 @@ func TestLoadConfigFailsFast(t *testing.T) {
 				t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadConfigEntityURLLoopbackMayUseHTTP(t *testing.T) {
+	for _, u := range []string{
+		"http://localhost:8081", "http://LOCALHOST:8081", "http://127.0.0.1:8081", "http://127.1.2.3:8081", "http://[::1]:8081", "https://entity.example.com",
+	} {
+		m := validEnv()
+		m["ENTITY_SERVICE_BASE_URL"] = u
+		if _, err := loadConfig(env(m)); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+}
+
+func TestLoadConfigPineconeHTTPSAccepted(t *testing.T) {
+	m := validEnv()
+	m["PINECONE_HOST"] = "https://idx.example.com/"
+	m["PINECONE_KEY"] = "k"
+	cfg, err := loadConfig(env(m))
+	if err != nil || cfg.PineconeHost != "https://idx.example.com" {
+		t.Fatalf("host %q err %v", cfg.PineconeHost, err)
+	}
+}
+
+// The related-articles lookup runs under handler.RelatedBudget; a server write
+// timeout shorter than that would cut it off mid-answer.
+func TestLoadConfigWriteTimeoutVersusRelatedBudget(t *testing.T) {
+	if defaultRESTWriteTimeout < handler.RelatedBudget {
+		t.Fatalf("default REST_WRITE_TIMEOUT %s is below the related-articles budget %s", defaultRESTWriteTimeout, handler.RelatedBudget)
+	}
+	at := validEnv()
+	at["REST_WRITE_TIMEOUT"] = handler.RelatedBudget.String()
+	if _, err := loadConfig(env(at)); err != nil {
+		t.Errorf("write timeout equal to the budget must be accepted: %v", err)
+	}
+	below := validEnv()
+	below["REST_WRITE_TIMEOUT"] = (handler.RelatedBudget - time.Nanosecond).String()
+	_, err := loadConfig(env(below))
+	if err == nil || !strings.Contains(err.Error(), "REST_WRITE_TIMEOUT") || !strings.Contains(err.Error(), handler.RelatedBudget.String()) {
+		t.Errorf("write timeout just below the budget: err = %v", err)
 	}
 }

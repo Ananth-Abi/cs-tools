@@ -27,8 +27,7 @@ import (
 // TestEveryRegisteredRouteIsInOpenAPI fails when a route registered in main.go
 // has no operation in openapi.yaml. The gateway only forwards operations that
 // the published spec documents: an undocumented route works against a local
-// listener and is rejected at the gateway (a 404 in the browser),
-// which is exactly how /projects/{id}/metadata and /tasks/search shipped broken.
+// listener but is rejected at the gateway, so it would 404 for real clients.
 func TestEveryRegisteredRouteIsInOpenAPI(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {

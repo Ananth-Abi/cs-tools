@@ -34,7 +34,9 @@ import LoadingState from "@components/LoadingState";
 import QueryErrorState from "@components/QueryErrorState";
 import ArticleCard from "@features/kb/components/ArticleCard";
 import ArticleList, { ArticleListItem } from "@features/kb/components/ArticleList";
+import LoadMoreButton from "@features/kb/components/LoadMoreButton";
 import SearchBox from "@features/kb/components/SearchBox";
+import { accessibleLinkSx } from "@config/a11yThemeOverrides";
 import { useDocumentTitle } from "@hooks/useDocumentTitle";
 import { browseUrl } from "@utils/browseUrl";
 import { normalizeSearchQuery } from "@utils/searchQuery";
@@ -43,17 +45,23 @@ import { toSnippet } from "@utils/snippet";
 // Product cards shown on the landing page; the rest are reachable from /browse.
 const FEATURED_KB_LIMIT = 6;
 const RECENT_LIMIT = 5;
+// Fetch a bigger page than is shown: articles in inactive knowledge bases are
+// dropped by the backend after paging, so a page of 5 can come back empty.
+const RECENT_FETCH_LIMIT = 20;
 
 export default function KBHomePage(): JSX.Element {
   useDocumentTitle();
   const navigate = useNavigate();
   const kbs = useKnowledgeBases();
-  const recent = useRecentArticles(RECENT_LIMIT);
+  const recent = useRecentArticles(RECENT_FETCH_LIMIT);
 
   const allKnowledgeBases = kbs.data?.knowledgeBases ?? [];
   const featured = allKnowledgeBases.slice(0, FEATURED_KB_LIMIT);
   const hasMore = allKnowledgeBases.length > FEATURED_KB_LIMIT;
-  const recentArticles = recent.data?.articles ?? [];
+  const recentArticles = recent.articles.slice(0, RECENT_LIMIT);
+  const recentLoading = recent.isLoading || (recent.isSkippingEmpty && recentArticles.length === 0);
+  const recentFailed = recent.isError && recentArticles.length === 0;
+  const recentEmpty = !recentLoading && !recentFailed && recentArticles.length === 0;
 
   return (
     <>
@@ -103,7 +111,10 @@ export default function KBHomePage(): JSX.Element {
               component={Link}
               to="/browse"
               underline="hover"
-              sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, fontWeight: 600 }}
+              sx={[
+                { display: "inline-flex", alignItems: "center", gap: 0.5, fontWeight: 600 },
+                accessibleLinkSx,
+              ]}
             >
               View all knowledge bases
               <ArrowRight size={16} aria-hidden />
@@ -172,22 +183,29 @@ export default function KBHomePage(): JSX.Element {
         <Typography variant="h5" component="h2" sx={{ fontWeight: 700, mb: 2.5 }}>
           Recent articles
         </Typography>
-        {recent.isLoading && (
+        {recentLoading && (
           <Stack spacing={1.5}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} variant="rounded" height={56} />
             ))}
           </Stack>
         )}
-        {recent.isError && (
+        {recentFailed && (
           <QueryErrorState
             error={recent.error}
             message="Recent articles could not be loaded."
-            onRetry={() => void recent.refetch()}
+            onRetry={recent.isLoadMoreError ? recent.loadMore : recent.refetch}
           />
         )}
-        {recent.isSuccess && recentArticles.length === 0 && (
-          <EmptyState title="No articles yet" />
+        {recentEmpty && !recent.hasMore && <EmptyState title="No articles yet" />}
+        {recentEmpty && recent.hasMore && (
+          <>
+            <EmptyState
+              title="No recent articles to show here"
+              message="Load more to keep looking, or browse a knowledge base."
+            />
+            <LoadMoreButton onClick={recent.loadMore} loading={recent.isLoadingMore} />
+          </>
         )}
         {recentArticles.length > 0 && (
           <ArticleList label="Recent articles">

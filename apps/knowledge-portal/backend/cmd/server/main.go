@@ -68,15 +68,6 @@ func main() {
 		}
 		similarity = pc
 	}
-	kb := handler.NewKBHandler(entityClient, similarity)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", handler.Health)
-	mux.HandleFunc("GET /public/knowledge-bases", kb.ListKnowledgeBases)
-	mux.HandleFunc("POST /public/kb-articles/search", kb.SearchArticles)
-	mux.HandleFunc("GET /public/kb-articles/{id}", kb.GetArticle)
-	mux.HandleFunc("GET /public/kb-articles/{id}/related", kb.RelatedArticles)
-	mux.HandleFunc("/", handler.NotFound)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -89,16 +80,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		// SecurityHeaders stays outermost so its headers are on every response.
-		// Logger wraps Recovery so a recovered panic is recorded as a 500 in the
-		// access log. CORS is not handled here: the API gateway sets it.
-		Handler: middleware.SecurityHeaders(
-			middleware.CorrelationID(
-				middleware.Logger(
-					middleware.Recovery(mux),
-				),
-			),
-		),
+		Handler:           newHandler(handler.NewKBHandler(entityClient, similarity)),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       cfg.Timeouts.RESTRead,
 		WriteTimeout:      cfg.Timeouts.RESTWrite,
@@ -124,6 +106,31 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Knowledge Portal Backend stopped")
+}
+
+// newHandler builds the full HTTP handler: routes plus middleware. main and the
+// tests both use it, so the tested chain is the served chain.
+//
+// SecurityHeaders stays outermost so its headers are on every response, error
+// and panic responses included. Logger wraps Recovery so a recovered panic is
+// recorded as a 500 in the access log. CORS is not handled here: the API
+// gateway sets it.
+func newHandler(kb *handler.KBHandler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", handler.Health)
+	mux.HandleFunc("GET /public/knowledge-bases", kb.ListKnowledgeBases)
+	mux.HandleFunc("POST /public/kb-articles/search", kb.SearchArticles)
+	mux.HandleFunc("GET /public/kb-articles/{id}", kb.GetArticle)
+	mux.HandleFunc("GET /public/kb-articles/{id}/related", kb.RelatedArticles)
+	mux.HandleFunc("/", handler.NotFound)
+
+	return middleware.SecurityHeaders(
+		middleware.CorrelationID(
+			middleware.Logger(
+				middleware.Recovery(mux),
+			),
+		),
+	)
 }
 
 // loadDotEnv reads a .env file and sets any unset environment variables from it.

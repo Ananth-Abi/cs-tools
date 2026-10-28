@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { searchArticles } from "@api/backend/client";
 import type { KBArticle, SearchKBArticlesResponse } from "@api/backend/types";
-import { getNextOffset } from "@api/pagination";
+import { getNextOffset, trailingEmptyPages } from "@api/pagination";
 import { useArticleSearch } from "@api/useKb";
 
 vi.mock("@api/backend/client", () => ({
@@ -64,6 +64,16 @@ describe("getNextOffset", () => {
   it("stops at the backend's maximum offset", () => {
     expect(getNextOffset({ ...page(["a"], 9999, 99999, true), limit: 50 })).toBeUndefined();
     expect(getNextOffset({ ...page(["a"], 9950, 99999, true), limit: 50 })).toBe(10000);
+  });
+});
+
+describe("paging guards", () => {
+  it("stops when a page reports hasMore with a non-positive limit", () => {
+    expect(getNextOffset({ ...page(["a"], 0, 5, true), limit: 0 })).toBeUndefined();
+  });
+  it("counts trailing empty pages", () => {
+    expect(trailingEmptyPages([page(["a"], 0, 5, true), page([], 2, 5, true), page([], 4, 5, true)])).toBe(2);
+    expect(trailingEmptyPages([page([], 0, 5, true), page(["a"], 2, 5, true)])).toBe(0);
   });
 });
 

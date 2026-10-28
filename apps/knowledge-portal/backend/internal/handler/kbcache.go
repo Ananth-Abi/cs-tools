@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -33,8 +34,18 @@ const (
 	activeKBLoadTimeout = 10 * time.Second
 )
 
-// kbSet is the set of active knowledge bases, id -> title.
+// kbSet is the set of active knowledge bases, lower-case UUID -> title.
 type kbSet map[string]string
+
+// has reports whether the knowledge base id (any case) is in the set.
+func (s kbSet) has(id string) bool {
+	id, ok := normalizeID(id)
+	if !ok {
+		return false
+	}
+	_, ok = s[id]
+	return ok
+}
 
 type kbFlight struct {
 	done chan struct{}
@@ -82,28 +93,51 @@ func (c *activeKBCache) get(ctx context.Context) (kbSet, error) {
 	c.inflight = f
 	c.mu.Unlock()
 
+	c.load(ctx, f)
+	return f.set, f.err
+}
+
+// errLoadPanicked is what callers waiting on a load see when the loader panics.
+var errLoadPanicked = errors.New("active knowledge base load panicked")
+
+// load runs the upstream list call for flight f and publishes the outcome. The
+// bookkeeping is deferred so that a panic in the loader still clears the
+// in-flight marker and closes done: otherwise every later caller would find a
+// marker that never completes and block until its own context expired. The
+// panic itself propagates to the caller that ran the load.
+func (c *activeKBCache) load(ctx context.Context, f *kbFlight) {
+	var (
+		kbs  []entity.KnowledgeBase
+		err  error
+		done bool
+	)
+	defer func() {
+		c.mu.Lock()
+		switch {
+		case !done:
+			f.err = errLoadPanicked
+		case err != nil:
+			f.err = err
+		default:
+			set := make(kbSet, len(kbs))
+			for _, kb := range kbs {
+				if id, ok := normalizeID(kb.ID); ok && kb.Active {
+					set[id] = kb.Title
+				}
+			}
+			f.set = set
+			c.set = set
+			c.expires = c.now().Add(c.ttl)
+		}
+		c.inflight = nil
+		c.mu.Unlock()
+		close(f.done)
+	}()
+
 	// Detached from the caller's cancellation so one client hanging up does not
 	// fail the load every waiting caller shares; values (correlation id) are kept.
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), activeKBLoadTimeout)
 	defer cancel()
-	kbs, err := c.list(loadCtx)
-
-	c.mu.Lock()
-	if err == nil {
-		set := make(kbSet, len(kbs))
-		for _, kb := range kbs {
-			if kb.Active && validID(kb.ID) {
-				set[kb.ID] = kb.Title
-			}
-		}
-		f.set = set
-		c.set = set
-		c.expires = c.now().Add(c.ttl)
-	} else {
-		f.err = err
-	}
-	c.inflight = nil
-	c.mu.Unlock()
-	close(f.done)
-	return f.set, f.err
+	kbs, err = c.list(loadCtx)
+	done = true
 }

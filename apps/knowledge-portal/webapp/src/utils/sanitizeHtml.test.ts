@@ -82,3 +82,25 @@ describe("isExternalHref", () => {
     expect(isExternalHref(null, origin)).toBe(false);
   });
 });
+
+describe("heading demotion", () => {
+  it("moves every heading down one level when the body has an h1", () => {
+    const el = render('<h1 id="t" class="c">One</h1><h2>Two</h2><h6>Six</h6><p>x</p>');
+    expect(el.querySelector("h1")).toBeNull();
+    expect(el.querySelector("h2")?.textContent).toBe("One");
+    expect(el.querySelector("h2")?.getAttribute("id")).toBe("t");
+    expect(el.querySelector("h3")?.textContent).toBe("Two");
+    expect(el.querySelector("h6")?.textContent).toBe("Six");
+  });
+
+  it("leaves headings alone when there is no h1", () => {
+    const el = render("<h2>Two</h2><h3>Three</h3>");
+    expect(el.querySelector("h2")?.textContent).toBe("Two");
+    expect(el.querySelector("h3")?.textContent).toBe("Three");
+  });
+
+  it("keeps formatting inside a demoted heading", () => {
+    const el = render("<h1>A <em>b</em></h1>");
+    expect(el.querySelector("h2 em")?.textContent).toBe("b");
+  });
+});

@@ -39,11 +39,20 @@ const (
 	sortRecent = "recent"
 )
 
-// idPattern accepts a UUID or a short slug and nothing else: no "/", ".", "%",
-// "?", "#" or whitespace, so an id can never alter an upstream URL.
-var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+// uuidPattern accepts only the canonical 8-4-4-4-12 hex form of a UUID, in
+// either case. Nothing else gets through: no "/", ".", "%", "?", "#", braces or
+// whitespace, so an id can never alter an upstream URL.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-func validID(id string) bool { return idPattern.MatchString(id) }
+// normalizeID returns id in lower case and true when it is a canonical UUID.
+// Every id that reaches an upstream call, the active set or a response goes
+// through it, so one article has exactly one spelling here.
+func normalizeID(id string) (string, bool) {
+	if !uuidPattern.MatchString(id) {
+		return "", false
+	}
+	return strings.ToLower(id), true
+}
 
 // searchRequest is the public search body. There is deliberately no states
 // field: unknown fields are rejected, so a caller cannot ask for drafts.
@@ -82,9 +91,14 @@ func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (searchRequest,
 	}
 
 	req.SearchQuery = strings.TrimSpace(req.SearchQuery)
+	if req.KnowledgeBaseID != "" {
+		kbID, ok := normalizeID(req.KnowledgeBaseID)
+		if !ok {
+			return req, http.StatusBadRequest, ErrMsgInvalidID
+		}
+		req.KnowledgeBaseID = kbID
+	}
 	switch {
-	case req.KnowledgeBaseID != "" && !validID(req.KnowledgeBaseID):
-		return req, http.StatusBadRequest, ErrMsgInvalidID
 	case !utf8.ValidString(req.SearchQuery), utf8.RuneCountInString(req.SearchQuery) > maxSearchQueryRunes, hasControlRune(req.SearchQuery):
 		return req, http.StatusBadRequest, "searchQuery must be at most 200 printable characters."
 	case req.Limit < 0 || req.Limit > maxLimit:

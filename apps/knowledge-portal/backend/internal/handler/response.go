@@ -37,15 +37,15 @@ const (
 	ErrMsgNotFound      = "The requested resource was not found."
 	ErrMsgBadRequest    = "Invalid request payload."
 	ErrMsgTooLarge      = "Request body too large."
-	ErrMsgInvalidID     = "Invalid identifier."
+	ErrMsgInvalidID     = "Invalid identifier: expected a UUID."
 	ErrMsgInternal      = "An internal server error occurred. Please try again later."
 	ErrMsgUnavailable   = "The knowledge base is temporarily unavailable."
 	ErrMsgUpstreamSlow  = "The knowledge base took too long to respond."
 	errMsgUnsupportedBy = "Unsupported sortBy value."
 )
 
-// errorBody is the JSON error payload, matching the sibling portal backends'
-// {"message": "..."} envelope.
+// errorBody is the JSON error payload, the {"message": "..."} envelope
+// every route answers with.
 type errorBody struct {
 	Message string `json:"message"`
 }
@@ -81,14 +81,16 @@ func NotFound(w http.ResponseWriter, _ *http.Request) {
 }
 
 // writeUpstreamError maps an entity-service failure to a generic response. The
-// upstream status and body are logged, never relayed: an upstream 404 is the only
-// status that keeps its meaning (and only when notFoundOK, i.e. a by-id lookup);
-// everything else is a 502, or 504 when the upstream call timed out.
-func writeUpstreamError(w http.ResponseWriter, r *http.Request, op string, err error, notFoundOK bool) {
+// upstream status and body are logged, never relayed. On a by-id lookup (byID)
+// an upstream 404 (no such article) or 400 (id rejected as malformed) both
+// become the portal's 404; ids are validated before the call, so a 400 here
+// means the article cannot exist. Everything else is a 502, or 504 when the
+// upstream call timed out.
+func writeUpstreamError(w http.ResponseWriter, r *http.Request, op string, err error, byID bool) {
 	var apiErr *apierror.Error
 	switch {
 	case errors.As(err, &apiErr):
-		if notFoundOK && apiErr.StatusCode == http.StatusNotFound {
+		if byID && (apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusBadRequest) {
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}

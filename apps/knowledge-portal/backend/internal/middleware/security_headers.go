@@ -18,8 +18,9 @@ package middleware
 
 import "net/http"
 
-// SecurityHeaders sets security-related response headers on every response,
-// mirroring the ResponseInterceptor in the customer portal's authorization module.
+// SecurityHeaders sets security-related response headers on every response:
+// no MIME sniffing, upgrade-insecure-requests, and HSTS for a year including
+// subdomains. CORS is deliberately absent: the API gateway owns it.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

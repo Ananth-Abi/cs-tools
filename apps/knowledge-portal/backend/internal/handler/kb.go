@@ -101,7 +101,7 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.KnowledgeBaseID != "" {
-		if _, ok := active[req.KnowledgeBaseID]; !ok {
+		if !active.has(req.KnowledgeBaseID) {
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 			return
 		}
@@ -126,7 +126,7 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		HasMore:  resp.HasMore,
 	}
 	for _, a := range resp.Articles {
-		if _, ok := active[a.KnowledgeBaseID]; !ok || a.State != entity.StatePublished {
+		if !active.has(a.KnowledgeBaseID) || a.State != entity.StatePublished {
 			continue
 		}
 		out.Articles = append(out.Articles, toArticleDTO(a))
@@ -138,8 +138,8 @@ func (h *KBHandler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 // reported as 404, not 403, so a caller cannot detect that a draft with that id
 // exists. The same applies to an article whose knowledge base is inactive.
 func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !validID(id) {
+	id, ok := normalizeID(r.PathValue("id"))
+	if !ok {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidID)
 		return
 	}
@@ -157,7 +157,7 @@ func (h *KBHandler) GetArticle(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, r, "get article: load active knowledge bases", err, false)
 		return
 	}
-	if _, ok := active[a.KnowledgeBaseID]; !ok {
+	if !active.has(a.KnowledgeBaseID) {
 		writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		return
 	}

@@ -130,7 +130,7 @@ type Config struct {
 }
 
 // Client is an HTTP client for entity-service, authenticated via the OAuth2
-// client credentials grant, exactly as the sibling portal backends do. This is a
+// client credentials grant. This is a
 // service identity: no end-user token exists on this public API, so none is
 // ever sent. Tokens are acquired and refreshed automatically.
 type Client struct {

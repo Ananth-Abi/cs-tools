@@ -34,10 +34,17 @@ Because anyone on the internet can call it, these hold regardless of what a call
   page after fetching it, so a page can be short and `total` is an upper bound.
 - **Whitelist responses.** Handlers build responses from fixed DTOs; author, reviewer, source case,
   rejection comment and version-lineage fields from upstream are dropped at decode time.
-- **Ids cannot steer upstream URLs.** Path and body ids must match `^[A-Za-z0-9_-]{1,64}$`, are
-  path-escaped again by the client, and the client never follows redirects.
-- **Generic errors.** Upstream statuses and bodies are logged, never relayed: callers see `404` for
-  a missing article, `504` on timeout and `502` for anything else.
+- **Ids cannot steer upstream URLs.** Article ids (path) and `knowledgeBaseId` (search body) must
+  be UUIDs in canonical 8-4-4-4-12 hex form, any case, and are lower-cased before use. Ids read from
+  the knowledge base list or the vector index are held to the same rule and dropped otherwise. A
+  malformed id is a `400`, a well-formed id with no published article a `404`. The client path-escapes
+  ids again and never follows redirects.
+- **Generic errors.** Upstream statuses and bodies are logged, never relayed: on a by-id lookup an
+  upstream `404` (no such article) or `400` (malformed id) becomes the portal's `404`; callers see
+  `504` on timeout and `502` for anything else.
+- **Correlation ids are server-minted.** Every request gets a fresh `X-CSM-Correlation-ID`, returned
+  in the response and sent to entity-service. A caller-supplied value is never echoed or forwarded;
+  it is logged separately as `clientCorrelationID` (sanitised, capped at 64 characters).
 - **Bounded input.** Request bodies are capped at 16 KiB, `limit` 1-50, `offset` 0-10000,
   `searchQuery` at most 200 characters, and unknown JSON fields are rejected.
 - **Read-only.** There is no write route and the entity client has no write method.
@@ -70,12 +77,13 @@ The server loads `.env` from the working directory (ignored if absent) and liste
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `ENTITY_SERVICE_BASE_URL` | yes | | Absolute http(s) URL; trailing slash trimmed |
-| `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET`, `OAUTH2_TOKEN_URL` | yes | | Client-credentials app used toward entity-service |
+| `ENTITY_SERVICE_BASE_URL` | yes | | Absolute https URL; plain http only for a loopback host (`localhost`, `127.0.0.0/8`, `::1`). Trailing slash trimmed |
+| `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` | yes | | Client-credentials app used toward entity-service |
+| `OAUTH2_TOKEN_URL` | yes | | Absolute https URL, no exceptions |
 | `ENTITY_SERVICE_SCOPES` | no | | Comma-separated |
 | `PORT` | no | `8080` | Plain port number |
-| `REST_READ_TIMEOUT`, `REST_WRITE_TIMEOUT`, `ENTITY_SERVICE_TIMEOUT` | no | 10s, 30s, 10s | Go durations, all > 0 |
-| `PINECONE_HOST`, `PINECONE_KEY` | no | | Both or neither; enables semantic related articles |
+| `REST_READ_TIMEOUT`, `REST_WRITE_TIMEOUT`, `ENTITY_SERVICE_TIMEOUT` | no | 10s, 30s, 10s | Go durations, all > 0. `REST_WRITE_TIMEOUT` must be at least 20s (the related-articles lookup budget) or startup fails; keep `ENTITY_SERVICE_TIMEOUT` shorter than it |
+| `PINECONE_HOST`, `PINECONE_KEY` | no | | Both or neither; enables semantic related articles. `PINECONE_HOST` must be an absolute https URL |
 
 Startup fails on a missing or malformed required value, naming every problem at once.
 

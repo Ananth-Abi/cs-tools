@@ -143,13 +143,17 @@ components:
       name: id
       in: path
       required: true
-      description: Article id. A UUID or a slug of letters, digits, `_` and `-`, at most 64 characters.
+      description: >-
+        Article id: a UUID in canonical 8-4-4-4-12 hex form, any letter case
+        (treated as lower case). Anything else is `400`; a well-formed id that
+        matches no published article is `404`.
       schema:
         type: string
-        pattern: '^[A-Za-z0-9_-]{1,64}$'
+        format: uuid
+        pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
   responses:
     BadRequest:
-      description: Malformed or out-of-range input.
+      description: Malformed or out-of-range input, including an id that is not a UUID.
       content:
         application/json:
           schema:
@@ -185,6 +189,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
         title:
           type: string
     ListKnowledgeBasesResponse:
@@ -201,8 +206,10 @@ components:
       properties:
         id:
           type: string
+          format: uuid
         knowledgeBaseId:
           type: string
+          format: uuid
         title:
           type: string
         body:
@@ -227,7 +234,9 @@ components:
       properties:
         knowledgeBaseId:
           type: string
-          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          format: uuid
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          description: Knowledge base id (UUID, any letter case). Anything else is `400`.
         searchQuery:
           type: string
           maxLength: 200
@@ -268,6 +277,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
         title:
           type: string
         score:

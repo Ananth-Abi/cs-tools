@@ -29,45 +29,63 @@ import (
 
 const correlationIDHeader = "X-CSM-Correlation-ID"
 
-// maxCorrelationIDLen caps an inbound correlation id. This API is public, so
-// the header is attacker-controlled: it is echoed in a response header, written
-// to logs and forwarded upstream, and is therefore only accepted when short and
-// made of a safe character set.
-const maxCorrelationIDLen = 64
+// maxClientCorrelationIDLen caps the logged copy of an inbound correlation id.
+const maxClientCorrelationIDLen = 64
 
-type correlationIDKey struct{}
+type (
+	correlationIDKey       struct{}
+	clientCorrelationIDKey struct{}
+)
 
-// CorrelationID is an HTTP middleware that reads the X-CSM-Correlation-ID request
-// header (when it is well-formed) or generates a UUID v4. The ID is stored in
-// the context for automatic inclusion in slog records and in the entity client
-// context so it is forwarded on every outgoing entity-service request, and it is
-// echoed in the response header.
+// CorrelationID is an HTTP middleware that gives every request a fresh,
+// server-minted correlation id (UUID v4). The id is stored in the context for
+// automatic inclusion in slog records and in the entity client context so it is
+// sent on every outgoing entity-service request, and it is returned in the
+// response header.
+//
+// This API is public, so an inbound X-CSM-Correlation-ID is attacker-controlled
+// and is never trusted: it is not echoed, not stored as the request's id and
+// never forwarded to entity-service, where it could be used to forge or collide
+// with ids in another system's logs. It is kept only as a separate, sanitised
+// and length-capped client-supplied field on this request's log records, so a
+// caller can still be matched to their own request.
 func CorrelationID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(correlationIDHeader)
-		if !validCorrelationID(id) {
-			id = newCorrelationID()
-		}
+		id := newCorrelationID()
 		w.Header().Set(correlationIDHeader, id)
 		ctx := context.WithValue(r.Context(), correlationIDKey{}, id)
 		ctx = entity.WithCorrelationID(ctx, id)
+		if client := sanitizeClientCorrelationID(r.Header.Get(correlationIDHeader)); client != "" {
+			ctx = context.WithValue(ctx, clientCorrelationIDKey{}, client)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func validCorrelationID(id string) bool {
-	if id == "" || len(id) > maxCorrelationIDLen {
-		return false
+// sanitizeClientCorrelationID makes an inbound value safe to log: every byte
+// outside letters, digits, '-', '_' and '.' becomes '_' (so no control
+// characters or line breaks, and no multi-byte sequences) and the result is cut
+// to maxClientCorrelationIDLen.
+func sanitizeClientCorrelationID(raw string) string {
+	if len(raw) > maxClientCorrelationIDLen {
+		raw = raw[:maxClientCorrelationIDLen]
 	}
-	for i := 0; i < len(id); i++ {
-		c := id[i]
+	b := []byte(raw)
+	for i, c := range b {
 		switch {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
 		default:
-			return false
+			b[i] = '_'
 		}
 	}
-	return true
+	return string(b)
+}
+
+// ClientCorrelationIDFromContext returns the sanitised, caller-supplied
+// correlation id for this request, or "" if the caller sent none.
+func ClientCorrelationIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(clientCorrelationIDKey{}).(string)
+	return v
 }
 
 // CorrelationIDFromContext returns the correlation ID stored in ctx, or ""
@@ -100,6 +118,9 @@ func (h ctxHandler) Enabled(ctx context.Context, level slog.Level) bool {
 func (h ctxHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := CorrelationIDFromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("correlationID", id))
+	}
+	if id := ClientCorrelationIDFromContext(ctx); id != "" {
+		r.AddAttrs(slog.String("clientCorrelationID", id))
 	}
 	return h.inner.Handle(ctx, r)
 }

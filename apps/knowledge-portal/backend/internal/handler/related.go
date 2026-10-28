@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,8 +35,11 @@ const (
 	// relatedCandidates is how many vector matches are fetched; one extra covers
 	// the source article matching itself, the rest cover unpublished matches.
 	relatedCandidates = 8
-	// relatedBudget bounds the whole related-articles lookup.
-	relatedBudget = 20 * time.Second
+	// RelatedBudget bounds the whole related-articles lookup. It must fit inside
+	// the server's write timeout (REST_WRITE_TIMEOUT) or the lookup is cut off
+	// mid-flight and the client sees a dropped connection instead of a clean
+	// error: config loading rejects a write timeout below this value.
+	RelatedBudget = 20 * time.Second
 )
 
 // RelatedArticles handles GET /public/kb-articles/{id}/related.
@@ -47,14 +51,14 @@ const (
 // match survives (index disabled, down, or all unpublished) it falls back to
 // other published articles in the same knowledge base.
 func (h *KBHandler) RelatedArticles(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !validID(id) {
+	id, ok := normalizeID(r.PathValue("id"))
+	if !ok {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidID)
 		return
 	}
 	// Related articles chain several upstream calls; bound the whole lookup so it
 	// finishes inside the server's write timeout and can still answer cleanly.
-	ctx, cancel := context.WithTimeout(r.Context(), relatedBudget)
+	ctx, cancel := context.WithTimeout(r.Context(), RelatedBudget)
 	defer cancel()
 	r = r.WithContext(ctx)
 
@@ -72,7 +76,7 @@ func (h *KBHandler) RelatedArticles(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, r, "related: load active knowledge bases", err, false)
 		return
 	}
-	if _, ok := active[src.KnowledgeBaseID]; !ok {
+	if !active.has(src.KnowledgeBaseID) {
 		writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		return
 	}
@@ -95,8 +99,9 @@ func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []
 		return nil
 	}
 
-	// Candidate ids come from an external index: validate before they are
-	// used in an upstream URL, drop the source itself and duplicates.
+	// Candidate ids come from an external index: they must be UUIDs, are
+	// normalised before use in an upstream URL, and the source itself and
+	// duplicates are dropped.
 	type candidate struct {
 		id    string
 		score float64
@@ -104,11 +109,12 @@ func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []
 	seen := map[string]bool{id: true}
 	var cands []candidate
 	for _, m := range matches {
-		if !validID(m.ID) || seen[m.ID] {
+		mid, ok := normalizeID(m.ID)
+		if !ok || seen[mid] {
 			continue
 		}
-		seen[m.ID] = true
-		cands = append(cands, candidate{id: m.ID, score: m.Score})
+		seen[mid] = true
+		cands = append(cands, candidate{id: mid, score: m.Score})
 	}
 
 	// Published-state lookup, concurrent (bounded by relatedCandidates).
@@ -121,12 +127,12 @@ func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []
 			a, err := h.entity.GetKBArticle(r.Context(), c.id)
 			if err != nil {
 				var apiErr *apierror.Error
-				if !(errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound) {
+				if !(errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusBadRequest)) {
 					slog.WarnContext(r.Context(), "related: candidate lookup failed", "err", err)
 				}
 				return
 			}
-			if _, ok := active[a.KnowledgeBaseID]; ok && a.State == entity.StatePublished && a.ID == c.id {
+			if active.has(a.KnowledgeBaseID) && a.State == entity.StatePublished && strings.EqualFold(a.ID, c.id) {
 				found[i] = &a
 			}
 		}()
@@ -138,7 +144,7 @@ func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []
 		if a == nil || a.Title == "" {
 			continue
 		}
-		out = append(out, relatedArticleDTO{ID: a.ID, Title: a.Title, Score: cands[i].score})
+		out = append(out, relatedArticleDTO{ID: cands[i].id, Title: a.Title, Score: cands[i].score})
 		if len(out) >= relatedMax {
 			break
 		}
@@ -151,11 +157,12 @@ func (h *KBHandler) semanticRelated(r *http.Request, id string, active kbSet) []
 // articles are decoration and must not fail the page.
 func (h *KBHandler) sameKnowledgeBase(r *http.Request, src entity.KBArticle, active kbSet) []relatedArticleDTO {
 	out := []relatedArticleDTO{}
-	if !validID(src.KnowledgeBaseID) {
+	kbID, ok := normalizeID(src.KnowledgeBaseID)
+	if !ok {
 		return out
 	}
 	resp, err := h.entity.SearchKBArticles(r.Context(), entity.SearchRequest{
-		KnowledgeBaseID: src.KnowledgeBaseID,
+		KnowledgeBaseID: kbID,
 		States:          []string{entity.StatePublished},
 		Pagination:      entity.Pagination{Limit: relatedMax + 1},
 	})
@@ -164,7 +171,7 @@ func (h *KBHandler) sameKnowledgeBase(r *http.Request, src entity.KBArticle, act
 		return out
 	}
 	for _, a := range resp.Articles {
-		if _, ok := active[a.KnowledgeBaseID]; !ok || a.ID == src.ID || a.State != entity.StatePublished || a.Title == "" {
+		if !active.has(a.KnowledgeBaseID) || strings.EqualFold(a.ID, src.ID) || a.State != entity.StatePublished || a.Title == "" {
 			continue
 		}
 		out = append(out, relatedArticleDTO{ID: a.ID, Title: a.Title})

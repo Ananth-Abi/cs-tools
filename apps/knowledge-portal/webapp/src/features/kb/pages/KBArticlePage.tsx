@@ -32,6 +32,7 @@ import type { JSX } from "react";
 import { Link, useParams } from "react-router";
 import { isClientError, isNotFoundError } from "@api/backend/client";
 import { isValidId } from "@api/backend/types";
+import type { KBArticle, RelatedArticle } from "@api/backend/types";
 import { useArticle, useKnowledgeBases, useRelatedArticles } from "@api/useKb";
 import LoadingState from "@components/LoadingState";
 import NotFoundState from "@components/NotFoundState";
@@ -39,6 +40,7 @@ import QueryErrorState from "@components/QueryErrorState";
 import ArticleCard from "@features/kb/components/ArticleCard";
 import ArticleList, { ArticleListItem } from "@features/kb/components/ArticleList";
 import { useDocumentTitle } from "@hooks/useDocumentTitle";
+import { accessibleLinkSx } from "@config/a11yThemeOverrides";
 import { browseUrl } from "@utils/browseUrl";
 import { formatDate } from "@utils/formatDate";
 import { sanitizeArticleHtml } from "@utils/sanitizeHtml";
@@ -65,7 +67,7 @@ const BODY_SX = {
   "& ul, & ol": { my: 2, pl: 3 },
   "& li": { mb: 1 },
   "& li::marker": { color: "text.secondary" },
-  "& a": { color: "primary.main" },
+  "& a": accessibleLinkSx,
   "& code": {
     px: 0.75,
     py: 0.25,
@@ -112,7 +114,6 @@ export default function KBArticlePage(): JSX.Element {
     : undefined;
 
   const notFound = !idIsValid || isNotFoundError(articleQuery.error);
-  useDocumentTitle(article?.title);
 
   // An id the backend would reject never reaches it: it cannot exist.
   if (notFound) {
@@ -129,6 +130,7 @@ export default function KBArticlePage(): JSX.Element {
   if (articleQuery.isError || !article) {
     return (
       <Container maxWidth="lg" sx={{ py: 8 }}>
+        <ArticleErrorTitle />
         <QueryErrorState
           headingComponent="h1"
           error={articleQuery.error}
@@ -144,8 +146,30 @@ export default function KBArticlePage(): JSX.Element {
     );
   }
 
+  return (
+    <ArticleView
+      article={article}
+      knowledgeBaseTitle={knowledgeBaseTitle}
+      relatedArticles={related?.articles ?? []}
+    />
+  );
+}
+
+/** Title for the load-failure state. Rendered only in that state, so nothing competes with it. */
+function ArticleErrorTitle(): null {
+  useDocumentTitle("Article could not be loaded");
+  return null;
+}
+
+interface ArticleViewProps {
+  article: KBArticle;
+  knowledgeBaseTitle?: string;
+  relatedArticles: RelatedArticle[];
+}
+
+function ArticleView({ article, knowledgeBaseTitle, relatedArticles }: ArticleViewProps): JSX.Element {
+  useDocumentTitle(article.title);
   const published = formatDate(article.publishedOn);
-  const relatedArticles = related?.articles ?? [];
 
   return (
     <Container maxWidth="xl" sx={{ py: 5 }}>

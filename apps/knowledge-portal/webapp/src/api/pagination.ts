@@ -27,6 +27,24 @@ export const PAGE_SIZE = 20;
  */
 export function getNextOffset(last: SearchKBArticlesResponse): number | undefined {
   if (!last.hasMore) return undefined;
+  // A page that reports hasMore but a non-positive limit would repeat the
+  // same offset forever.
+  if (!(last.limit > 0)) return undefined;
   const next = last.offset + last.limit;
   return next <= MAX_OFFSET ? next : undefined;
+}
+
+/**
+ * Without a knowledge base filter the backend filters each upstream page
+ * after fetching it, so a page can come back short or empty while hasMore is
+ * still true. This many consecutive empty pages are fetched automatically
+ * before the user is handed a manual "Load more".
+ */
+export const MAX_AUTO_EMPTY_PAGES = 5;
+
+/** Number of empty pages at the end of `pages`. */
+export function trailingEmptyPages(pages: SearchKBArticlesResponse[]): number {
+  let count = 0;
+  for (let i = pages.length - 1; i >= 0 && pages[i].articles.length === 0; i--) count++;
+  return count;
 }

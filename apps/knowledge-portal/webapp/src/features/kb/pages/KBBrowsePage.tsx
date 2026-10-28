@@ -16,26 +16,25 @@
 
 import {
   Box,
-  Button,
   Container,
   Divider,
   Grid,
   List,
   ListItemButton,
   ListItemText,
-  Stack,
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import { Link, useSearchParams } from "react-router";
 import { isValidId } from "@api/backend/types";
-import { isClientError } from "@api/backend/client";
+import { isClientError, isNotFoundError } from "@api/backend/client";
 import { useArticleSearch, useKnowledgeBases } from "@api/useKb";
 import EmptyState from "@components/EmptyState";
 import LoadingState from "@components/LoadingState";
 import QueryErrorState from "@components/QueryErrorState";
 import ArticleCard from "@features/kb/components/ArticleCard";
 import ArticleList, { ArticleListItem } from "@features/kb/components/ArticleList";
+import LoadMoreButton from "@features/kb/components/LoadMoreButton";
 import SearchBox from "@features/kb/components/SearchBox";
 import { useDocumentTitle } from "@hooks/useDocumentTitle";
 import { browseUrl } from "@utils/browseUrl";
@@ -70,6 +69,22 @@ export default function KBBrowsePage(): JSX.Element {
 
   const { articles, total } = search;
   const showInitialError = search.isError && articles.length === 0;
+  const unknownKnowledgeBase = !!knowledgeBaseId && isNotFoundError(search.error);
+
+  // With a knowledge base filter the backend's total is exact. Without one the
+  // backend filters each upstream page afterwards, so total only bounds the
+  // real count from above: say so, or say nothing.
+  let countLine = "";
+  if (articles.length > 0 || !search.hasMore) {
+    if (knowledgeBaseId) {
+      countLine = `${total} article${total === 1 ? "" : "s"}`;
+      if (articles.length > 0 && total > articles.length) countLine += `, showing ${articles.length}`;
+    } else if (search.hasMore) {
+      countLine = `Showing ${articles.length} of up to ${total} articles`;
+    } else {
+      countLine = `${articles.length} article${articles.length === 1 ? "" : "s"}`;
+    }
+  }
 
   return (
     <Container maxWidth="lg" sx={{ py: 5 }}>
@@ -124,34 +139,48 @@ export default function KBBrowsePage(): JSX.Element {
         <Grid size={{ xs: 12, md: 9 }}>
           {search.isLoading && <LoadingState label="Loading articles" />}
 
+          {search.isSkippingEmpty && articles.length === 0 && !search.isLoading && (
+            <LoadingState label="Loading articles" />
+          )}
+
           {showInitialError && (
             <QueryErrorState
               error={search.error}
-              message="Articles could not be loaded."
+              message={
+                unknownKnowledgeBase
+                  ? "This knowledge base does not exist or is no longer available."
+                  : "Articles could not be loaded."
+              }
               onRetry={isClientError(search.error) ? undefined : search.refetch}
             />
           )}
 
-          {!search.isLoading && !showInitialError && (
+          {!search.isLoading && !showInitialError && !(search.isSkippingEmpty && articles.length === 0) && (
             <>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                role="status"
-                aria-live="polite"
-                sx={{ mb: 2 }}
-              >
-                {total} article{total === 1 ? "" : "s"}
-                {articles.length > 0 && total > articles.length
-                  ? `, showing ${articles.length}`
-                  : ""}
-              </Typography>
+              {countLine && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  role="status"
+                  aria-live="polite"
+                  sx={{ mb: 2 }}
+                >
+                  {countLine}
+                </Typography>
+              )}
 
               {articles.length === 0 ? (
-                <EmptyState
-                  title="No articles matched"
-                  message="Try a different search or knowledge base."
-                />
+                search.hasMore ? (
+                  <EmptyState
+                    title="No articles found yet"
+                    message="The articles checked so far did not match. Load more to keep looking."
+                  />
+                ) : (
+                  <EmptyState
+                    title="No articles matched"
+                    message="Try a different search or knowledge base."
+                  />
+                )
               ) : (
                 <ArticleList label="Articles" busy={search.isRefreshing}>
                   {articles.map((article) => (
@@ -171,20 +200,18 @@ export default function KBBrowsePage(): JSX.Element {
                 <QueryErrorState
                   error={search.error}
                   message="More articles could not be loaded."
-                  onRetry={search.loadMore}
                 />
               )}
 
-              {search.hasMore && !search.isLoadMoreError && (
-                <Stack alignItems="center" sx={{ mt: 3 }}>
-                  <Button
-                    variant="outlined"
-                    onClick={search.loadMore}
-                    disabled={search.isLoadingMore}
-                  >
-                    {search.isLoadingMore ? "Loading..." : "Load more"}
-                  </Button>
-                </Stack>
+              {search.hasMore && (
+                <LoadMoreButton onClick={search.loadMore} loading={search.isLoadingMore} />
+              )}
+
+              {search.isCapped && (
+                <Typography variant="body2" color="text.secondary" role="status" sx={{ mt: 3, textAlign: "center" }}>
+                  Only the first {articles.length} results can be shown. Refine your search or pick a
+                  knowledge base to narrow them down.
+                </Typography>
               )}
             </>
           )}
