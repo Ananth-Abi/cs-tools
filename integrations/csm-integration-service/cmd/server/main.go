@@ -60,7 +60,18 @@ func main() {
 	// deploy-time misconfiguration, not something this service validates
 	// defensively -- the resulting entity-service 403 surfaces normally.
 	umtActorEmail := os.Getenv("UMT_INTEGRATION_ACTOR_EMAIL")
-	caseHandler := handler.NewCaseHandler(entityClient, umtActorEmail)
+	// MARK_FIX_ISSUED_ACTOR_EMAILS maps a third-party consumer's own client id
+	// (as asserted in the x-jwt-assertion header Choreo's gateway forwards) to
+	// that consumer's display email, so a PATCH /cases/{id} markFixIssued call
+	// is attributed to the real integration that made it in entity-service's
+	// work_item_activity feed, instead of always showing this service's own
+	// single, shared service-to-service client id (see
+	// handler.CaseHandler.clientActorEmails' own doc comment). Format:
+	// "clientId1:email1,clientId2:email2". Optional by design: a client id
+	// with no entry here is simply not attributed, same as before this
+	// existed.
+	markFixIssuedActorEmails := parseClientActorEmails(os.Getenv("MARK_FIX_ISSUED_ACTOR_EMAILS"))
+	caseHandler := handler.NewCaseHandler(entityClient, umtActorEmail, markFixIssuedActorEmails)
 	opportunityHandler := handler.NewOpportunityHandler(entityClient)
 	invoiceHandler := handler.NewInvoiceHandler(entityClient)
 	projectOpportunityLinkHandler := handler.NewProjectOpportunityLinkHandler(entityClient)
@@ -203,6 +214,37 @@ func loadDotEnv(path string) {
 	if err := scanner.Err(); err != nil {
 		slog.Warn("loadDotEnv: error reading .env file", "err", err)
 	}
+}
+
+// parseClientActorEmails parses a "clientId1:email1,clientId2:email2" value
+// into a map. A malformed entry (no ":", or either side blank) is skipped
+// with a warning rather than failing startup -- this config only drives a
+// best-effort display-attribution enrichment, never a security decision, so
+// one bad entry should not take the whole service down. An empty input
+// returns nil, which handler.CaseHandler.attributeMarkFixIssued treats as
+// "enrichment disabled."
+func parseClientActorEmails(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		clientID, email, ok := strings.Cut(pair, ":")
+		clientID, email = strings.TrimSpace(clientID), strings.TrimSpace(email)
+		if !ok || clientID == "" || email == "" {
+			slog.Warn("MARK_FIX_ISSUED_ACTOR_EMAILS: skipping malformed entry", "entry", pair)
+			continue
+		}
+		result[clientID] = email
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func splitComma(s string) []string {

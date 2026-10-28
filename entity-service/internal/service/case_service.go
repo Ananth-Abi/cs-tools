@@ -1837,6 +1837,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is closed or solution_proposed"}
 		}
 	}
+	// ActorEmail is only meaningful on the MarkFixIssued branch today -- the
+	// only UpdateCase field an M2M-only caller (no forwarded end-user
+	// identity) can reach on the Postgres data source. Reject it combined
+	// with anything else rather than silently ignoring it.
+	if req.ActorEmail != nil && req.MarkFixIssued == nil {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "actorEmail is only allowed when markFixIssued is also provided"}
+	}
 	if req.WatchList != nil {
 		return s.updateCaseWatchList(ctx, req)
 	}
@@ -2753,13 +2760,21 @@ func (s *caseService) updateCaseMarkFixIssued(ctx context.Context, req domain.Up
 		return domain.UpdateCaseResponse{}, err
 	}
 
-	// resolveActorOrM2M so the integration that marks a fix released (an M2M
-	// caller with no end-user token) is still attributed, to its client id.
-	// Best-effort: an unresolvable caller just skips the entry.
+	// req.ActorEmail, once the handler has verified it against the trusted
+	// M2M client set, takes priority over resolveActorOrM2M's own fallback:
+	// it names the real third-party integration that triggered this call
+	// (e.g. one of several consumers behind csm-integration-service, each
+	// mapped to its own email there), rather than csm-integration-service's
+	// single shared service-to-service client id. Best-effort either way --
+	// an unresolvable caller just skips the entry.
 	if !alreadySet {
-		if actor, err := s.resolveActorOrM2M(ctx); err == nil {
-			s.recordFieldChangeActivity(ctx, req.ID, "fix_issued_on", "", fixIssued.UTC().Format(time.RFC3339), actor.Email)
+		actorEmail := ""
+		if req.ActorEmail != nil {
+			actorEmail = *req.ActorEmail
+		} else if actor, err := s.resolveActorOrM2M(ctx); err == nil {
+			actorEmail = actor.Email
 		}
+		s.recordFieldChangeActivity(ctx, req.ID, "fix_issued_on", "", fixIssued.UTC().Format(time.RFC3339), actorEmail)
 	}
 
 	if !alreadySet && s.snWriteback != nil {
