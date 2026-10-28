@@ -17,6 +17,7 @@
 import {
   AlertOctagon,
   AlertTriangle,
+  Award,
   BarChart3,
   Briefcase,
   BookOpen,
@@ -326,6 +327,17 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     // write routes land.
     requires: "canViewTeamSchedule",
     icon: CalendarDays,
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    href: "/skills",
+    // Everyone who can write keeps a skills profile (the backend puts the
+    // skills routes' changes under the write permission). Its tabs are not
+    // nav-tree children: the Skill Manager tab depends on a per-user probe
+    // (see CsmSkillsPage), not on a role.
+    requires: "canWrite",
+    icon: Award,
   },
   {
     id: "customer-health",

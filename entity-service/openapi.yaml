@@ -18484,6 +18484,632 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /skills/levels:
+    get:
+      summary: The skill level scales and their levels.
+      description: >
+        Every level scale (level type) with its levels in value order. A skill is rated on one scale, and a person
+        may only hold a level of that skill's scale. Any internal caller.
+      operationId: getSkillLevels
+      responses:
+        "200":
+          description: "The scales."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillLevelTypesResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/categories:
+    get:
+      summary: The skill category tree, flat.
+      description: >
+        Every category with its parent, so a client can build the tree. Skills are filed under lowest-level
+        categories. Any internal caller.
+      operationId: getSkillCategories
+      responses:
+        "200":
+          description: "The categories."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillCategoriesResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/search:
+    post:
+      summary: Search the skill catalogue.
+      description: >
+        The read-only catalogue ("All Skills"), paged and filtered in SQL. Filters combine with AND; inactive skills
+        are left out unless includeInactive is set. A category filter includes that category's descendants.
+        Ordered by name. Default limit 50, at most 200. Any internal caller.
+      operationId: searchSkills
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchSkillsRequest'
+      responses:
+        "200":
+          description: "A page of skills."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchSkillsResponse'
+        "400":
+          description: "Bad request: a malformed id or a limit above 200."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills:
+    post:
+      summary: Create a skill.
+      description: >
+        CSM admin only: a token role listed in AUTH_ADMIN_ROLES. The skill needs a level scale and may be filed under
+        categories. Names are unique ignoring case. Created active unless active is false.
+      operationId: createSkill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSkillRequest'
+      responses:
+        "201":
+          description: "The skill."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        "400":
+          description: "Bad request: a missing or over-long name, or a level scale or category that does not exist."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not a CSM admin."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: "Another skill already has this name."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/{id}:
+    get:
+      summary: Read one skill.
+      description: >
+        Any internal caller.
+      operationId: getSkill
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The skill id.
+      responses:
+        "200":
+          description: "The skill."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        "400":
+          description: "Bad request: the id is not a UUID."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "No such skill, or the skills routes are not registered."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Edit or deactivate a skill.
+      description: >
+        CSM admin only. Fields left out are unchanged; description and keywords are cleared with an empty string;
+        categoryIds replaces the category links as a whole. active=false deactivates: the skill stays in the catalogue
+        and on the profiles that hold it, and can no longer be added. The level scale cannot change while any person
+        holds a level of the skill (409).
+      operationId: updateSkill
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The skill id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSkillRequest'
+      responses:
+        "200":
+          description: "The skill as it now stands."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Skill'
+        "400":
+          description: "Bad request: nothing to change, a malformed value, or a level scale or category that does not exist."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not a CSM admin."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "No such skill, or the skills routes are not registered."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: "Another skill has this name, or people hold levels of this skill so its scale cannot change."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/me:
+    get:
+      summary: The caller's own skills profile.
+      description: >
+        The active skills of the caller's own user (resolved from the token's email, never from the request), with level,
+        category and whether the row is inherited from a group. Not paged. Needs a user token.
+      operationId: getMySkills
+      responses:
+        "200":
+          description: "The profile."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MySkillsResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller, no user token, or no active internal user record."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Add a skill to the caller's profile.
+      description: >
+        Adds the skill at the given level and records the first-set in the history. The level must belong to the skill's
+        level scale (400). The skill must be active (409), must not already be on the profile (409, change its level
+        instead) and must not be an inherited row (409). Never creates a second row for a skill already held.
+      operationId: addMySkill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMySkillRequest'
+      responses:
+        "201":
+          description: "The profile entry."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSkill'
+        "400":
+          description: "Bad request: a missing or malformed id, or a level that is not on the skill's scale."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller, no user token, or no active internal user record."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "No such skill, or the skills routes are not registered."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: "The skill is inactive, already on the profile, inherited, or has no level scale."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/me/history:
+    get:
+      summary: The caller's skill level history.
+      description: >
+        Every level change on the caller's profile, newest first: levelFrom is null for the first time a skill was set,
+        levelTo is null for a removal. Optionally for one skill. Default limit 20, at most 100.
+      operationId: getMySkillHistory
+      parameters:
+        - name: skillId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Only this skill.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Page size.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Zero-based offset.
+      responses:
+        "200":
+          description: "A page of history."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillHistoryResponse'
+        "400":
+          description: "Bad request: a malformed id or number, or a limit above 100."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller, no user token, or no active internal user record."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/me/{skillId}:
+    put:
+      summary: Change the level of a skill on the caller's profile.
+      description: >
+        The level must belong to the skill's level scale (400). Records the change in the history; setting the level
+        already held changes nothing and records nothing. An inherited row is not changed (409).
+      operationId: setMySkillLevel
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The skill id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetMySkillLevelRequest'
+      responses:
+        "200":
+          description: "The profile entry as it now stands."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSkill'
+        "400":
+          description: "Bad request: a missing or malformed id, or a level that is not on the skill's scale."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller, no user token, or no active internal user record."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "The skill is not on the caller's profile, or the skills routes are not registered."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: "The row is inherited from a group, or the skill has no level scale."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Remove a skill from the caller's profile.
+      description: >
+        Deletes the caller's own row and records the removal in the history (levelTo null). An inherited row is not
+        removed (409).
+      operationId: removeMySkill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The skill id.
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          description: "Bad request: the id is not a UUID."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not an internal caller, no user token, or no active internal user record."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "The skill is not on the caller's profile, or the skills routes are not registered."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: "The row is inherited from a group."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/users/search:
+    post:
+      summary: Everybody's skills (skill manager).
+      description: >
+        A CSM admin (a token role listed in AUTH_ADMIN_ROLES) or a lead of a CRE or SRE team. One row is one person's one
+        active skill; a row must satisfy every filter given. Lists active internal staff and active skills only.
+        Filters are applied in SQL. Ordered by person then skill. Default limit 50, at most 200.
+      operationId: searchUserSkills
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchUserSkillsRequest'
+      responses:
+        "200":
+          description: "A page of person-skill rows."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchUserSkillsResponse'
+        "400":
+          description: "Bad request: a malformed id, a negative minLevelValue or a limit above 200."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: "No user token and not an authorized internal client."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: "Not a CSM admin or a CRE or SRE team lead, or no user token."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: "Not found: the skills routes register only with a database pool."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: "Unexpected error."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     clientAssertion:
@@ -37036,3 +37662,229 @@ components:
         failure:
           type: string
           description: Why it could not be landed. Required and must not be empty.
+
+    SkillLevel:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        value: {type: integer, nullable: true, description: "Orders the levels of a scale (for example 20, 50, 100)."}
+        description: {type: string, nullable: true}
+        color: {type: string, nullable: true}
+    SkillLevelType:
+      type: object
+      required: [id, name, levels]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        levels:
+          type: array
+          items: {$ref: '#/components/schemas/SkillLevel'}
+    SkillLevelTypesResponse:
+      type: object
+      required: [levelTypes]
+      properties:
+        levelTypes:
+          type: array
+          items: {$ref: '#/components/schemas/SkillLevelType'}
+    SkillCategory:
+      type: object
+      required: [id, name, isLowestCategory]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        code: {type: string, nullable: true}
+        categoryPath: {type: string, nullable: true}
+        isLowestCategory: {type: boolean}
+        parentId: {type: string, format: uuid, nullable: true}
+    SkillCategoriesResponse:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items: {$ref: '#/components/schemas/SkillCategory'}
+    SkillCategoryRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        categoryPath: {type: string, nullable: true}
+    Skill:
+      type: object
+      required: [id, name, active, categories, createdOn, updatedOn]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        keywords: {type: string, nullable: true}
+        active: {type: boolean}
+        levelTypeId: {type: string, format: uuid, nullable: true}
+        categories:
+          type: array
+          items: {$ref: '#/components/schemas/SkillCategoryRef'}
+        createdOn: {type: string, format: date-time}
+        updatedOn: {type: string, format: date-time}
+    SearchSkillsRequest:
+      type: object
+      properties:
+        searchQuery: {type: string, description: "Matches the name or keywords, ignoring case."}
+        categoryIds:
+          type: array
+          items: {type: string, format: uuid}
+          description: Skills filed under any of these categories or their descendants.
+        levelTypeId: {type: string, format: uuid}
+        includeInactive: {type: boolean, description: "Include deactivated skills. Default false."}
+        pagination: {$ref: '#/components/schemas/SkillPagination'}
+    SkillPagination:
+      type: object
+      properties:
+        limit: {type: integer, description: "Page size. Defaults to the endpoint's default; above its maximum is a 400."}
+        offset: {type: integer, description: "Zero-based offset."}
+    SearchSkillsResponse:
+      type: object
+      required: [skills, total, limit, offset]
+      properties:
+        skills:
+          type: array
+          items: {$ref: '#/components/schemas/Skill'}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+    CreateSkillRequest:
+      type: object
+      required: [name, levelTypeId]
+      properties:
+        name: {type: string, maxLength: 255}
+        description: {type: string, nullable: true, maxLength: 4000}
+        keywords: {type: string, nullable: true, maxLength: 500}
+        levelTypeId: {type: string, format: uuid}
+        categoryIds:
+          type: array
+          items: {type: string, format: uuid}
+        active: {type: boolean, description: "Defaults to true."}
+    UpdateSkillRequest:
+      type: object
+      description: Fields left out are unchanged. At least one is required.
+      properties:
+        name: {type: string, maxLength: 255}
+        description: {type: string, maxLength: 4000, description: "An empty string clears it."}
+        keywords: {type: string, maxLength: 500, description: "An empty string clears it."}
+        active: {type: boolean}
+        levelTypeId: {type: string, format: uuid, description: "Refused (409) while anybody holds a level of the skill."}
+        categoryIds:
+          type: array
+          items: {type: string, format: uuid}
+          description: Replaces the category links as a whole; an empty list removes them all.
+    UserSkill:
+      type: object
+      required: [skillId, skillName, skillActive, categories, inherited, updatedOn]
+      properties:
+        skillId: {type: string, format: uuid}
+        skillName: {type: string}
+        skillActive: {type: boolean}
+        categories:
+          type: array
+          items: {$ref: '#/components/schemas/SkillCategoryRef'}
+        levelTypeId: {type: string, format: uuid, nullable: true}
+        level:
+          allOf: [{$ref: '#/components/schemas/SkillLevel'}]
+          nullable: true
+        inherited: {type: boolean, description: "True when the row comes from a group; the person cannot change it."}
+        inheritedFromGroupId: {type: string, format: uuid, nullable: true}
+        updatedOn: {type: string, format: date-time}
+    MySkillsResponse:
+      type: object
+      required: [userId, skills]
+      properties:
+        userId: {type: string, format: uuid, description: "The caller's own user id."}
+        skills:
+          type: array
+          items: {$ref: '#/components/schemas/UserSkill'}
+    AddMySkillRequest:
+      type: object
+      required: [skillId, levelId]
+      properties:
+        skillId: {type: string, format: uuid}
+        levelId: {type: string, format: uuid, description: "A level of the skill's scale."}
+    SetMySkillLevelRequest:
+      type: object
+      required: [levelId]
+      properties:
+        levelId: {type: string, format: uuid, description: "A level of the skill's scale."}
+    SkillHistoryEntry:
+      type: object
+      required: [id, skillId, skillName, changedOn]
+      properties:
+        id: {type: string, format: uuid}
+        skillId: {type: string, format: uuid}
+        skillName: {type: string}
+        levelFrom:
+          allOf: [{$ref: '#/components/schemas/SkillLevel'}]
+          nullable: true
+          description: Null the first time the skill was set.
+        levelTo:
+          allOf: [{$ref: '#/components/schemas/SkillLevel'}]
+          nullable: true
+          description: Null when the skill was removed.
+        changedBy: {type: string, nullable: true, description: "Who made the change."}
+        changedOn: {type: string, format: date-time}
+    SkillHistoryResponse:
+      type: object
+      required: [history, total, limit, offset]
+      properties:
+        history:
+          type: array
+          items: {$ref: '#/components/schemas/SkillHistoryEntry'}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
+    SearchUserSkillsRequest:
+      type: object
+      properties:
+        searchQuery: {type: string, description: "Matches the person's name or email, ignoring case."}
+        userIds:
+          type: array
+          items: {type: string, format: uuid}
+        skillIds:
+          type: array
+          items: {type: string, format: uuid}
+        levelIds:
+          type: array
+          items: {type: string, format: uuid}
+        minLevelValue: {type: integer, nullable: true, description: "Rows whose level value is at least this."}
+        teamKeys:
+          type: array
+          items: {type: string}
+          description: People on any of these teams (registry keys).
+        pagination: {$ref: '#/components/schemas/SkillPagination'}
+    UserSkillRow:
+      type: object
+      required: [userId, teamKeys, skillId, skillName, inherited, updatedOn]
+      properties:
+        userId: {type: string, format: uuid}
+        userName: {type: string, nullable: true}
+        userEmail: {type: string, nullable: true}
+        teamKeys:
+          type: array
+          items: {type: string}
+        skillId: {type: string, format: uuid}
+        skillName: {type: string}
+        level:
+          allOf: [{$ref: '#/components/schemas/SkillLevel'}]
+          nullable: true
+        inherited: {type: boolean}
+        updatedOn: {type: string, format: date-time}
+    SearchUserSkillsResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/UserSkillRow'}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}

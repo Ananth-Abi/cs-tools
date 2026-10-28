@@ -65,6 +65,10 @@ describe("top-level nav order", () => {
     below("time-cards", "team-schedule");
   });
 
+  it("puts Skills directly below Team Schedule", () => {
+    below("team-schedule", "skills");
+  });
+
   it("keeps the remaining sections in their existing relative order", () => {
     expect(ids).toEqual([
       "dashboard",
@@ -79,6 +83,7 @@ describe("top-level nav order", () => {
       "updates",
       "time-cards",
       "team-schedule",
+      "skills",
       "customer-health",
       "usage-metrics",
       "user-scan",

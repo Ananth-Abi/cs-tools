@@ -99,6 +99,7 @@ import CsmAccountsPage from "@features/csm-accounts/pages/CsmAccountsPage";
 import CsmAccountDetailPage from "@features/csm-accounts/pages/CsmAccountDetailPage";
 import CsmProjectsPage from "@features/csm-projects/pages/CsmProjectsPage";
 import CsmTeamSchedulePage from "@features/csm-team-schedule/pages/CsmTeamSchedulePage";
+import CsmSkillsPage from "@features/csm-skills/pages/CsmSkillsPage";
 import CsmProjectDetailPage from "@features/csm-projects/pages/CsmProjectDetailPage";
 import ConversationDetailPage from "@features/csm-projects/pages/ConversationDetailPage";
 import CsmUpdatesPage from "@features/updates/pages/CsmUpdatesPage";
@@ -322,6 +323,7 @@ export default function App(): JSX.Element {
                     <Route path="projects" element={<CsmProjectsPage />} />
                   </Route>
                   <Route path="team-schedule" element={<CsmTeamSchedulePage />} />
+                  <Route path="skills" element={<CsmSkillsPage />} />
                   <Route
                     path="customers/accounts/:id"
                     element={<CsmAccountDetailPage />}
