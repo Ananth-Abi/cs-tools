@@ -18245,6 +18245,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed (non-UUID) id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error.
           content:
@@ -18276,6 +18282,12 @@ paths:
                 type: object
         "400":
           description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such article, or it is not in draft state.
           content:
             application/json:
               schema:
@@ -18348,6 +18360,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such article.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error.
           content:
@@ -18373,6 +18391,12 @@ paths:
             application/json:
               schema:
                 type: object
+        "400":
+          description: Malformed (non-UUID) id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error.
           content:
@@ -18456,6 +18480,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such knowledge base.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error.
           content:
@@ -18489,6 +18519,12 @@ paths:
                 type: object
         "400":
           description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such knowledge base.
           content:
             application/json:
               schema:
