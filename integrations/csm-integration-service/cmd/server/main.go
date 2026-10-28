@@ -19,6 +19,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -66,8 +67,8 @@ func main() {
 	// is attributed to the real integration that made it in entity-service's
 	// work_item_activity feed, instead of always showing this service's own
 	// single, shared service-to-service client id (see
-	// handler.CaseHandler.clientActorEmails' own doc comment). Format:
-	// "clientId1:email1,clientId2:email2". Optional by design: a client id
+	// handler.CaseHandler.clientActorEmails' own doc comment). A JSON object,
+	// e.g. {"client-a":"team-a@example.com"}. Optional by design: a client id
 	// with no entry here is simply not attributed, same as before this
 	// existed.
 	markFixIssuedActorEmails := parseClientActorEmails(os.Getenv("MARK_FIX_ISSUED_ACTOR_EMAILS"))
@@ -216,27 +217,29 @@ func loadDotEnv(path string) {
 	}
 }
 
-// parseClientActorEmails parses a "clientId1:email1,clientId2:email2" value
-// into a map. A malformed entry (no ":", or either side blank) is skipped
-// with a warning rather than failing startup -- this config only drives a
-// best-effort display-attribution enrichment, never a security decision, so
-// one bad entry should not take the whole service down. An empty input
-// returns nil, which handler.CaseHandler.attributeMarkFixIssued treats as
-// "enrichment disabled."
+// parseClientActorEmails parses a JSON object value, e.g.
+// `{"client-a":"team-a@example.com","client-b":"team-b@example.com"}`, into
+// a map. An empty input, or one that fails to parse as a JSON object of
+// strings, is logged (the latter at WARN) and returns nil -- this config
+// only drives a best-effort display-attribution enrichment, never a security
+// decision, so a malformed value must not fail startup; it should just
+// disable the enrichment, which handler.CaseHandler.attributeMarkFixIssued
+// already treats a nil/empty map as. An entry whose client id or email is
+// blank once trimmed is dropped individually, with the same reasoning.
 func parseClientActorEmails(s string) map[string]string {
 	if s == "" {
 		return nil
 	}
-	result := make(map[string]string)
-	for _, pair := range strings.Split(s, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		clientID, email, ok := strings.Cut(pair, ":")
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		slog.Warn("MARK_FIX_ISSUED_ACTOR_EMAILS: not a valid JSON object of client id to email, disabling markFixIssued attribution", "err", err)
+		return nil
+	}
+	result := make(map[string]string, len(raw))
+	for clientID, email := range raw {
 		clientID, email = strings.TrimSpace(clientID), strings.TrimSpace(email)
-		if !ok || clientID == "" || email == "" {
-			slog.Warn("MARK_FIX_ISSUED_ACTOR_EMAILS: skipping malformed entry", "entry", pair)
+		if clientID == "" || email == "" {
+			slog.Warn("MARK_FIX_ISSUED_ACTOR_EMAILS: skipping entry with a blank client id or email")
 			continue
 		}
 		result[clientID] = email
