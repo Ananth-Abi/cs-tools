@@ -3621,6 +3621,17 @@ type UpdateCaseRequest struct {
 	// other field in the same request (Postgres data source only; the mirrored
 	// ServiceNow write happens asynchronously through the dual-write mechanism).
 	MarkFixIssued *bool `json:"markFixIssued"`
+	// ActorEmail is set only by an M2M caller that has no x-user-id-token to
+	// resolve an acting user from (e.g. a third-party consumer calling
+	// through csm-integration-service's PatchCase). The handler checks the
+	// caller's own x-jwt-assertion client id against the trusted M2M client
+	// set (config.Config.M2MClientIDs) before honoring it -- an arbitrary
+	// caller-supplied value is never trusted as-is, since that would let any
+	// caller claim to be any user. Mutually exclusive with a real
+	// x-user-id-token on the same request, and only meaningful alongside
+	// MarkFixIssued today -- the only UpdateCase branch an M2M-only caller
+	// (no forwarded end-user identity) can reach on the Postgres data source.
+	ActorEmail *string `json:"actorEmail,omitempty"`
 }
 
 // UpdateCaseResponse is the response for PATCH /cases/{id}.
