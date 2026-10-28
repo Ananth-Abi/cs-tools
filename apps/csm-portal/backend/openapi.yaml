@@ -14693,7 +14693,7 @@ paths:
                   minItems: 1
                   maxItems: 500
                   items: { type: string, format: uuid }
-                from: { type: string, format: date, description: First day of the window, inclusive. }
+                from: { type: string, format: date, description: "First day of the window, inclusive." }
                 to: { type: string, format: date, description: "Last day of the window, inclusive; at most 70 days after `from`." }
       responses:
         "200":
