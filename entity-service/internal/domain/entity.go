@@ -3631,6 +3631,10 @@ type UpdateCaseRequest struct {
 	// x-user-id-token on the same request, and only meaningful alongside
 	// MarkFixIssued today -- the only UpdateCase branch an M2M-only caller
 	// (no forwarded end-user identity) can reach on the Postgres data source.
+	// Stored verbatim (trimmed, not lowercased) as work_item_activity's
+	// created_by/user_email -- despite the field's name, it is not required
+	// to be a real email address; a configured display label (e.g. a team or
+	// system name) is an intended use, not a misuse.
 	ActorEmail *string `json:"actorEmail,omitempty"`
 }
 
