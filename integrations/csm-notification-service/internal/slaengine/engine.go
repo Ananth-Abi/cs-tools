@@ -876,17 +876,31 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 // alert, a real, code-review-found duplicate-alerting bug. Comparing
 // against memberTier makes exactly one of those two calls actually alert
 // (the 75% one); the 50% call recognizes its own threshold is superseded
-// and only cleans up. Every due member is still removed from the wake
-// index here, win or lose — not just the one that alerts — so repeated
-// Redis failures can't leave a stale member to be resent once Redis
-// recovers (a second real bug the same review caught: the original version
-// alerted without ever calling RemoveWake, so an outage spanning several
-// ticks could resend the same degraded alert every tick, and a later
-// successful Redis read could re-examine and re-alert on members this
-// fallback had already handled). An AdvanceAlertedTier write is still
-// attempted after a genuine send, best-effort, so a later successful Redis
-// read doesn't resend the same tier once Redis recovers — see that call's
-// own comment for why a failure there is only logged, not returned.
+// and only cleans up. Every due member handled here is removed from the
+// wake index too — superseded members unconditionally, and a genuinely
+// alerted member's own entry once its AdvanceAlertedTier write is confirmed
+// applied (see below) — so repeated Redis failures can't leave a stale
+// member to be resent once Redis recovers (a second real bug the same
+// review caught: the original version alerted without ever calling
+// RemoveWake, so an outage spanning several ticks could resend the same
+// degraded alert every tick, and a later successful Redis read could
+// re-examine and re-alert on members this fallback had already handled).
+//
+// An AdvanceAlertedTier write is still attempted after a genuine send,
+// best-effort, so a later successful Redis read doesn't resend the same
+// tier once Redis recovers — and its returned `applied` result gates
+// RemoveWake exactly the way processDueMember's own identical check does:
+// `applied=false` means the clock has moved on to a new incarnation since
+// this fallback read entity-service's state (a severity revision cancelled
+// the old clock and registered a fresh one for the same key), so this
+// member's wake entry is left untouched rather than removed — it may
+// already be the NEW incarnation's own, independently-scheduled entry
+// (AddWake overwrites the same ZSET member), and deleting it would
+// silently cancel a still-valid future alert. A code review caught a real
+// regression here: an earlier version of this function called RemoveWake
+// unconditionally regardless of `applied`, reintroducing for the fallback
+// path exactly the incarnation-clobbering bug processDueMember's own check
+// already exists to prevent.
 func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType, member string, memberTier int) error {
 	if e.entity == nil {
 		return fmt.Errorf("redis unavailable for %s and no entity-service client configured for fallback", member)
@@ -934,13 +948,32 @@ func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType
 	// Best-effort: record the tier as alerted, and remove this member's own
 	// wake entry, so neither a later successful Redis read nor a repeated
 	// fallback run (Redis still down on the next tick) resends this exact
-	// alert. Both are logged only, never returned/retried -- the degraded
-	// alert has already gone out, and returning an error would just cause a
-	// retry that resends the SAME degraded alert again, which is worse than
-	// the small, accepted risk of a duplicate if Redis stays down and
-	// either write fails.
-	if _, err := e.store.AdvanceAlertedTier(ctx, caseID, clockType, highest, *state.StartedOn); err != nil {
+	// alert. A write failure here is logged only, never returned/retried --
+	// the degraded alert has already gone out, and returning an error would
+	// just cause a retry that resends the SAME degraded alert again, which
+	// is worse than the small, accepted risk of a duplicate if Redis stays
+	// down and a write fails.
+	applied, err := e.store.AdvanceAlertedTier(ctx, caseID, clockType, highest, *state.StartedOn)
+	if err != nil {
 		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not record the alerted-tier cursor, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)
+	} else if !applied {
+		// The clock has moved on to a new incarnation since this fallback
+		// read entity-service's state (a severity revision cancelled the old
+		// clock and registered a fresh one for the same (case, clockType) --
+		// see AdvanceAlertedTier's own doc comment and processDueMember's
+		// identical check above) -- the alert already sent reflects the OLD
+		// incarnation, which can't be undone, but this member's own wake
+		// entry must NOT be removed: by now it may already be the NEW
+		// incarnation's own, independently-scheduled entry for this same
+		// key (AddWake overwrites the same ZSET member), and deleting it
+		// here would silently cancel a still-valid future alert that has
+		// nothing to do with this stale fallback run. A real regression a
+		// code review caught: an earlier version of this function called
+		// RemoveWake unconditionally regardless of `applied`, reintroducing
+		// exactly the incarnation-clobbering bug processDueMember's own
+		// check already exists to prevent.
+		slog.InfoContext(ctx, "slaengine: fallback alert sent under a clock incarnation that has since been replaced, leaving the new incarnation's own wake entry untouched", "caseId", caseID, "clockType", clockType, "tier", highest)
+		return nil
 	}
 	if err := e.store.RemoveWake(ctx, member); err != nil {
 		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not remove its own wake entry, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)

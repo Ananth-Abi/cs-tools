@@ -1899,6 +1899,66 @@ func TestTick_RedisUnavailable_ClockPausedInEntityService_DoesNotAlert(t *testin
 	}
 }
 
+// fallbackIncarnationRaceStore forces GetClock to fail (so Tick always takes
+// the processDueMemberFallback path) and makes AdvanceAlertedTier always
+// report applied=false, simulating a clock that was replaced by a new
+// incarnation between the fallback's entity-service read and its own
+// AdvanceAlertedTier write -- see
+// TestProcessDueMemberFallback_IncarnationReplacedMidFallback below.
+type fallbackIncarnationRaceStore struct {
+	*fakeStore
+}
+
+func (s *fallbackIncarnationRaceStore) GetClock(ctx context.Context, caseID, clockType string) (ClockMeta, bool, error) {
+	return ClockMeta{}, false, errors.New("redis unavailable")
+}
+
+func (s *fallbackIncarnationRaceStore) AdvanceAlertedTier(ctx context.Context, caseID, clockType string, tier int, incarnation time.Time) (bool, error) {
+	return false, nil
+}
+
+// TestProcessDueMemberFallback_IncarnationReplacedMidFallback is the direct
+// regression test for a real regression a code review caught in
+// processDueMemberFallback's own last fix: an earlier version called
+// RemoveWake unconditionally after sending a degraded alert, regardless of
+// AdvanceAlertedTier's own `applied` result -- reintroducing, for the
+// fallback path specifically, the exact incarnation-clobbering bug
+// processDueMember's own identical check already exists to prevent (see
+// TestEngine_ProcessDueMember_IncarnationChangedMidFlight_DoesNotClobberNewClock
+// above). When AdvanceAlertedTier reports applied=false -- the clock was
+// replaced by a new incarnation between this fallback's entity-service read
+// and this write -- this member's own wake entry must be left untouched: it
+// may already be the new incarnation's own, independently scheduled entry
+// for this same key, and removing it would silently cancel a still-valid
+// future alert that has nothing to do with this stale fallback run.
+func TestProcessDueMemberFallback_IncarnationReplacedMidFallback(t *testing.T) {
+	base := newFakeStore()
+	wakeAt := time.Now().Add(-time.Minute)
+	base.wake[wakeMember("case-1", ClockResponse, 50)] = wakeAt
+	st := &fallbackIncarnationRaceStore{fakeStore: base}
+
+	startedAt := time.Now().Add(-2 * time.Hour)
+	chat := &fakeChat{}
+	e := newTestEngine(st, chat, &fakePublisher{})
+	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
+		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 62, Stage: "IN_PROGRESS"},
+	}}
+
+	if err := e.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatalf("Tick() error = %v, want nil", err)
+	}
+	if len(chat.calls) != 1 {
+		t.Fatalf("chat calls = %+v, want exactly one degraded alert -- the incarnation race happens AFTER sending, not before", chat.calls)
+	}
+	gotWakeAt, stillPresent := base.wake[wakeMember("case-1", ClockResponse, 50)]
+	if !stillPresent {
+		t.Fatal("wake entry was removed despite AdvanceAlertedTier reporting applied=false -- a new incarnation's own future alert may have just been cancelled")
+	}
+	if !gotWakeAt.Equal(wakeAt) {
+		t.Errorf("wake entry due time = %v, want unchanged %v", gotWakeAt, wakeAt)
+	}
+}
+
 // --- ApplyStateEffects pause status is wired from entity-service, not a
 // --- hardcoded state list ---
 
