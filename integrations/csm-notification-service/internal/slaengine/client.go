@@ -145,8 +145,21 @@ type slaDurationPolicyResponse struct {
 // GetDurationPolicy calls GET /sla-duration-policy and returns it as
 // map[severity]map[clockType]time.Duration — severity is entity-service's
 // own uppercase English word ("CATASTROPHIC"), matching
-// events.CaseCreatedPayload.Priority exactly, so RegisterClocks needs no
-// translation of its own to look a case's clocks up by its Priority field.
+// events.CaseCreatedPayload.Priority exactly.
+//
+// NOTE: entity-service removed GET /sla-duration-policy and the static
+// sla_duration_policy table it served — real per-policy durations now live
+// directly on "sla"/"sla_policy" (see entity-service's own CLAUDE.md), and
+// this Engine no longer calls this method at all (RegisterClocks/
+// reconcileClock both get their duration from activeSLAClock.DurationSeconds/
+// clockState.DurationSeconds instead — see each one's own doc comment). This
+// method is kept, unchanged, purely because internal/paging's own rung-email
+// feature (cmd/server/main.go's slaDurations/RungEmailSending.SLADurations)
+// still calls it for its "response SLA remaining time" display — a
+// deliberately separate, pre-existing feature this change does not touch.
+// With the endpoint gone, this call now always fails at startup; that
+// feature's own documented fallback ("nil; the email then uses the
+// published defaults") already handles this gracefully.
 func (c *EntityClient) GetDurationPolicy(ctx context.Context) (map[string]map[string]time.Duration, error) {
 	respBody, err := c.do(ctx, http.MethodGet, "/sla-duration-policy", nil)
 	if err != nil {
@@ -185,14 +198,28 @@ type activeSLAClock struct {
 	// pause time, same field entity-service's domain.SLAStatus carries.
 	PausedOn             *time.Time `json:"pausedOn"`
 	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
-	CaseNumber           string     `json:"caseNumber"`
-	WSO2CaseID           string     `json:"wso2CaseId"`
-	CaseTitle            string     `json:"caseTitle"`
-	CaseType             string     `json:"caseType"`
-	Product              string     `json:"product"`
-	Team                 string     `json:"team"`
-	Priority             string     `json:"priority"`
-	State                string     `json:"state"`
+	// DurationSeconds is the clock's own resolved sla_policy duration
+	// (entity-service's domain.SLAStatus.DurationSeconds) — reconcileClock
+	// reads this directly instead of a static, severity-keyed duration
+	// table (GET /sla-duration-policy, now removed — see that method's own
+	// doc comment), since this bulk fetch already carries it with no extra
+	// round trip needed.
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule mirrors entity-service's own domain.SLAStatus.Schedule (e.g.
+	// "WSO2 Business days", "24 x 7", or "") — reconcileClock uses this to
+	// decide whether to anchor the clock's due date/wake-ups on
+	// businessdays.AddBusinessDuration instead of flat wall-clock
+	// start.Add(duration) math. See RegisterClocks' own doc comment for the
+	// same decision on the registration path.
+	Schedule   string `json:"schedule"`
+	CaseNumber string `json:"caseNumber"`
+	WSO2CaseID string `json:"wso2CaseId"`
+	CaseTitle  string `json:"caseTitle"`
+	CaseType   string `json:"caseType"`
+	Product    string `json:"product"`
+	Team       string `json:"team"`
+	Priority   string `json:"priority"`
+	State      string `json:"state"`
 }
 
 type searchActiveSLAStatusResponse struct {
@@ -202,29 +229,46 @@ type searchActiveSLAStatusResponse struct {
 	Offset   int              `json:"offset"`
 }
 
+// slaEngineSourceFilter is the sla.source value this engine's own clocks now
+// carry — entity-service's condition-driven SLA engine tags every clock it
+// registers 'SERVICENOW', not a separate 'CSM' value, now that it resolves
+// real ServiceNow-synced sla_policy conditions directly rather than a
+// synthetic CSM-only substitute (see entity-service's own CLAUDE.md,
+// repository.SLAEngineRepository's doc comment, for the full reasoning and
+// the one residual risk it calls out: a genuinely separate external writer
+// using 'SERVICENOW' for the identical work_item/target pair is no longer
+// kept apart by source alone). This was 'csm' until that change; every call
+// in this file that scopes a GET /sla-status(/clock-state) read to this
+// engine's own rows must use this constant, not a literal, so the two can
+// never drift apart again.
+const slaEngineSourceFilter = "servicenow"
+
 // activeSLAStatusPageSize is this client's own page size for
 // GetActiveCSMSLAClocks — well under entity-service's own 2000-row cap
 // (internal/service/sla_status_service.go's maxSLAStatusLimit), chosen
 // purely so one slow page can't single-handedly reproduce the gateway
 // timeout the abandoned poll design hit (see this package's own doc
-// comment above) — this call is scoped to source=csm, a much smaller row
-// set than that design ever had to page through, but there's no reason to
-// risk a single, large round trip when several small ones cost nothing
-// extra at startup.
+// comment above) — this call is scoped to source=servicenow (see
+// slaEngineSourceFilter), a much smaller row set than that design ever had
+// to page through, but there's no reason to risk a single, large round trip
+// when several small ones cost nothing extra at startup.
 const activeSLAStatusPageSize = 200
 
-// GetActiveCSMSLAClocks calls GET /sla-status?source=csm, paging through
-// every currently-open clock this engine's own entity-service counterpart
-// (source='CSM' "sla" rows) is tracking, and returns the full, flattened
-// list. Called once, from Engine.Reconcile, itself called once at process
-// startup (see that method's own doc comment for why) — never on a
-// recurring basis, unlike the poll design this package's own doc comment
-// describes abandoning GET /sla-status for.
+// GetActiveCSMSLAClocks calls GET /sla-status?source=servicenow, paging
+// through every currently-open clock this engine's own entity-service
+// counterpart is tracking, and returns the full, flattened list. Called
+// once, from Engine.Reconcile, itself called once at process startup (see
+// that method's own doc comment for why) — never on a recurring basis,
+// unlike the poll design this package's own doc comment describes
+// abandoning GET /sla-status for. The method name/"CSM" in its own doc
+// comments below predates entity-service's source-tag rename (see
+// slaEngineSourceFilter's own doc comment) — kept as-is rather than
+// renamed, since "this engine's own clocks" is still exactly what it means.
 func (c *EntityClient) GetActiveCSMSLAClocks(ctx context.Context) ([]activeSLAClock, error) {
 	var all []activeSLAClock
 	offset := 0
 	for {
-		path := fmt.Sprintf("/sla-status?source=csm&limit=%d&offset=%d", activeSLAStatusPageSize, offset)
+		path := fmt.Sprintf("/sla-status?source=%s&limit=%d&offset=%d", slaEngineSourceFilter, activeSLAStatusPageSize, offset)
 		respBody, err := c.do(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, fmt.Errorf("slaengine: fetch active csm sla clocks (offset %d): %w", offset, err)
@@ -260,9 +304,33 @@ type clockState struct {
 	// not-yet-alerted wake entries need pushing forward.
 	PausedOn             *time.Time `json:"pausedOn"`
 	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
+	// IsPaused mirrors entity-service's own domain.SLAClockState.IsPaused
+	// (Stage == "PAUSED", spelled out as its own bool) — used by
+	// Engine.entityPauseStatus to derive a clock's real pause status
+	// directly from entity-service's own record, replacing a hardcoded
+	// match against entity-service's human case-state labels (see that
+	// function's own doc comment for why those two can disagree).
+	IsPaused bool `json:"isPaused"`
+	// BusinessElapsedPercent mirrors entity-service's own
+	// domain.SLAClockState.BusinessElapsedPercent — the live, business-day-
+	// aware elapsed percentage for a still-running clock. Used by the
+	// Redis-outage fallback path (Engine.processDueMemberFallback) to decide
+	// which tier, if any, is newly due when this engine's own Redis-held
+	// alertedTier cursor can't be read at all.
+	BusinessElapsedPercent float64 `json:"businessElapsedPercent"`
+	// DurationSeconds mirrors entity-service's own
+	// domain.SLAClockState.DurationSeconds — the clock's real, resolved
+	// policy duration. RegisterClocks reads this to schedule tier
+	// checkpoints from the real per-policy duration instead of a static,
+	// severity-keyed table (GET /sla-duration-policy, now removed).
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule mirrors entity-service's own
+	// domain.SLAClockState.Schedule — see activeSLAClock.Schedule's own doc
+	// comment for the full reasoning (business-day-aware due-date math).
+	Schedule string `json:"schedule"`
 }
 
-// GetClockState calls GET /sla-status/clock-state?workItemId=<caseID>&target=<clockType>&source=csm
+// GetClockState calls GET /sla-status/clock-state?workItemId=<caseID>&target=<clockType>&source=servicenow
 // and returns entity-service's own durable record for this exact clock,
 // right before a breach alert for it is actually sent (Engine.
 // sendBreachAlert) — a last, authoritative check against the real source of
@@ -302,7 +370,7 @@ type clockState struct {
 // comment explains why that fails open (sends anyway) rather than
 // suppressing a possibly-real alert over a transient entity-service hiccup.
 func (c *EntityClient) GetClockState(ctx context.Context, caseID, clockType string) (clockState, error) {
-	path := fmt.Sprintf("/sla-status/clock-state?workItemId=%s&target=%s&source=csm", url.QueryEscape(caseID), url.QueryEscape(clockType))
+	path := fmt.Sprintf("/sla-status/clock-state?workItemId=%s&target=%s&source=%s", url.QueryEscape(caseID), url.QueryEscape(clockType), slaEngineSourceFilter)
 	respBody, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return clockState{}, fmt.Errorf("slaengine: get clock state (case %s, %s): %w", caseID, clockType, err)

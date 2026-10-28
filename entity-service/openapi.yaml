@@ -855,18 +855,20 @@ paths:
   /sla-duration-policy:
     get:
       summary: >-
-        List every (severity, clockType) duration row of the static
-        sla_duration_policy reference table — WSO2's own published
-        Enterprise Support Policy durations, seeded directly in a migration,
-        independent of the ServiceNow-synced "sla"/"sla_policy" tables
-        GET /sla-status reads. integrations/csm-notification-service fetches
-        this once at startup to compute its own SLA due dates. Internal
+        List every (severity, clockType) duration currently resolved from
+        the real, decoded sla_policy table — one row per severity/clock-type
+        pair a policy's own start_condition matches for a plain, brand-new
+        case at that severity. Independent of the ServiceNow-synced "sla"
+        table GET /sla-status reads at a per-case level; this is a
+        reference-style summary. integrations/csm-notification-service
+        fetches this once at startup to display each case's own
+        "response SLA remaining time" in its rung-escalation email. Internal
         callers only. Has no ServiceNow equivalent of its own — always
         backed by Postgres.
       operationId: listSLADurationPolicy
       responses:
         "200":
-          description: Every sla_duration_policy row, unpaginated.
+          description: Every resolved (severity, clockType) duration, unpaginated.
           content:
             application/json:
               schema:
@@ -34136,6 +34138,13 @@ components:
           type: string
         state:
           type: string
+        schedule:
+          type: string
+          description: >-
+            The bound policy's own schedule value verbatim (e.g. "WSO2
+            Business days", "24 x 7", or empty when unset) -- lets a caller
+            schedule its own business-day-aware wake-ups instead of flat
+            wall-clock time for a non-24x7 clock.
 
     SearchSLAStatusResponse:
       type: object
@@ -34170,6 +34179,9 @@ components:
           type: string
           format: date-time
           nullable: true
+        schedule:
+          type: string
+          description: Mirrors SLAStatus.schedule.
 
     SLADurationPolicyItem:
       type: object

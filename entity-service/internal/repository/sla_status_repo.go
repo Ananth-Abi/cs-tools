@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -81,6 +82,10 @@ func NewSLAStatusRepository(db *Scoped) SLAStatusRepository {
 // whose policy has no target set at all -- nothing this endpoint could label
 // as a clock type.
 //
+// Also carries schedule/business_pause_duration so the data query's own
+// scanSLAStatus can apply the same business-day correction GetClockState
+// already applies to a single clock -- see scanSLAStatus's own comment.
+//
 // sourceArgIndex, when > 0, adds "AND s.source = $<sourceArgIndex>" -- the
 // placeholder's position differs between the count query (which otherwise
 // binds nothing) and the data query (which already binds limit/offset/the
@@ -97,7 +102,8 @@ func activeSLAStatusCTE(sourceArgIndex int) string {
 		SELECT DISTINCT ON (s.work_item_id, sp.target)
 			s.work_item_id, sp.target, s.live_elapsed_percentage AS business_elapsed_percentage,
 			s.live_has_breached AS has_breached, s.live_stage AS stage, s.start_on,
-			s.paused_on, s.pause_duration
+			s.paused_on, s.pause_duration, s.duration,
+			COALESCE(sp.schedule, '') AS schedule, s.business_pause_duration
 		FROM sla_live s
 		JOIN sla_policy sp ON sp.id = s.sla_policy_id
 		WHERE s.is_active AND sp.target IS NOT NULL` + sourceFilter + `
@@ -157,17 +163,35 @@ func nullIfEmpty(s string) *string {
 	return &s
 }
 
+// scanSLAStatus reads one row of SearchActiveSLAStatuses' data query.
+//
+// BusinessElapsedPercent is corrected the same way GetClockState's own doc
+// comment explains: als.business_elapsed_percentage (sla_live's view column)
+// is a flat wall-clock figure with no business-day calendar of its own, so
+// for a still-running (IN_PROGRESS/BREACHED) clock bound to a 'WSO2 Business
+// days' policy it is wrong -- a Friday-started clock 's "live" percentage
+// drifts over the weekend when nothing should be accumulating at all. Before
+// this fix, GetClockState (the single-clock detail view) silently
+// overwrote that same wrong figure while this bulk path (the CSM Portal
+// table view) did not, so the same clock showed two different percentages
+// in the two views. Recomputed here via businessDayElapsedSnapshot -- the
+// exact same formula GetClockState/CompleteClock/SetPaused/RecomputeActive
+// all share -- rather than duplicated. A PAUSED or terminal row's stored
+// figure was already frozen correctly, business-day-aware, at the moment it
+// was written, so only the live stages are recomputed.
 func scanSLAStatus(row interface{ Scan(...any) error }) (domain.SLAStatus, error) {
 	var s domain.SLAStatus
 	var target, severity, caseType string
 	var caseNumber, wso2CaseID, caseTitle, productName, state, teamName, onboardingStatus *string
 	var teamEmail, teamLeadName, assigneeName, assigneeEmail *string
-	var stage string
+	var stage, schedule string
 	var isEvaluation bool
 	var pauseDurationSeconds *int64
+	var durationSeconds int64
+	var businessPauseSeconds float64
 	err := row.Scan(
 		&s.CaseID, &target, &s.BusinessElapsedPercent, &s.HasBreached, &stage, &s.StartedOn,
-		&s.PausedOn, &pauseDurationSeconds,
+		&s.PausedOn, &pauseDurationSeconds, &durationSeconds, &schedule, &businessPauseSeconds,
 		&caseNumber, &wso2CaseID, &caseTitle, &caseType,
 		&productName, &severity, &state, &teamName, &onboardingStatus, &isEvaluation,
 		&teamEmail, &teamLeadName, &assigneeName, &assigneeEmail,
@@ -179,6 +203,15 @@ func scanSLAStatus(row interface{ Scan(...any) error }) (domain.SLAStatus, error
 	s.IsPaused = stage == "PAUSED"
 	if pauseDurationSeconds != nil {
 		s.PauseDurationSeconds = *pauseDurationSeconds
+	}
+	s.DurationSeconds = durationSeconds
+	s.Schedule = schedule
+	isLive := stage == "IN_PROGRESS" || stage == "BREACHED"
+	if schedule == slaScheduleWSO2BusinessDays && isLive && s.StartedOn != nil {
+		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
+		duration := time.Duration(durationSeconds) * time.Second
+		_, _, pct, _ := businessDayElapsedSnapshot(*s.StartedOn, time.Now().UTC(), businessPause, duration)
+		s.BusinessElapsedPercent = pct
 	}
 	s.CaseNumber = stringOrEmpty(caseNumber)
 	s.WSO2CaseID = stringOrEmpty(wso2CaseID)
@@ -227,6 +260,8 @@ func (r *slaStatusRepo) SearchActiveSLAStatuses(ctx context.Context, pagination 
 	dataQuery := activeSLAStatusCTE(dataSourceArg) + `
 		SELECT als.work_item_id::TEXT, als.target::TEXT, COALESCE(als.business_elapsed_percentage, 0), COALESCE(als.has_breached, FALSE), COALESCE(als.stage::TEXT, ''), als.start_on,
 		       als.paused_on, EXTRACT(EPOCH FROM als.pause_duration)::BIGINT,
+		       COALESCE(EXTRACT(EPOCH FROM als.duration), 0)::BIGINT,
+		       als.schedule, COALESCE(EXTRACT(EPOCH FROM als.business_pause_duration), 0),
 		       wi.number, wi.wso2_id, wi.subject, wi.type::TEXT,
 		       prod.name || COALESCE(' ' || pv.version, ''), COALESCE(c.severity::TEXT, ''),
 		       ` + caseLikeStateColumn + `,
@@ -297,6 +332,19 @@ func (r *slaStatusRepo) SearchActiveSLAStatuses(ctx context.Context, pagination 
 // all -- unlike SearchActiveSLAStatuses, this never needs to resolve any
 // case-like display data, so there's nothing here that depends on
 // row-level security (confirmed: the "sla" table itself carries none).
+//
+// BusinessElapsedPercent is NOT simply read off sla_live's own
+// live_elapsed_percentage for every row: that view has no business-day
+// calendar of its own (it only knows the flat wall-clock formula --
+// see migration 0204/0245's own doc comments), so for a still-running
+// (IN_PROGRESS/BREACHED) clock bound to a 'WSO2 Business days' policy, this
+// method instead computes the live figure itself, through
+// businessDayElapsedSnapshot (sla_engine_repo.go -- the exact same formula
+// CompleteClock/SetPaused/RecomputeActive use, reused rather than
+// duplicated here). Every other case -- 24x7, or PAUSED/terminal regardless
+// of schedule -- reads the view's own value directly, which is already
+// correct for those (a PAUSED/terminal row's figure was already frozen
+// correctly, business-day-aware, at the moment it was written).
 func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, sourceFilter string) (domain.SLAClockState, error) {
 	args := []any{workItemID, target}
 	sourceFilterSQL := ""
@@ -307,7 +355,11 @@ func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, s
 
 	query := `
 		SELECT s.is_active, s.live_stage::TEXT, s.live_has_breached, s.start_on,
-		       s.paused_on, EXTRACT(EPOCH FROM s.pause_duration)::BIGINT
+		       s.paused_on, EXTRACT(EPOCH FROM s.pause_duration)::BIGINT,
+		       COALESCE(EXTRACT(EPOCH FROM s.business_pause_duration), 0),
+		       COALESCE(EXTRACT(EPOCH FROM s.duration), 0),
+		       COALESCE(s.live_elapsed_percentage, 0),
+		       COALESCE(sp.schedule, '')
 		FROM sla_live s
 		JOIN sla_policy sp ON sp.id = s.sla_policy_id
 		WHERE s.work_item_id = $1::uuid AND sp.target::TEXT = $2` + sourceFilterSQL + `
@@ -324,9 +376,12 @@ func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, s
 
 	var state domain.SLAClockState
 	var pauseDurationSeconds *int64
+	var businessPauseSeconds, durationSeconds, viewPercent float64
+	var schedule string
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&state.IsActive, &state.Stage, &state.HasBreached, &state.StartedOn,
 		&state.PausedOn, &pauseDurationSeconds,
+		&businessPauseSeconds, &durationSeconds, &viewPercent, &schedule,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SLAClockState{}, nil
@@ -338,5 +393,17 @@ func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, s
 		state.PauseDurationSeconds = *pauseDurationSeconds
 	}
 	state.Found = true
+	state.IsPaused = state.Stage == "PAUSED"
+	state.DurationSeconds = int64(durationSeconds)
+	state.BusinessElapsedPercent = viewPercent
+	state.Schedule = schedule
+
+	isLive := state.Stage == "IN_PROGRESS" || state.Stage == "BREACHED"
+	if schedule == slaScheduleWSO2BusinessDays && isLive && state.StartedOn != nil {
+		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
+		duration := time.Duration(durationSeconds * float64(time.Second))
+		_, _, pct, _ := businessDayElapsedSnapshot(*state.StartedOn, time.Now().UTC(), businessPause, duration)
+		state.BusinessElapsedPercent = pct
+	}
 	return state, nil
 }

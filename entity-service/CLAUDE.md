@@ -2291,29 +2291,57 @@ above: a work item with no assignee/group simply reports empty strings. A
 dedicated team table may replace the `"group"` lookup for `TeamEmail`/
 `TeamLeadName` later — noted, not yet needed.
 
-### `GET /sla-duration-policy` — a separate, static duration table for `csm-notification-service`'s own native SLA tracking
+### `GET /sla-duration-policy` — now computed from `sla_policy`, not a static table
 
-`sla_duration_policy` (migration `0192`) is a small, static reference table —
-13 rows, WSO2's own published [Enterprise Support
-Policy](https://wso2.com/licenses/support-policy/6.0) durations, seeded
-directly in the migration, never touched by any sync — deliberately
-independent of both `sla`/`sla_policy` above (ServiceNow-shaped, no plain
-severity column, empty for a case that never went through that sync) and
-the CSM-native SLA clock engine's own `sla_policy_resolver.go` (reads the
-real, synced `sla_policy` table). `ReferenceDataRepository.
-ListSLADurationPolicy`/`GET /sla-duration-policy` (internal-caller-only,
-same `requireInternalCaller` gate as `GET /sla-status`) exposes it —
-`severity` already translated from the raw `case_severity_enum` label
-("S0") to the same uppercase English word a `case.*` event's own `Priority`
-field carries ("CATASTROPHIC"), via this package's own
-`caseSeverityFromEnum` — so a consumer can match this response directly
-against a `case.created` payload's `Priority` with no translation of its
-own. `integrations/csm-notification-service` fetches the full set once at
-startup to compute each case's own SLA due dates itself (see that repo's
-own `CLAUDE.md`, "SLA breach-alerting engine") — entity-service's role here
-is purely to trigger (publish the facts it already publishes, below) and
-to hand over this one piece of static policy data; that service owns all
-the actual duration bookkeeping, due-date arithmetic and alerting.
+**The static `sla_duration_policy` reference table (migration `0192`) is
+dropped** (`migrations/0261_drop_sla_duration_policy.sql`, written but not
+yet applied to any database — it WILL run automatically the next time
+`make migrate` runs, per this repo's own "Database migrations" convention
+above; see that migration's own doc comment, corrected after a code review
+caught it wrongly claiming the opposite) — it was a hand-seeded,
+severity→duration reduction of WSO2's published [Enterprise Support
+Policy](https://wso2.com/licenses/support-policy/6.0), independent of the
+real `sla`/`sla_policy` tables and with no case-type/product/project-type/
+account awareness at all. **The endpoint itself is still live** —
+`integrations/csm-notification-service`'s `internal/paging` rung-escalation
+email fetches it once at startup to display a case's own "response SLA
+remaining time," a real, live consumer this was mistakenly assumed to be
+dead for briefly before being restored. The wire shape (`domain.
+SLADurationPolicyItem`/`SLADurationPolicyResponse`, severity as the same
+uppercase English word a `case.*` event's `Priority` carries) is unchanged.
+
+`service.SLADurationPolicyService`/`slaDurationPolicyService.
+ListSLADurationPolicy` (`internal-caller-only`, same `RequireInternalCaller`
+gate as `GET /sla-status`) now computes its response live, via
+`repository.SLAEngineRepository.ListCandidatePolicies` — the same method
+`slaPolicyResolver.resolve` uses — rather than reading the dropped table.
+For each of the 5 severities × 3 clock targets, `resolveDurationPolicy`
+evaluates every active `source='SERVICENOW'` case policy's `start_condition`
+(`internal/slacondition`, same `isCasePolicy` classification
+`sla_policy_resolver.go` uses) against a **synthetic** `CaseFacts` describing
+a plain, brand-new case at that severity: `case_type=case`, `state=OPEN`,
+`project_type=Subscription` (WSO2's own most common type — picked so a
+project-type-gated policy like `"P1 - Workaround (Open Source)"` can still
+resolve), `created_on=now` (every real `opened_at`/`sys_created_on`
+condition in the table is a `>=` check, so the synthetic case must be newer
+than the threshold, not older), and no account/product/workaround/fix-ETA.
+This synthetic fact set is what excludes every `hosting`/`hosting_query`/
+`hosting_task`-gated and product/project-type-mismatched policy, with no
+separate exclusion list needed — their own `start_condition` requires a
+`case_type`/`project_type`/`product` this fact set never has.
+
+**Tie-break when more than one policy matches** (real in the live data —
+e.g. `"P1 - Resolution (Open Source)"`, gated on `priority=S1`, and
+`"Query - Resolution (Open Source)"`, which has no priority condition at all
+and so matches every severity, can both match S1/RESOLUTION): the policy
+whose `start_condition` names the severity explicitly (`"priority=S<n>"`)
+wins over one that applies generically — more specific beats more general.
+Still ambiguous after that (none currently are in the real table): lowest
+`sla_policy.id` wins deterministically, logged — the same fallback
+`slaPolicyResolver.resolve` itself uses. A severity/clock-type pair with no
+matching policy at all is simply omitted from the response (no fallback
+value), same "no fallback duration" posture the old static table's absent
+entry had.
 
 **`events.CommentAddedPayload.IsSupportEngineerResponse`** is the other
 half of enabling that: true when a comment is a public comment
@@ -2331,21 +2359,200 @@ owns the role data. `case.created`/`case.status_changed` already carry
 everything else that service's own tracking needs (`Priority`/`CreatedAt`,
 `NewStatus`), so neither payload needed any change for this.
 
-## CSM-native SLA clock engine
+## Real, condition-driven SLA clock engine
+
+`internal/service/sla_engine_service.go`/`sla_policy_resolver.go` were
+rewritten to evaluate the real, decoded `sla_policy` conditions directly
+(migrations `0250`-`0258`) instead of the deterministic, severity-keyed
+`source='CSM'` policies described in "CSM-native SLA clock engine" below
+(migration `0203`, now deleted — migration `0259` removed all 16 of those
+rows). That whole subsection is **historical**: kept because the low-level
+repository mechanics it documents (`CompleteClock`'s real elapsed-time math,
+`SetPaused`'s accumulated pause duration, the `is_active`/`BREACHED`-is-not-
+terminal fixes, the dual-write FK-ordering fix) are still true of the new
+engine, which builds directly on that same `sla_engine_repo.go` — only the
+*resolution* mechanism (how a policy is chosen) and `ApplyCaseStateEffects`
+(how state changes are applied) actually changed. Read this section first;
+treat every mention of "severity-keyed", "deterministically named `(CSM)`
+row" or a hardcoded pause/resume/complete switch in the section below as
+superseded.
+
+**Why**: the name-keyed lookup this replaces was confirmed to silently
+resolve nothing for most of the real table's 42 `source='SERVICENOW'`
+policies, which are gated on far more than severity (case type, product,
+project type, account presence, creation date, whether a CS engineer has
+already replied) and in several cases (`ServiceRequest SLA`, the
+Query/SecReport Analysis family) on no severity at all.
+
+- **`internal/slacondition`** parses one condition column
+  (`start_condition`/`stop_condition`/`pause_condition`/`resume_condition`/
+  `cancel_condition`) into an AST — `^NQ` splits OR'd `AndGroup`s, `^` ANDs
+  terms within a group, `^OR` ORs a run of clauses into one term — and
+  evaluates it against a `slacondition.Facts` implementation
+  (`service.caseConditionFacts`, wrapping `repository.CaseFacts`). Unknown
+  fields (the incident/escalation-only `business_service`/`category`/
+  `active_escalation.*`/`escalation_severity`/`source_table`) and the
+  space-containing `NOT IN` operator are parsed defensively — never panic,
+  an unknown clause just always evaluates false.
+- **`repository.SLAEngineRepository.GetCaseFacts`** reads a case's current
+  `state`/`priority`/`case_type`/`project_type`/`product`/
+  `cs_engineer_response_comment`/workaround-provided/fix-ETA-shared/
+  has-account/created-on fresh from Postgres (`work_item`/`"case"`/
+  `project`/`project_type`/`deployed_product`/`product`, reusing
+  `case_repo.go`'s own `caseLikeRowTypeColumn`/`caseLikeStateColumn`/
+  `caseLikeJoins`). `cs_engineer_response_comment` has no dedicated column
+  anywhere in this schema — it's derived from whether the case's own
+  CSM-registered RESPONSE clock has already reached `ACHIEVED`, which is a
+  real, documented approximation: a case closed before anyone replied also
+  completes RESPONSE (via its own `stop_condition`'s `stateINCLOSED` branch),
+  so that case reads as "already responded" too. `RegisterCaseClocks`/
+  `ReviseCaseClocks` override `CaseFacts.Severity` from their own
+  `severity *domain.CaseSeverity` parameter (a caller's in-flight value may
+  be more current than a fresh read, e.g. on the ServiceNow dual-write
+  path); `ApplyCaseStateEffects` overrides `CaseFacts.State` from its own
+  `state` parameter the same way. **`case_type` can only ever be
+  `case`/`engagement`/`service_request`/`security_report_analysis`/
+  `announcement` on this data source** — `hosting`/`hosting_query`/
+  `hosting_task` are real values in `sla_policy`'s own decoded vocabulary
+  (ServiceNow-only case types) but `work_item_type_enum` has no matching
+  label at all, so no Postgres `work_item` row can ever carry one; a policy
+  conditioned on one of those three simply never matches today. Not a bug,
+  a real, structural schema gap — would need a migration (out of scope
+  here) to close.
+- **`slaPolicyResolver.resolve(ctx, target, facts)`** (target =
+  `RESPONSE`/`WORKAROUND`/`RESOLUTION`) replaces the old severity-keyed
+  `resolve`: it lists every active `source='SERVICENOW'` candidate for that
+  target (`ListCandidatePolicies`), classifies each as a genuine case policy
+  via `isCasePolicy` (an explicit `case_type` token, or any other field
+  that exists ONLY in this engine's own `CaseFacts` vocabulary — `account`,
+  `product`, `project_type`, `cs_engineer_response_comment`,
+  `u_workaround_provided`, `fix_eta_shared`, `opened_at`, `sys_created_on`
+  — as long as none of the incident/escalation-only skip markers are
+  present). **Deliberately excludes `priority`/`state`** — an earlier
+  version included them, but a code review caught that both are generic
+  field names real non-case rows also use with no skip marker present (an
+  onboarding-task `stage=1^state=4` row, a bare-priority `"IR"` incident
+  row — both in migration `0250`'s own data): either used to be
+  misclassified as a case policy purely for containing the literal
+  substring `"priority"`/`"state"`, risking a spurious match via
+  `slacondition`'s not-equal-on-absent-field semantics. `isCasePolicy` is a
+  strict inclusion check now — a policy must name a field this engine
+  knows is case-exclusive, never "priority"/"state" alone — evaluates each
+  survivor's `start_condition` against `facts`,
+  and returns the match. Zero matches is logged and treated as "no clock
+  registered", exactly like the old design's absent map entry. More than
+  one match is real (e.g. `"Hosting Q/T - Response (Managed Service)"` and
+  `"Query - Response (Open Source)"` both match a hosting_query/task case)
+  — handled explicitly, not silently: every match is logged by name, and
+  the lowest `sla_policy.id` (`ListCandidatePolicies`' own `ORDER BY`) wins
+  deterministically, so the same case always resolves the same way.
+- **`RegisterCaseClocks`/`ReviseCaseClocks`** iterate all three targets
+  (`slaTargetOrder`) and resolve each independently — a clock target is
+  registered only when some real policy's `start_condition` actually
+  matches the case right now, not because a fixed severity→clock-types map
+  said it should. This is a genuine behavior change for a LOW/S4 "case"
+  (not one of the four specific WSO2-product-gated "[Cloud] P4" rows): the
+  real table has no plain RESPONSE policy for `case_type=case^priority=S4`
+  today, so such a case can register **no** clocks at all, where the old
+  design always registered at least a RESPONSE clock from its own
+  CSM-seeded fallback. This reflects the real, current policy table, not a
+  regression to patch over here.
+- **`ApplyCaseStateEffects`** no longer hardcodes a per-state
+  pause/resume/complete switch. For each of the case's three targets with a
+  currently open clock, it reads that clock's own bound policy
+  (`ActiveClockPolicy` — the policy it was actually registered against,
+  never a fresh re-resolution, so a clock never silently switches policies
+  mid-flight) and evaluates, in order: `stop_condition` (→ `CompleteClock`),
+  `cancel_condition` (→ the new `CancelClock`), `pause_condition` (→
+  `SetPaused(true)`), `resume_condition` (→ `SetPaused(false)`); neither
+  matching leaves the clock untouched. Closing a case completes every
+  still-open clock whose own `stop_condition`/`cancel_condition` evaluation
+  didn't already settle it — most real policies' `stop_condition` already
+  includes `stateINCLOSED`/`state=CLOSED` so this safety net is usually a
+  no-op in practice, but it is an explicit, unconditional CLOSED-transition
+  completion (added back after a code review flagged its absence as a real
+  risk: a clock must never be left running forever just because its
+  specific policy's `stop_condition` text didn't happen to include a
+  CLOSED-matching clause), not an inference from the condition data alone.
+  `CompleteClock`/`CancelClock` are themselves idempotent against an
+  already-settled clock, so this costs nothing extra when the
+  condition-based path already handled it. RESPONSE is still never paused,
+  same as before — not a special case here either, simply because no real
+  RESPONSE policy has a `pause_condition` at all.
+- **`internal/businessdays.Elapsed(start, end)`** is the new, from-scratch
+  business-day calendar: Monday-Friday counts in full (not an 8-5 window),
+  Saturday/Sunday never counts, day boundaries decided in `America/
+  New_York` (blank-imports `time/tzdata` so this works with no system
+  tzdata installed). Used wherever a clock's bound policy has
+  `schedule = 'WSO2 Business days'` — `sla_engine_repo.go`'s
+  `CompleteClock`/`SetPaused`/`RecomputeActive` each split into a `*Flat`
+  path (unchanged flat-SQL wall-clock math, scoped away from business-day
+  rows) and a `*BusinessDays` path (reads raw `start_on`/`paused_on`/
+  `pause_duration`/`business_pause_duration` under a row lock, computes in
+  Go, writes the result back) — deliberately in Go, not hand-rolled as a
+  second SQL formula, per explicit instruction. Each pause/resume cycle's
+  real business-day seconds are accumulated into `business_pause_duration`
+  (an existing, previously-unused `sla` column) at the moment it closes, so
+  multiple pause cycles are each measured against their own real calendar
+  span rather than approximated from a single cumulative total. **Remaining
+  display-only gap**: `sla_live` (migration `0204`/`0245`) itself still
+  computes its own `live_*` columns with flat wall-clock SQL for any
+  `IN_PROGRESS`/`BREACHED` row, business-day schedule or not — it has no
+  calendar of its own and fixing it there would mean either hand-rolling
+  this same calendar in SQL, or moving `GET /sla-status`/
+  `POST /task-slas/search`'s read path into Go. A business-day clock's raw
+  `sla_live.live_elapsed_percentage` can therefore drift briefly between
+  whatever last wrote the base `sla` row (registration, pause, resume,
+  completion) and the next one of those events — self-correcting at the
+  next write, never persisted wrong. **What IS fixed (a code review caught
+  this as a real, user-visible bug, not just a display nuance)**: both
+  readers of that raw figure now correct it in Go before it ever reaches a
+  caller, for a still-live (`IN_PROGRESS`/`BREACHED`) row bound to a
+  `'WSO2 Business days'` policy — `SLAStatusRepository.GetClockState`
+  (single-clock detail) did this from the start; `SearchActiveSLAStatuses`
+  (bulk `GET /sla-status`, the CSM Portal table view) did not, so the exact
+  same clock showed two different percentages in the two views. Both now
+  call the same shared `businessDayElapsedSnapshot` helper
+  (`sla_engine_repo.go`) for a live business-day row and leave every other
+  row (24x7, or `PAUSED`/terminal regardless of schedule) reading
+  `sla_live`'s own value unchanged, since those are already correct.
+- **This engine's own clocks are now tagged `source='SERVICENOW'`, not a
+  separate `'CSM'` value** (migration `0134`'s enum) — a deliberate
+  departure from that migration's own original comment ("`'CSM'` rows are
+  exclusively owned by the CSM-native engine ... the two never share a
+  row"), made now that this engine's own clocks are themselves driven by
+  real `sla_policy` data rather than a synthetic substitute. See
+  `repository.SLAEngineRepository`'s own doc comment for the exact
+  reasoning and the one residual risk it calls out (a genuinely separate
+  external writer using `'SERVICENOW'` for the identical
+  `work_item_id`/`target` pair is no longer kept apart by source alone).
+  Pre-existing `source='CSM'` rows from before this change are untouched
+  and still readable (`GET /sla-status?source=csm` still works against
+  them) — nothing retags history. **Verified, not just assumed, against
+  live staging data**: of 1268 real `source='CSM'` rows, zero are on a
+  case that isn't already `CLOSED` (across every target, including
+  `RESPONSE`) — so `GetCaseFacts`'s `CSEngineerResponseComment` check,
+  scoped to `source='SERVICENOW'` only, has no live `CSM`-tagged row it
+  could be missing on an open case today. Also confirmed:
+  `sla_engine_repo.go` remains the only code path in this repo that writes
+  to the `sla` table, under every `DATA_SOURCE` mode — nothing else shares
+  the `source='SERVICENOW'` tag with a second, independent writer.
+
+### CSM-native SLA clock engine (historical — the resolution mechanism below no longer exists)
 
 `internal/service/sla_engine_service.go` (`SLAEngineService`) is what actually
 keeps the `sla` table populated for a case-like work item this deployment
-creates itself — real, durable `source='CSM'` rows, not a value ServiceNow's
+creates itself — real, durable rows, not a value ServiceNow's
 own sync computes. This exists specifically for the dual-write pilot (and,
 in principle, any future pure-Postgres mode): a case created there has no
 ServiceNow-synced `sla` row of its own to read `GET /sla-status` from, so
 without this engine it would simply never get SLA tracking at all,
 regardless of severity.
 
-- **Durations come from deterministic, severity-keyed `sla_policy` rows this
-  engine seeds itself** (`internal/service/sla_policy_resolver.go`,
-  migration `0203_csm_sla_policy_by_severity.sql`) — not the real,
-  ServiceNow-synced `sla_policy` rows, and not a hardcoded map (the
+- **(Historical.) Durations used to come from deterministic, severity-keyed
+  `sla_policy` rows this engine seeded itself** (migration
+  `0203_csm_sla_policy_by_severity.sql`, deleted by migration `0259`) — not
+  the real, ServiceNow-synced `sla_policy` rows, and not a hardcoded map (the
   now-deleted `sla_clocks` design's old approach — see "SLA status" above for
   that history). An earlier version of this resolver looked up the real
   synced rows by a guessed exact name (`"<P0-P3|Query> - <Response|
@@ -2360,18 +2567,29 @@ regardless of severity.
   this is why a real SLA breach alert (fired correctly by
   `csm-notification-service`'s own Redis engine) never showed up in the CSM
   Portal UI (`GET /sla-status` reads this table) for a LOW/S4 case. Migration
-  0203 seeds one `source='CSM'` row per `(severity, clock_type)` pair
+  0203 seeded one `source='CSM'` row per `(severity, clock_type)` pair
   `sla_duration_policy` (migration 0192) already defines, named
   deterministically (`"<severity> - <target> (CSM)"`, e.g.
   `"S4 - RESPONSE (CSM)"`) and with durations copied straight from that same
-  table — `resolve` now does a single exact-name lookup keyed on severity
-  alone, which can never miss, and the two SLA engines (this one, and
-  `csm-notification-service`'s own Redis-based tracker, which has always read
-  `sla_duration_policy` directly) can never disagree on a duration. This
-  supersedes migration `0136_csm_p0_sla_policies.sql`'s narrower precedent
-  (CSM rows for P0/Catastrophic only, under the old naming convention) —
-  0136's own rows are left in place (harmless, unreferenced) rather than
-  dropped.
+  table — `resolve` did a single exact-name lookup keyed on severity
+  alone. This superseded migration `0136_csm_p0_sla_policies.sql`'s narrower
+  precedent (CSM rows for P0/Catastrophic only, under the old naming
+  convention) — 0136's own rows are left in place (harmless, unreferenced)
+  rather than dropped, same as 0203's.
+- **`recomputeActiveBusinessDays`'s per-row `UPDATE` is stage-guarded,
+  matching its flat-path sibling.** It reads candidate rows via a `SELECT`,
+  computes each one's new figures in Go (the business-day math can't be
+  inlined into the single `UPDATE ... FROM` the flat path uses), then
+  writes each one back — two separate statements, unlike the flat path's
+  one atomic `UPDATE`. A code review caught that the `UPDATE`'s own `WHERE`
+  only matched the row's `id`, with no re-check of `stage`: a
+  `CompleteClock`/`SetPaused`/`CancelClock` landing in the window between
+  this method's `SELECT` and its own later `UPDATE` would get silently
+  reverted back to `IN_PROGRESS`/`BREACHED` by this method's stale,
+  pre-computed values. Fixed by adding `AND stage IN ('IN_PROGRESS',
+  'BREACHED')` to the `UPDATE`'s own `WHERE` — the same two values the
+  `SELECT` already scoped to — so a concurrent terminal write in that
+  window is never clobbered; the update simply matches zero rows instead.
 - **`internal/repository/sla_engine_repo.go`'s `RecomputeActive`** computes
   the same flat wall-clock formula it always has (`(NOW() - start_on) /
   duration * 100`, no business-hours calendar, same crudeness the old
@@ -7526,8 +7744,8 @@ same "platform-owned config, not synced vocabulary" posture as `team.key`/
 platform operators. The endpoint returns `{teams: [{name, chatWebhookUrl}]}` for
 every team that has one set — a team with none is left out, same as today's
 "not in `GOOGLE_CHAT_SPACES`" case. **Internal-caller-only**
-(`TeamService.ListChatWebhooks` → `RequireInternalCaller`, the identical gate
-`GET /sla-duration-policy` uses) — a webhook URL lets anyone holding it post
+(`TeamService.ListChatWebhooks` → `RequireInternalCaller`, the same gate
+`GET /sla-status` uses) — a webhook URL lets anyone holding it post
 into that team's Chat space, so this is reference data for a backend service
 (fetched periodically, not once at startup, since operators can add a team's
 webhook while this service keeps running — see that repo's own `CLAUDE.md`),

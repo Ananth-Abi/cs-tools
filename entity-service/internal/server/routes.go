@@ -809,15 +809,19 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// ReferenceDataRepository's own doc comment.
 	referenceDataRepo := repository.NewReferenceDataRepository(db)
 
-	// sla-duration-policy reads the small, static sla_duration_policy
-	// reference table (migration 0192) -- gated on db != nil like
-	// slaStatusHandler above, since there's nothing to read on a deployment
-	// with no Postgres pool at all. integrations/csm-notification-service
-	// fetches this once at startup to compute its own SLA due dates.
+	// sla-duration-policy computes its response live from the real
+	// sla_policy table (see SLADurationPolicyService's own doc comment) --
+	// gated on db != nil like slaStatusHandler above, since there's nothing
+	// to read on a deployment with no Postgres pool at all. A fresh
+	// SLAEngineRepository is constructed here rather than reusing
+	// slaEngineSvc's own below: that one is nil whenever
+	// cfg.CSMSLAEngineEnabled is off, but this endpoint's own read has
+	// nothing to do with that toggle (a stateless wrapper over the pool
+	// costs nothing extra to construct again).
 	var slaDurationPolicyHandler *handler.SLADurationPolicyHandler
 	if db != nil {
 		slaDurationPolicyHandler = handler.NewSLADurationPolicyHandler(
-			service.NewSLADurationPolicyService(referenceDataRepo, accessSvc))
+			service.NewSLADurationPolicyService(repository.NewSLAEngineRepository(repository.NewScoped(db)), accessSvc))
 	}
 
 	// Every project-stats route is available on both data sources. In
@@ -995,10 +999,12 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		snAttachmentDelegate = service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, nil, nil, snUserService, cfg.CustomerRoles, cfg.CSEngineerRole, nil)
 	}
 
-	// The CSM-native SLA engine (internal/service/sla_engine_service.go)
-	// writes its own source='CSM' rows into the "sla" table (migration 0134),
-	// resolving durations from the deterministic, severity-keyed sla_policy
-	// rows migration 0203 seeds. Gated on db (same reason slaStatusHandler
+	// This service's own in-process SLA engine (internal/service/sla_engine_service.go)
+	// writes source='SERVICENOW' rows into the "sla" table (migration 0134's
+	// enum -- see repository.SLAEngineRepository's own doc comment for why
+	// this engine's clocks aren't tagged with a separate 'CSM' value),
+	// resolving durations AND applicability from the real, decoded
+	// sla_policy conditions (migrations 0250-0258). Gated on db (same reason slaStatusHandler
 	// above is -- nowhere to store a clock at all with no database
 	// configured) AND on cfg.CSMSLAEngineEnabled -- an explicit, named
 	// toggle (default true) replacing what used to be an implicit "runs
@@ -1958,13 +1964,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("GET /sla-status", slaStatusHandler.SearchActiveSLAStatuses)
 		mux.HandleFunc("GET /sla-status/clock-state", slaStatusHandler.GetClockState)
 	}
+	if slaDurationPolicyHandler != nil {
+		mux.HandleFunc("GET /sla-duration-policy", slaDurationPolicyHandler.ListSLADurationPolicy)
+	}
 	if pendingVerificationHandler != nil {
 		mux.HandleFunc("POST /pending-verifications", pendingVerificationHandler.CreatePendingVerification)
 		mux.HandleFunc("POST /pending-verifications/search", pendingVerificationHandler.SearchPendingVerifications)
 		mux.HandleFunc("PATCH /pending-verifications/{id}", pendingVerificationHandler.VerifyPendingVerification)
-	}
-	if slaDurationPolicyHandler != nil {
-		mux.HandleFunc("GET /sla-duration-policy", slaDurationPolicyHandler.ListSLADurationPolicy)
 	}
 	if githubDeliveryHandler != nil {
 		mux.HandleFunc("POST /github/deliveries", githubDeliveryHandler.Handle)
