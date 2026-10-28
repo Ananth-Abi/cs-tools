@@ -42,7 +42,7 @@ import { browseUrl } from "@utils/browseUrl";
 import { normalizeSearchQuery } from "@utils/searchQuery";
 import { toSnippet } from "@utils/snippet";
 
-// Product cards shown on the landing page; the rest are reachable from /browse.
+// Product cards shown on the landing page; the rest are reachable from /knowledge_bases.
 const FEATURED_KB_LIMIT = 6;
 const RECENT_LIMIT = 5;
 // Fetch a bigger page than is shown: articles in inactive knowledge bases are
@@ -109,7 +109,7 @@ export default function KBHomePage(): JSX.Element {
           {hasMore && (
             <OxygenLink
               component={Link}
-              to="/browse"
+              to={browseUrl()}
               underline="hover"
               sx={[
                 { display: "inline-flex", alignItems: "center", gap: 0.5, fontWeight: 600 },

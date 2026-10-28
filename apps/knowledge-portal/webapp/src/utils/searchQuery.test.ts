@@ -29,10 +29,10 @@ describe("normalizeSearchQuery", () => {
 describe("url builders", () => {
   it("percent-encodes values", () => {
     expect(browseUrl({ q: "a b&c=d/é", knowledgeBaseId: "kb_1" })).toBe(
-      "/browse?knowledgeBaseId=kb_1&q=a%20b%26c%3Dd%2F%C3%A9",
+      "/knowledge_bases/kb_1?q=a%20b%26c%3Dd%2F%C3%A9",
     );
-    expect(browseUrl()).toBe("/browse");
-    expect(browseUrl({ q: "" })).toBe("/browse");
-    expect(articleUrl("a/b")).toBe("/articles/a%2Fb");
+    expect(browseUrl()).toBe("/knowledge_bases");
+    expect(browseUrl({ q: "" })).toBe("/knowledge_bases");
+    expect(articleUrl("a/b")).toBe("/knowledge_articles/a%2Fb");
   });
 });

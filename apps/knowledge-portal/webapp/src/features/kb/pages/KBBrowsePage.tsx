@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { isValidId } from "@api/backend/types";
 import { isClientError, isNotFoundError } from "@api/backend/client";
 import { useArticleSearch, useKnowledgeBases } from "@api/useKb";
@@ -44,7 +44,7 @@ import { toSnippet } from "@utils/snippet";
 export default function KBBrowsePage(): JSX.Element {
   const [params, setParams] = useSearchParams();
 
-  const rawKb = params.get("knowledgeBaseId");
+  const { id: rawKb } = useParams();
   const knowledgeBaseId = isValidId(rawKb) ? rawKb : "";
   const searchQuery = normalizeSearchQuery(params.get("q"));
 
