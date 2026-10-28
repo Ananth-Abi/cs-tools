@@ -91,6 +91,18 @@ func NewSLAStatusRepository(db *Scoped) SLAStatusRepository {
 // evaluation-subscription project type name), so the caller passes whichever
 // index is next free in its own query rather than this function assuming one.
 // 0 means no source filter at all, the original unscoped behavior.
+// Known, deliberate limitation (see entity-service/CLAUDE.md's own note):
+// `DISTINCT ON (s.work_item_id, sp.target)` picks exactly one row per
+// target, but the per-policy registration guard allows two policies to both
+// have a genuinely open (is_active = TRUE) clock on the same target at
+// once -- `s.is_active` already excludes every terminal row (CANCELLED/
+// ACHIEVED/COMPLETED all set it FALSE), so the remaining ambiguity is
+// narrower than GetClockState's own (which has none of that filter, by
+// design -- see that method's own doc comment): only between two
+// simultaneously-open rows, where `ORDER BY ... start_on DESC NULLS LAST,
+// updated_on DESC` below picks the more recently started/updated one.
+// Keying this read by clock id or policy instead of target would be the
+// real fix, deliberately out of scope here.
 func activeSLAStatusCTE(sourceArgIndex int) string {
 	sourceFilter := ""
 	if sourceArgIndex > 0 {
@@ -358,6 +370,22 @@ func (r *slaStatusRepo) GetClockState(ctx context.Context, workItemID, target, s
 		args = append(args, sourceFilter)
 	}
 
+	// Known, deliberate limitation (see entity-service/CLAUDE.md's own note
+	// on this): the per-policy registration guard lets two policies
+	// register clocks against the same (work_item, target) at once, and
+	// this read still returns only one row, picked by ORDER BY/LIMIT 1
+	// below. Deliberately NOT given a stage filter to resolve that: this
+	// method's whole reason for existing (see its own doc comment) is
+	// returning the most recently-started row REGARDLESS of stage/
+	// is_active, so a caller can distinguish "cleanly resolved" from
+	// "never registered" from "superseded by a later incarnation" -- a
+	// CodeRabbit review already caught and fixed the bug an active-only
+	// filter causes here once. Excluding terminal stages now would
+	// reintroduce exactly that bug for the sake of a narrower, much rarer
+	// problem (two policies simultaneously open on one target); keying the
+	// read -- and csm-notification-service's own Redis clock -- by clock id
+	// or policy instead of target is the real fix, deliberately out of
+	// scope here.
 	query := `
 		SELECT s.is_active, s.live_stage::TEXT, s.live_has_breached, s.start_on,
 		       s.paused_on, EXTRACT(EPOCH FROM s.pause_duration)::BIGINT,

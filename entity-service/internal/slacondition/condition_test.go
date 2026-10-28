@@ -258,6 +258,52 @@ func TestEmptyConditionNeverMatches(t *testing.T) {
 	}
 }
 
+func TestOpTrueLiteral(t *testing.T) {
+	f := newFacts()
+
+	cl := parseClauseToken("TRUE")
+	if cl.Op != OpTrue {
+		t.Fatalf("parseClauseToken(%q).Op = %v, want OpTrue", "TRUE", cl.Op)
+	}
+	if !cl.evaluate(f) {
+		t.Fatal("OpTrue clause must always evaluate true")
+	}
+
+	// A plain AND: TRUE contributes nothing, state=OPEN still decides.
+	if !Parse("TRUE^state=OPEN").Evaluate(newFactsWith(map[string]string{"state": "OPEN"})) {
+		t.Fatal("TRUE^state=OPEN should match when state=OPEN")
+	}
+	if Parse("TRUE^state=OPEN").Evaluate(newFactsWith(map[string]string{"state": "CLOSED"})) {
+		t.Fatal("TRUE^state=OPEN should not match when state=CLOSED")
+	}
+
+	// An OR run: a TRUE disjunct makes the whole OrTerm true regardless of
+	// the other disjunct's own value -- this is the exact shape an adapter
+	// uses to preserve a dropped-but-always-true clause's effect inside an
+	// OR run without losing it (see OpTrue's own doc comment).
+	if !Parse("state=CLOSED^ORTRUE").Evaluate(newFactsWith(map[string]string{"state": "OPEN"})) {
+		t.Fatal("state=CLOSED^ORTRUE should match (the TRUE disjunct) even though state=CLOSED doesn't")
+	}
+
+	// A whole ^NQ group that's just TRUE: the overall condition matches
+	// regardless of the other group's own outcome.
+	if !Parse("state=CLOSED^NQTRUE").Evaluate(newFactsWith(map[string]string{"state": "OPEN"})) {
+		t.Fatal("state=CLOSED^NQTRUE should match via the always-true second group")
+	}
+
+	if unknown := Parse("TRUE").UnknownClauses(); len(unknown) != 0 {
+		t.Fatalf("UnknownClauses() = %v, want none -- OpTrue must never be reported as unknown", unknown)
+	}
+}
+
+func newFactsWith(fields map[string]string) fakeFacts {
+	f := newFacts()
+	for k, v := range fields {
+		f.fields[k] = v
+	}
+	return f
+}
+
 // TestRealPauseResumeConditions pins the parser against two real,
 // currently-active rows (P1 - Workaround (Managed Services)) so a future
 // change to the grammar can't silently break production policies.

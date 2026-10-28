@@ -277,11 +277,17 @@ type CaseFacts struct {
 	Product string
 	// CSEngineerResponseComment answers sla_policy's own
 	// "cs_engineer_response_comment" field: whether a qualifying
-	// support-engineer reply has ever been posted on this case, backed by
-	// work_item.first_engineer_response_on IS NOT NULL -- a durable,
-	// case-level fact, stamped once (RecordFirstEngineerResponse, "first"
-	// means first) the moment CompleteResponseClock confirms a qualifying
-	// reply, and never cleared again.
+	// support-engineer reply has ever been posted on this case. Computed
+	// live by GetCaseFacts' own query -- an EXISTS over "comment" joined to
+	// "user" by email, for a public (type = 'COMMENT', never WORK_NOTE) row
+	// whose author is an INTERNAL-type user ("user".user_type, the real,
+	// role-membership-derived column this schema already keeps for exactly
+	// this distinction -- domain.UserTypeInternal) -- rather than a stored
+	// column: no schema change needed, and a live query over "comment"
+	// already reflects every reply ever made, including ones posted before
+	// this engine existed, with no backfill required. A created_by that
+	// matches no "user" row (blank, or an address with no account) simply
+	// never joins, so it's never counted -- never an error.
 	//
 	// This is deliberately NOT derived from the response clock's own stage
 	// reaching ACHIEVED, which an earlier version of this field did -- a
@@ -293,8 +299,8 @@ type CaseFacts struct {
 	// a fresh response policy would then see CSEngineerResponseComment=false
 	// and start a brand-new response clock on a case an engineer had
 	// already answered, which would go on to breach. Deriving this from the
-	// case's own first-reply instant instead means it survives any number
-	// of clock cancellations/revisions, exactly like the real-world fact it
+	// case's own comment history instead means it survives any number of
+	// clock cancellations/revisions, exactly like the real-world fact it
 	// represents.
 	CSEngineerResponseComment bool
 	// WorkaroundProvided answers "u_workaround_providedISNOTEMPTY" --
@@ -482,19 +488,6 @@ type SLAEngineRepository interface {
 	// target.
 	SetPausedByPolicy(ctx context.Context, workItemID, target, policyID string, paused bool) (bool, error)
 
-	// RecordFirstEngineerResponse stamps work_item.first_engineer_response_on
-	// with the current instant, but ONLY if it is still NULL -- the one,
-	// durable, case-level fact of when a qualifying support-engineer reply
-	// first happened, independent of any SLA clock's own lifecycle. See
-	// repository.CaseFacts.CSEngineerResponseComment's own doc comment for
-	// why this exists as a separate fact rather than being inferred from a
-	// response clock reaching ACHIEVED. Called from
-	// SLAEngineService.CompleteResponseClock -- the one place a qualifying
-	// reply is already confirmed -- so every caller of CompleteResponseClock
-	// gets this for free. A no-op, not an error, on a work item that
-	// already has a value (first means first) or that doesn't exist at all.
-	RecordFirstEngineerResponse(ctx context.Context, workItemID string) error
-
 	// ReviseClocks marks every source='CSM' clock for workItemID CANCELLED,
 	// per-target (RESPONSE excludes BREACHED from cancellation; WORKAROUND/
 	// RESOLUTION include it -- see the implementation's own doc comment),
@@ -645,7 +638,13 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 		       (wi.account_id IS NOT NULL),
 		       (wi.workaround_provided_on IS NOT NULL),
 		       (wi.eta_shared_on IS NOT NULL),
-		       (wi.first_engineer_response_on IS NOT NULL)
+		       EXISTS (
+		           SELECT 1 FROM comment cm
+		           JOIN "user" u ON LOWER(u.email) = LOWER(cm.created_by)
+		           WHERE cm.work_item_id = wi.id
+		             AND cm.type = 'COMMENT'
+		             AND u.user_type = 'INTERNAL'
+		       )
 		FROM work_item wi
 		LEFT JOIN "case" c ON c.id = wi.id
 		` + caseLikeJoins + `
@@ -973,6 +972,7 @@ func (r *slaEngineRepo) completeClockFlat(ctx context.Context, workItemID, targe
 		    ),
 		    business_duration = ` + completedElapsedExpr + `,
 		    remaining_business_duration = GREATEST(s.duration - ` + completedElapsedExpr + `, INTERVAL '0'),
+		    has_breached = (` + completedElapsedExpr + ` >= s.duration),
 		    pause_duration = COALESCE(s.pause_duration, INTERVAL '0') +
 		        CASE WHEN s.paused_on IS NOT NULL THEN NOW() - s.paused_on ELSE INTERVAL '0' END,
 		    paused_on = NULL,
@@ -1074,18 +1074,20 @@ func (r *slaEngineRepo) completeClockBusinessDays(ctx context.Context, workItemI
 				pct = elapsed.Seconds() / o.durationSeconds * 100
 			}
 
+			hasBreached := elapsed >= duration
 			if _, err := tx.Exec(ctx, `
 				UPDATE sla SET stage = 'ACHIEVED'::sla_stage_enum, end_on = NOW(), is_active = FALSE,
 				    business_elapsed_percentage = $2,
 				    business_duration = $3::interval,
 				    remaining_business_duration = $4::interval,
+				    has_breached = $8,
 				    pause_duration = $5::interval,
 				    business_pause_duration = $6::interval,
 				    paused_on = NULL,
 				    updated_on = NOW(), updated_by = $7
 				WHERE id = $1::uuid`,
 				o.id, pct, formatIntervalLiteral(elapsed), formatIntervalLiteral(remaining),
-				formatIntervalLiteral(flatPause), formatIntervalLiteral(businessPause), sqlActorLiteral,
+				formatIntervalLiteral(flatPause), formatIntervalLiteral(businessPause), sqlActorLiteral, hasBreached,
 			); err != nil {
 				return fmt.Errorf("complete business-day sla clock: update: %w", err)
 			}
@@ -1387,18 +1389,6 @@ func formatIntervalOrNil(d *time.Duration) any {
 	return formatIntervalLiteral(*d)
 }
 
-// RecordFirstEngineerResponse implements SLAEngineRepository.
-func (r *slaEngineRepo) RecordFirstEngineerResponse(ctx context.Context, workItemID string) error {
-	const query = `
-		UPDATE work_item
-		SET first_engineer_response_on = NOW(), updated_on = NOW(), updated_by = $2
-		WHERE id = $1::uuid AND first_engineer_response_on IS NULL`
-	if _, err := r.db.Exec(ctx, query, workItemID, sqlActorLiteral); err != nil {
-		return fmt.Errorf("record first engineer response: %w", err)
-	}
-	return nil
-}
-
 // ReviseClocks implements SLAEngineRepository.
 //
 // Cancels every clock whose CURRENT stage is cancel-eligible for its own
@@ -1420,14 +1410,25 @@ func (r *slaEngineRepo) RecordFirstEngineerResponse(ctx context.Context, workIte
 // half of the fix for.
 // it.
 func (r *slaEngineRepo) ReviseClocks(ctx context.Context, workItemID string, policies []SLAPolicyRef) (int, error) {
-	const cancelQuery = `
+	// Split flat vs. 'WSO2 Business days' the same way CompleteClock/SetPaused
+	// do: has_breached must reflect real, pause-aware elapsed time at the
+	// moment of cancellation (see this method's own doc comment on the
+	// RESPONSE/BREACHED guard, which depends on a live-breached row actually
+	// being recorded as such) -- completedElapsedExpr's flat wall-clock SQL
+	// can express that for a 24x7 clock directly, but a business-day
+	// calendar has no SQL formula, so those rows are read and updated
+	// row-by-row in Go (reviseClocksCancelBusinessDays), same as
+	// completeClockBusinessDays/setPausedBusinessDays already do.
+	const flatCancelQuery = `
 		UPDATE sla s
 		SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE,
+		    has_breached = (` + completedElapsedExpr + ` >= s.duration),
 		    updated_on = NOW(), updated_by = $2
 		FROM sla_policy sp
 		WHERE s.sla_policy_id = sp.id
 		  AND s.work_item_id = $1::uuid
 		  AND s.source = 'CSM'
+		  AND COALESCE(sp.schedule, '') != '` + slaScheduleWSO2BusinessDays + `'
 		  AND (
 		    (sp.target::TEXT = 'RESPONSE' AND s.stage::TEXT IN ('IN_PROGRESS', 'PAUSED'))
 		    OR (sp.target::TEXT != 'RESPONSE' AND s.stage::TEXT IN ('IN_PROGRESS', 'PAUSED', 'BREACHED'))
@@ -1435,11 +1436,17 @@ func (r *slaEngineRepo) ReviseClocks(ctx context.Context, workItemID string, pol
 
 	var cancelled int
 	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, cancelQuery, workItemID, sqlActorLiteral)
+		tag, err := tx.Exec(ctx, flatCancelQuery, workItemID, sqlActorLiteral)
 		if err != nil {
 			return fmt.Errorf("revise csm sla clocks: cancel active: %w", err)
 		}
 		cancelled = int(tag.RowsAffected())
+
+		bdCancelled, err := reviseClocksCancelBusinessDays(ctx, tx, workItemID)
+		if err != nil {
+			return fmt.Errorf("revise csm sla clocks: cancel active (business-day): %w", err)
+		}
+		cancelled += bdCancelled
 
 		for _, policy := range policies {
 			// A zero Time here means "start now" -- see registerClockExec's
@@ -1461,6 +1468,78 @@ func (r *slaEngineRepo) ReviseClocks(ctx context.Context, workItemID string, pol
 		return 0, err
 	}
 	return cancelled, nil
+}
+
+// reviseClocksCancelBusinessDays is ReviseClocks' 'WSO2 Business days'
+// branch -- same cancel-eligibility predicate as the flat cancel query above
+// (RESPONSE never cancels a BREACHED row; WORKAROUND/RESOLUTION do), just
+// computed with internal/businessdays.Elapsed, which a single bulk SQL
+// statement has no way to express (the flat branch's completedElapsedExpr is
+// pure wall-clock arithmetic SQL can do directly; a business-day calendar
+// can't be). Returns the number of rows cancelled, added into ReviseClocks'
+// own cancelled count.
+func reviseClocksCancelBusinessDays(ctx context.Context, tx pgx.Tx, workItemID string) (int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT s.id, s.start_on, s.paused_on,
+		       COALESCE(EXTRACT(EPOCH FROM s.pause_duration), 0),
+		       COALESCE(EXTRACT(EPOCH FROM s.business_pause_duration), 0),
+		       EXTRACT(EPOCH FROM s.duration)
+		FROM sla s
+		JOIN sla_policy sp ON sp.id = s.sla_policy_id
+		WHERE s.work_item_id = $1::uuid
+		  AND s.source = 'CSM'
+		  AND sp.schedule = '`+slaScheduleWSO2BusinessDays+`'
+		  AND (
+		    (sp.target::TEXT = 'RESPONSE' AND s.stage::TEXT IN ('IN_PROGRESS', 'PAUSED'))
+		    OR (sp.target::TEXT != 'RESPONSE' AND s.stage::TEXT IN ('IN_PROGRESS', 'PAUSED', 'BREACHED'))
+		  )
+		FOR UPDATE OF s`, workItemID)
+	if err != nil {
+		return 0, fmt.Errorf("select: %w", err)
+	}
+	type openRow struct {
+		id                                                  string
+		startOn                                             time.Time
+		pausedOn                                            *time.Time
+		pauseSeconds, businessPauseSeconds, durationSeconds float64
+	}
+	var open []openRow
+	for rows.Next() {
+		var o openRow
+		if err := rows.Scan(&o.id, &o.startOn, &o.pausedOn, &o.pauseSeconds, &o.businessPauseSeconds, &o.durationSeconds); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan: %w", err)
+		}
+		open = append(open, o)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("rows: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for _, o := range open {
+		businessPause := time.Duration(o.businessPauseSeconds * float64(time.Second))
+		if o.pausedOn != nil {
+			businessPause += businessdays.Elapsed(*o.pausedOn, now)
+		}
+		elapsed := businessdays.Elapsed(o.startOn, now) - businessPause
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		duration := time.Duration(o.durationSeconds * float64(time.Second))
+		hasBreached := elapsed >= duration
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE sla SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE,
+			    has_breached = $2,
+			    updated_on = NOW(), updated_by = $3
+			WHERE id = $1::uuid`,
+			o.id, hasBreached, sqlActorLiteral,
+		); err != nil {
+			return 0, fmt.Errorf("update: %w", err)
+		}
+	}
+	return len(open), nil
 }
 
 // sqlActorLiteral is created_by/updated_by for every row this repository

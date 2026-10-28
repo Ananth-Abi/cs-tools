@@ -154,7 +154,14 @@ func (s *slaDurationPolicyService) resolveDurationPolicy(ctx context.Context, ta
 		if !isCasePolicy(candidate.StartCondition, candidate.StopCondition, candidate.PauseCondition, candidate.ResumeCondition, candidate.CancelCondition) {
 			continue
 		}
-		if slacondition.Parse(candidate.StartCondition).Evaluate(facts) {
+		// Route through the same slaPolicyConditionText the engine's own
+		// resolver uses -- candidate.StartCondition is still raw,
+		// vendor-encoded text (the external sync job never pre-decodes it),
+		// so parsing it directly here used to never match on real data at
+		// all (a confirmed, reported bug: GET /sla-duration-policy returned
+		// nothing against the real table). One matching path, not two.
+		translatedStart := slaPolicyConditionText(candidate, candidate.StartCondition)
+		if slacondition.Parse(translatedStart).Evaluate(facts) {
 			matches = append(matches, candidate)
 		}
 	}
@@ -165,10 +172,14 @@ func (s *slaDurationPolicyService) resolveDurationPolicy(ctx context.Context, ta
 		return matches[0], true, nil
 	}
 
+	// The specificity needle matches against the TRANSLATED vocabulary
+	// ("priority=S1", slaCaseSeverityCodes' own decoded label) -- the raw
+	// text never contains this spelling (it stores "priority=10"), so this
+	// needs the same translation every match above already got.
 	needle := "priority=" + severityLabel
 	var specific []repository.SLAPolicyRef
 	for _, m := range matches {
-		if strings.Contains(m.StartCondition, needle) {
+		if strings.Contains(slaPolicyConditionText(m, m.StartCondition), needle) {
 			specific = append(specific, m)
 		}
 	}

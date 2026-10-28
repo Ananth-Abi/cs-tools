@@ -75,9 +75,6 @@ func (f *fakeCandidatePolicyRepo) CancelClockByPolicy(context.Context, string, s
 func (f *fakeCandidatePolicyRepo) ActiveClockPolicies(context.Context, string, string) ([]repository.SLAPolicyRef, error) {
 	panic("not implemented")
 }
-func (f *fakeCandidatePolicyRepo) RecordFirstEngineerResponse(context.Context, string) error {
-	panic("not implemented")
-}
 func (f *fakeCandidatePolicyRepo) ReviseClocks(context.Context, string, []repository.SLAPolicyRef) (int, error) {
 	panic("not implemented")
 }

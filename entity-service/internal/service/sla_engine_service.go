@@ -205,6 +205,7 @@ func (s *slaEngineService) loadCaseFacts(ctx context.Context, caseID string, sev
 // would cancel the case's existing clocks and commit no replacement for the
 // target that failed to resolve.
 func (s *slaEngineService) resolveApplicablePolicies(ctx context.Context, facts repository.CaseFacts) (policies []repository.SLAPolicyRef, lookupFailed bool) {
+	f := caseConditionFacts{c: facts}
 	policies = make([]repository.SLAPolicyRef, 0, len(slaTargetOrder))
 	for _, clockType := range slaTargetOrder {
 		target := slaClockTypeTarget[clockType]
@@ -220,7 +221,25 @@ func (s *slaEngineService) resolveApplicablePolicies(ctx context.Context, facts 
 		// RESOLUTION target legitimately matches two policies at once).
 		// Every match is appended; RegisterClock's own per-policy
 		// uniqueness guard is what makes registering all of them safe.
-		policies = append(policies, matches...)
+		for _, m := range matches {
+			// resolve() only ever evaluates start_condition -- a policy
+			// whose stop_condition ALSO already holds against these same
+			// facts must never be registered at all: upstream only attaches
+			// a definition when start holds AND stop doesn't. Without this,
+			// a case that already satisfies a policy's own completion
+			// condition (e.g. a fix ETA already shared) gets a fresh clock
+			// registered on every call that re-resolves applicable policies
+			// (case creation, and ApplyCaseStateEffects' own re-registration
+			// pass), which the very next state-effects pass then completes
+			// at ~0% elapsed -- a junk ACHIEVED row with no real tracking
+			// value, skewing compliance numbers. Checked once here so both
+			// callers (RegisterCaseClocks and ApplyCaseStateEffects) get it
+			// for free.
+			if m.StopCondition != "" && slacondition.Parse(slaPolicyConditionText(m, m.StopCondition)).Evaluate(f) {
+				continue
+			}
+			policies = append(policies, m)
+		}
 	}
 	return policies, lookupFailed
 }
@@ -231,6 +250,21 @@ func (s *slaEngineService) resolveApplicablePolicies(ctx context.Context, facts 
 // (RegisterClock's own "start now" default) otherwise. See
 // SLAEngineService.RegisterCaseClocks' own doc comment for which real
 // policies this affects and why.
+//
+// Known, accepted simplification: a retroactive clock is ALWAYS backdated
+// to case CREATION here, regardless of which call site registers it. That
+// is correct for the P1/managed-services policies this engine's Retroactive
+// definitions mean to cover when registered at case creation (RegisterCaseClocks) --
+// both anchors (creation vs. "the update that first met the start
+// condition") coincide at that moment. It is only an approximation for a
+// P2/P3-style policy that becomes newly applicable LATER (e.g. a severity
+// change into P2 via ApplyCaseStateEffects' own re-registration pass, or
+// ReviseClocks' replacement path) -- upstream anchors those to the
+// triggering update, not creation, but sla_policy carries no column
+// distinguishing the two anchor semantics, so this always uses creation,
+// which can backdate a late P2/P3 registration earlier than the real
+// qualifying event. Not fixed here: it would need a new sla_policy column
+// recording which anchor a given definition actually uses.
 func registerCaseSLAClockStartOn(policy repository.SLAPolicyRef, caseCreatedOn time.Time) time.Time {
 	if policy.Retroactive {
 		return caseCreatedOn
@@ -309,19 +343,14 @@ func (s *slaEngineService) ReviseCaseClocks(ctx context.Context, caseID string, 
 }
 
 // CompleteResponseClock implements SLAEngineService.
+//
+// Does not separately stamp an "already responded" fact any more --
+// repository.CaseFacts.CSEngineerResponseComment is now derived live from
+// the comment table on every GetCaseFacts read, not from a durable column
+// this method used to write. See that field's own doc comment.
 func (s *slaEngineService) CompleteResponseClock(ctx context.Context, caseID string) {
 	if _, err := s.repo.CompleteClock(ctx, caseID, slaClockTypeTarget[slaClockTypeResponse]); err != nil {
 		slog.ErrorContext(ctx, "sla engine: complete response clock failed", "caseId", caseID, "err", err)
-	}
-	// Stamps the durable, case-level "already responded" fact -- see
-	// repository.CaseFacts.CSEngineerResponseComment's own doc comment for
-	// why this is no longer inferred from the response clock's own stage.
-	// Called here, unconditionally, regardless of whether a response clock
-	// even existed to complete above (an S0/S4 case has none) -- the
-	// qualifying reply this method is called for already happened either
-	// way.
-	if err := s.repo.RecordFirstEngineerResponse(ctx, caseID); err != nil {
-		slog.ErrorContext(ctx, "sla engine: record first engineer response failed", "caseId", caseID, "err", err)
 	}
 }
 

@@ -858,7 +858,7 @@ paths:
         List every (severity, clockType) duration currently resolved from
         the real, decoded sla_policy table — one row per severity/clock-type
         pair a policy's own start_condition matches for a plain, brand-new
-        case at that severity. Independent of the ServiceNow-synced "sla"
+        case at that severity. Independent of the externally-synced "sla"
         table GET /sla-status reads at a per-case level; this is a
         reference-style summary. integrations/csm-notification-service
         fetches this once at startup to display each case's own

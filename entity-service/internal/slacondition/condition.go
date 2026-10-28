@@ -54,6 +54,10 @@
 //     split the clause on "=".
 //   - field>=value                         -- a date threshold, e.g.
 //     opened_at>=YYYY-MM-DD.
+//   - the bare literal TRUE                -- a tautology clause (OpTrue),
+//     always true; a translating adapter's own stand-in for a clause whose
+//     original meaning became unconditionally true, without having to omit
+//     the token (and lose its "^OR"/"^NQ" grouping) entirely.
 //
 // Parsing never errors and never panics: a clause whose field isn't in this
 // package's own known vocabulary (knownFields below -- the same vocabulary
@@ -91,6 +95,19 @@ const (
 	// OpGTE is ">=", used only for the two date fields (opened_at/
 	// sys_created_on) in this vocabulary.
 	OpGTE
+	// OpTrue is a tautology clause -- always evaluates true, carries no
+	// field or value. An adapter translating some other grammar into this
+	// one uses it to stand in for a clause that is always true after
+	// translation (e.g. a negated comparison against a value with no
+	// counterpart in this vocabulary, which can never be unequal to
+	// anything real) WITHOUT omitting the token entirely: inside an
+	// AndGroup, a missing token and an explicit OpTrue both act as a no-op,
+	// but inside an OrTerm or as a whole AndGroup under "^NQ", omitting the
+	// token changes the result (a disjunction loses a disjunct that should
+	// always have carried it; a whole always-true alternative group
+	// disappears) while OpTrue preserves it correctly. See Parse's own
+	// recognition of the literal "TRUE" token.
+	OpTrue
 )
 
 // Clause is one field/operator/value(s) term.
@@ -184,6 +201,14 @@ func parseClauseToken(token string) Clause {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return Clause{Op: OpUnknown}
+	}
+	if token == "TRUE" {
+		// Reserved literal -- see OpTrue's own doc comment. "TRUE" can never
+		// collide with a real field+operator+value clause: every real field
+		// name in knownFields is lowercase, and matchField below would never
+		// match this all-caps token as a field prefix anyway, so checking it
+		// first (rather than falling through to OpUnknown) costs nothing.
+		return Clause{Op: OpTrue, Raw: token}
 	}
 	field, rest, ok := matchField(token)
 	if !ok {
@@ -360,6 +385,8 @@ func (c Clause) evaluate(f Facts) bool {
 			return false
 		}
 		return !d.Before(threshold)
+	case OpTrue:
+		return true
 	default: // OpUnknown
 		return false
 	}

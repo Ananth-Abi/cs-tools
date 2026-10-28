@@ -40,12 +40,11 @@ type fakeFullSLAEngineRepo struct {
 	factsByCase        map[string]repository.CaseFacts
 	activeByCaseTarget map[string]repository.SLAPolicyRef
 
-	registered            []string // "caseID|policyID"
-	completed             []string // "caseID|target"
-	paused                []string // "caseID|target|true" or "...|false"
-	clockCancelled        []string // "caseID|target" (CancelClock)
-	cancelled             []string // "caseID" (ReviseClocks' bulk cancel)
-	firstResponseRecorded []string // "caseID" (RecordFirstEngineerResponse)
+	registered     []string // "caseID|policyID"
+	completed      []string // "caseID|target"
+	paused         []string // "caseID|target|true" or "...|false"
+	clockCancelled []string // "caseID|target" (CancelClock)
+	cancelled      []string // "caseID" (ReviseClocks' bulk cancel)
 
 	listErrOnTarget string
 	getCaseFactsErr error
@@ -145,11 +144,6 @@ func (r *fakeFullSLAEngineRepo) CancelClockByPolicy(_ context.Context, workItemI
 func (r *fakeFullSLAEngineRepo) SetPausedByPolicy(_ context.Context, workItemID, target, _ string, paused bool) (bool, error) {
 	r.paused = append(r.paused, fmt.Sprintf("%s|%s|%v", workItemID, target, paused))
 	return true, nil
-}
-
-func (r *fakeFullSLAEngineRepo) RecordFirstEngineerResponse(_ context.Context, workItemID string) error {
-	r.firstResponseRecorded = append(r.firstResponseRecorded, workItemID)
-	return nil
 }
 
 // severityLadderCandidates seeds a clean, three-target severity ladder for
@@ -255,6 +249,38 @@ func TestSLAEngineService_RegisterCaseClocks_MissingPolicySkipsThatTargetOnly(t 
 	want := []string{"case-4|resp-s0", "case-4|res-s0"}
 	if len(repo.registered) != len(want) {
 		t.Fatalf("registered = %v, want %v", repo.registered, want)
+	}
+}
+
+// TestSLAEngineService_RegisterCaseClocks_StopConditionAlreadyTrueSkipsRegistration
+// is the regression test for a PR review finding: resolve() only ever
+// evaluates start_condition, so a policy whose stop_condition ALSO already
+// holds (upstream only ever attaches a definition when start holds AND stop
+// doesn't) used to get registered anyway, immediately completed at ~0%
+// elapsed by the very next state-effects pass -- a junk ACHIEVED row with
+// no real tracking value. resolveApplicablePolicies must skip it before it
+// is ever registered at all.
+func TestSLAEngineService_RegisterCaseClocks_StopConditionAlreadyTrueSkipsRegistration(t *testing.T) {
+	repo := newFakeFullSLAEngineRepo()
+	repo.candidatesByTarget = map[string][]repository.SLAPolicyRef{
+		"RESOLUTION": {
+			{
+				ID:             "res-already-done",
+				Name:           "Resolution (fix ETA already shared)",
+				Target:         "RESOLUTION",
+				StartCondition: "case_type=case^priority=S0",
+				StopCondition:  "fix_eta_sharedISNOTEMPTY",
+			},
+		},
+	}
+	repo.factsByCase["case-fix-eta"] = repository.CaseFacts{State: "OPEN", CaseType: "case", FixEtaShared: true}
+	svc := NewSLAEngineService(repo)
+
+	sev := domain.CaseSeverityCatastrophic
+	svc.RegisterCaseClocks(context.Background(), "case-fix-eta", &sev, "")
+
+	if len(repo.registered) != 0 {
+		t.Errorf("registered = %v, want none -- the policy's own stop_condition already holds, so it must never be registered", repo.registered)
 	}
 }
 

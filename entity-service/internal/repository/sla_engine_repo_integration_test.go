@@ -258,6 +258,59 @@ func TestSLAEngineIntegration_ReviseClocksReplacesBreachedClock(t *testing.T) {
 	}
 }
 
+// TestSLAEngineIntegration_ReviseClocksCancelComputesHasBreachedLive is the
+// regression test for a PR review finding: since RecomputeActive was
+// removed, nothing periodically recomputes a live clock's stored `stage`
+// into BREACHED any more, so a clock that has genuinely run out the wall
+// clock can still be stored as IN_PROGRESS right up until something acts on
+// it. ReviseClocks' cancellation must compute has_breached from REAL,
+// live elapsed time at the moment of cancellation -- not trust the row's
+// stale, pre-cancellation stage -- or the breach fact is silently lost. This
+// pushes start_on back past the policy's own duration WITHOUT forcing stage
+// to BREACHED first (unlike the sibling test above), so the only way
+// has_breached ends up TRUE is if ReviseClocks computed it itself.
+func TestSLAEngineIntegration_ReviseClocksCancelComputesHasBreachedLive(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	// WithSystemIdentity + Scoped: work_item is RLS-protected (see seedSLAEngineWorkItem).
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	workaroundPolicy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, workaroundPolicy, time.Time{}); err != nil {
+		t.Fatalf("RegisterClock(workaround) setup: %v", err)
+	}
+	// Push start_on back past the policy's own duration -- the clock is now
+	// genuinely over time, but its stored stage is still whatever
+	// RegisterClock left it at (IN_PROGRESS), exactly as it would be in
+	// production with no periodic sweep to catch it first.
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = NOW() - $2::interval WHERE work_item_id = $1::uuid AND sla_policy_id = $3::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(workaroundPolicy.Duration+10*time.Minute), workaroundPolicy.ID); err != nil {
+		t.Fatalf("push start_on back setup: %v", err)
+	}
+
+	if _, err := repo.ReviseClocks(ctx, slaEngineIntegrationWorkItemID, []repository.SLAPolicyRef{workaroundPolicy}); err != nil {
+		t.Fatalf("ReviseClocks: %v", err)
+	}
+
+	var stage string
+	var hasBreached bool
+	if err := scoped.QueryRow(ctx, `SELECT stage::TEXT, has_breached FROM sla s JOIN sla_policy sp ON sp.id = s.sla_policy_id
+		WHERE s.work_item_id = $1::uuid AND sp.target::TEXT = 'WORKAROUND' AND s.stage::TEXT = 'CANCELLED'`,
+		slaEngineIntegrationWorkItemID).Scan(&stage, &hasBreached); err != nil {
+		t.Fatalf("scan cancelled row: %v", err)
+	}
+	if !hasBreached {
+		t.Error("has_breached = false on the cancelled row, want true -- ReviseClocks must compute it from real elapsed time, not trust the row's stale pre-cancellation stage")
+	}
+}
+
 // TestSLAEngineIntegration_ReviseClocksPreservesBreachedResponseClock is the
 // RESPONSE-specific counterpart to the test above: per explicit product
 // direction, "did a support engineer reply at all" is a fact about the past

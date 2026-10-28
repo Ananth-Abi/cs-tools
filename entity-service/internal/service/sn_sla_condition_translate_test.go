@@ -19,6 +19,7 @@ package service
 import (
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/slacondition"
 )
 
@@ -34,9 +35,19 @@ func TestTranslateSLACondition(t *testing.T) {
 			want: "state=OPEN^priority=S1",
 		},
 		{
-			name: "translates case_type sys_id and strips u_ prefix",
+			name: "translates Incident case_type sys_id into a severity predicate and strips u_ prefix",
 			raw:  "u_case_type=8d4b87bd1b18f010cb6898aebd4bcb59^state=1^EQ",
-			want: "case_type=case^state=OPEN",
+			want: "priority!=S4^state=OPEN",
+		},
+		{
+			name: "translates Query case_type sys_id into a severity predicate",
+			raw:  "u_case_type=0d5b8fbd1b18f010cb6898aebd4bcba5^state=1^EQ",
+			want: "priority=S4^state=OPEN",
+		},
+		{
+			name: "translates negated Incident/Query case_type clauses with the comparison flipped",
+			raw:  "u_case_type!=8d4b87bd1b18f010cb6898aebd4bcb59^ORu_case_type!=0d5b8fbd1b18f010cb6898aebd4bcba5^EQ",
+			want: "priority=S4^ORpriority!=S4",
 		},
 		{
 			name: "translates product sys_ids across an OR run",
@@ -59,9 +70,14 @@ func TestTranslateSLACondition(t *testing.T) {
 			want: "state=CLOSED^ORfix_eta_sharedISNOTEMPTY",
 		},
 		{
-			name: "drops a clause naming the dead case_type sys_id",
+			name: "leaves the Admin Task case_type sys_id unmapped (no longer created, confirmed with the team) and translates the Incident clause alongside it",
 			raw:  "case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^case_type!=8d4b87bd1b18f010cb6898aebd4bcb59^EQ",
-			want: "case_type!=case",
+			want: "case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^priority=S4",
+		},
+		{
+			name: "falls through Hosting/Hosting Query/Hosting Task sys_ids unchanged -- permanently inert, by product decision",
+			raw:  "case_type=bfa1473c1bbcb410cb6898aebd4bcb52^ORcase_type=80810ff81bbcb410cb6898aebd4bcb3c^ORcase_type=f46103f81bbcb410cb6898aebd4bcb27^EQ",
+			want: "case_type=bfa1473c1bbcb410cb6898aebd4bcb52^ORcase_type=80810ff81bbcb410cb6898aebd4bcb3c^ORcase_type=f46103f81bbcb410cb6898aebd4bcb27",
 		},
 		{
 			name: "keeps a malformed, value-less trailing clause as a false disjunct rather than dropping it",
@@ -139,6 +155,108 @@ func TestTranslateSLACondition_RealRowsParseWithNoUnknownClauses(t *testing.T) {
 		cond := slacondition.Parse(translated)
 		if unknown := cond.UnknownClauses(); len(unknown) > 0 {
 			t.Errorf("translateSLACondition(%q) = %q, left unknown clauses: %v", raw, translated, unknown)
+		}
+	}
+}
+
+// facts is a small helper building a caseConditionFacts for the semantic
+// tests below -- severity-only, since that's all these tests need to vary.
+func sysIDTranslateTestFacts(caseType, severity string) caseConditionFacts {
+	return caseConditionFacts{c: repository.CaseFacts{
+		State:    "OPEN",
+		Severity: severity,
+		CaseType: caseType,
+	}}
+}
+
+// TestTranslateSLACondition_IncidentQueryCaseTypeSemantics proves the fix
+// for a PR review's High-severity finding (Incident and Query both used to
+// translate to the same "case_type=case" value, so every Incident case
+// matched the Query policies too) at the level that actually matters:
+// Parse+Evaluate outcomes against fabricated facts, not just the translated
+// text's surface spelling.
+func TestTranslateSLACondition_IncidentQueryCaseTypeSemantics(t *testing.T) {
+	const incidentSysID = "8d4b87bd1b18f010cb6898aebd4bcb59"
+	const querySysID = "0d5b8fbd1b18f010cb6898aebd4bcba5"
+
+	incidentS2Policy := slacondition.Parse(translateSLACondition("u_case_type=" + incidentSysID + "^priority=11^EQ")) // priority=11 -> S2
+	queryPolicy := slacondition.Parse(translateSLACondition(
+		"u_case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^u_case_type!=" + incidentSysID +
+			"^u_case_type!=bfa1473c1bbcb410cb6898aebd4bcb52^state=1^u_case_type!=3b8b43311b58f010cb6898aebd4bcb8f" +
+			"^u_case_typeISNOTEMPTY^u_case_type!=8f8fc2c41b0bd550d64e64a2604bcb38^u_case_type!=ab36479047ccf510a0a29cd3846d43ee" +
+			"^u_case_type!=5aeff1201b74c210264c997a234bcb54^EQ")) // the real "none of the other types" catch-all, migration 0250's own 85fe07fa row
+
+	s2Facts := sysIDTranslateTestFacts("case", "S2")
+	s4Facts := sysIDTranslateTestFacts("case", "S4")
+
+	if !incidentS2Policy.Evaluate(s2Facts) {
+		t.Error("an S2 case must match the Incident/S2 policy")
+	}
+	if incidentS2Policy.Evaluate(s4Facts) {
+		t.Error("an S4 case must NOT match the Incident/S2 policy")
+	}
+	if queryPolicy.Evaluate(s2Facts) {
+		t.Error("an S2 (Incident) case must NOT match the Query catch-all policy -- this is the exact bug the fix closes")
+	}
+	if !queryPolicy.Evaluate(s4Facts) {
+		t.Error("an S4 case must match the Query catch-all policy")
+	}
+
+	// Sanity check against the real, decoded condition for policy
+	// 726dc150-1b64-0550-6a67-caa1604bcbad (migration 0250): Incident OR
+	// Hosting at S2. With Hosting discarded, this must reduce to exactly
+	// "S2 matches, nothing else does" -- not "always true" and not "never
+	// matches".
+	startCond := slacondition.Parse(translateSLACondition(
+		"u_case_type=" + incidentSysID + "^ORu_case_type=bfa1473c1bbcb410cb6898aebd4bcb52^priority=11^EQ")) // priority=11 -> S2
+	if !startCond.Evaluate(s2Facts) {
+		t.Error("726dc150's start_condition (Incident-or-Hosting at S2) must match an S2 case")
+	}
+	if startCond.Evaluate(s4Facts) {
+		t.Error("726dc150's start_condition must not match an S4 case")
+	}
+	if startCond.Evaluate(sysIDTranslateTestFacts("case", "S1")) {
+		t.Error("726dc150's start_condition must not match an S1 case")
+	}
+
+	cancelCond := slacondition.Parse(translateSLACondition(
+		"u_case_type!=" + incidentSysID + "^ORu_case_type!=bfa1473c1bbcb410cb6898aebd4bcb52^priority!=11^EQ")) // priority!=11 -> priority!=S2
+	if cancelCond.Evaluate(s2Facts) {
+		t.Error("726dc150's cancel_condition must NOT fire while the case is still S2")
+	}
+	if !cancelCond.Evaluate(s4Facts) {
+		t.Error("726dc150's cancel_condition must fire once the case is no longer S2")
+	}
+}
+
+// TestTranslateSLACondition_HostingDiscarded proves a Hosting-only policy
+// (nothing else distinguishing it) never matches any real case, at any
+// severity -- the deliberate, product-decided "discard Hosting" outcome,
+// not an oversight.
+func TestTranslateSLACondition_HostingDiscarded(t *testing.T) {
+	hostingOnly := slacondition.Parse(translateSLACondition("u_case_type=bfa1473c1bbcb410cb6898aebd4bcb52^priority=11^EQ")) // Hosting, S2
+	for _, sev := range []string{"S0", "S1", "S2", "S3", "S4"} {
+		if hostingOnly.Evaluate(sysIDTranslateTestFacts("case", sev)) {
+			t.Errorf("a Hosting-only policy must never match any case (severity %s) -- Hosting is discarded by product decision", sev)
+		}
+	}
+}
+
+// TestTranslateSLACondition_AdminTaskStaysUnmapped proves the Admin Task
+// sys_id (slaAdminTaskCaseTypeSysID) is deliberately NOT in slaCaseTypeSysIDs
+// -- confirmed with the team that Admin Task cases are no longer created, so
+// there's nothing to map it to -- and that a positive clause against it
+// still never matches a real case (same fail-closed outcome as before,
+// unchanged).
+func TestTranslateSLACondition_AdminTaskStaysUnmapped(t *testing.T) {
+	if _, mapped := slaCaseTypeSysIDs[slaAdminTaskCaseTypeSysID]; mapped {
+		t.Fatalf("slaAdminTaskCaseTypeSysID must stay unmapped in slaCaseTypeSysIDs, got an entry: %q", slaCaseTypeSysIDs[slaAdminTaskCaseTypeSysID])
+	}
+
+	positive := slacondition.Parse(translateSLACondition("u_case_type=" + slaAdminTaskCaseTypeSysID + "^EQ"))
+	for _, ct := range []string{"case", "engagement", "service_request", "security_report_analysis", "announcement"} {
+		if positive.Evaluate(sysIDTranslateTestFacts(ct, "S1")) {
+			t.Errorf("a positive Admin Task clause must never match a real CaseType=%q", ct)
 		}
 	}
 }

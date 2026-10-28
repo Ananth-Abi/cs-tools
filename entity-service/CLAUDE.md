@@ -2318,24 +2318,31 @@ gate as `GET /sla-status`) now computes its response live, via
 For each of the 5 severities × 3 clock targets, `resolveDurationPolicy`
 evaluates every active `source='SERVICENOW'` case policy's `start_condition`
 (`internal/slacondition`, same `isCasePolicy` classification
-`sla_policy_resolver.go` uses) against a **synthetic** `CaseFacts` describing
-a plain, brand-new case at that severity: `case_type=case`, `state=OPEN`,
-`project_type=Subscription` (WSO2's own most common type — picked so a
-project-type-gated policy like `"P1 - Workaround (Open Source)"` can still
-resolve), `created_on=now` (every real `opened_at`/`sys_created_on`
-condition in the table is a `>=` check, so the synthetic case must be newer
-than the threshold, not older), and no account/product/workaround/fix-ETA.
-This synthetic fact set is what excludes every `hosting`/`hosting_query`/
-`hosting_task`-gated and product/project-type-mismatched policy, with no
-separate exclusion list needed — their own `start_condition` requires a
-`case_type`/`project_type`/`product` this fact set never has.
+`sla_policy_resolver.go` uses), **routed through `slaPolicyConditionText`
+first** — the same translation the engine's own resolver applies; this path
+used to call `slacondition.Parse` directly on the still-raw, vendor-encoded
+text, which never matched on real data at all (a confirmed, reported bug:
+this endpoint returned nothing) — against a **synthetic** `CaseFacts`
+describing a plain, brand-new case at that severity: `case_type=case`,
+`state=OPEN`, `project_type=Subscription` (WSO2's own most common type —
+picked so a project-type-gated policy like `"P1 - Workaround (Open
+Source)"` can still resolve), `created_on=now` (every real `opened_at`/
+`sys_created_on` condition in the table is a `>=` check, so the synthetic
+case must be newer than the threshold, not older), and no
+account/product/workaround/fix-ETA. This synthetic fact set, combined with
+the translator's own Incident/Query severity swap and Hosting-discard
+behavior (above), is what excludes every Hosting-family and
+product/project-type-mismatched policy, with no separate exclusion list
+needed.
 
 **Tie-break when more than one policy matches** (real in the live data —
-e.g. `"P1 - Resolution (Open Source)"`, gated on `priority=S1`, and
-`"Query - Resolution (Open Source)"`, which has no priority condition at all
-and so matches every severity, can both match S1/RESOLUTION): the policy
-whose `start_condition` names the severity explicitly (`"priority=S<n>"`)
-wins over one that applies generically — more specific beats more general.
+e.g. a severity-specific resolution policy and a Query-style resolution
+policy with no priority condition at all, matching every non-Incident
+severity, can both match S4/RESOLUTION): the policy whose **translated**
+`start_condition` names the severity explicitly (`"priority=S<n>"`) wins
+over one that applies generically — more specific beats more general; the
+specificity needle itself is matched against the translated text too (the
+raw text never contains this spelling at all — it stores a numeric code).
 Still ambiguous after that (none currently are in the real table): lowest
 `sla_policy.id` wins deterministically, logged — the same fallback
 `slaPolicyResolver.resolve` itself uses. A severity/clock-type pair with no
@@ -2556,9 +2563,7 @@ Query/SecReport Analysis family) on no severity at all.
   a translation gap is visible rather than a silent, permanent "never
   matches."
 - **A target can resolve to more than one applicable policy at once, and
-  every one gets its own, independent clock.** The real data has a Hosting
-  case's RESOLUTION target legitimately matching both an open-source-track
-  policy and a managed-services-track policy simultaneously —
+  every one gets its own, independent clock** —
   `slaPolicyResolver.resolve` returns every match, not just one;
   `RegisterClock`'s own uniqueness guard is scoped to `(work_item, target,
   sla_policy_id)`, not just `(work_item, target)`, so two distinct policies
@@ -2570,7 +2575,28 @@ Query/SecReport Analysis family) on no severity at all.
   per-policy-scoped sibling of `CompleteClock`/`CancelClock`/`SetPaused`,
   which stay as bulk, policy-agnostic operations for the callers that
   genuinely mean "every open clock of this type" (a qualifying comment, a
-  workaround provided, a fix ETA shared).
+  workaround provided, a fix ETA shared). `CompleteClock`/`SetPaused`'s bulk
+  form runs both the flat and business-day branches and combines their
+  results (not "first branch to report a hit wins") for exactly this
+  reason: two simultaneously-open policies of the same target can be on
+  different schedules.
+  `ApplyCaseStateEffects`'s own re-registration pass (below) skips a policy
+  whose `cancel_condition` or `stop_condition` already holds against the
+  case's current facts — registering a clock only to have the very next
+  pass cancel or complete it at ~0% elapsed produced junk terminal rows
+  with no real tracking value.
+- **Known, accepted limitation: a read of one target returns only one row,
+  even when two policies are simultaneously open on it.**
+  `GetClockState`/`SearchActiveSLAStatuses`/the Redis clock
+  `csm-notification-service` keeps are all keyed by `(work_item, target)`,
+  not by clock id or policy — `GetClockState` deliberately has no stage
+  filter at all (it must surface a terminal row to let a caller distinguish
+  "cleanly resolved" from "never registered", a CodeRabbit-caught bug from
+  an earlier round — do not add one), so the two reads pick different rows
+  by different rules (`SearchActiveSLAStatuses` already excludes terminal
+  rows via `is_active`; `GetClockState` does not). The real fix is keying
+  the read and the Redis clock by policy, not target; deliberately out of
+  scope while this is rare in practice.
 - **`retroactive`/`when_to_cancel`/`when_to_resume` are read from
   `sla_policy` and change registration/cancellation/resume behavior**,
   not just display (`task_sla_repo.go` already read them for display only).
@@ -2592,18 +2618,28 @@ Query/SecReport Analysis family) on no severity at all.
   uniqueness guard makes this a no-op for a policy already registered, so a
   `start_condition` that only becomes true later in a case's lifecycle is
   now picked up on the next state-changing update.
-- **"Already responded" is a durable, case-level fact
-  (`work_item.first_engineer_response_on`, migration `0262`), not inferred
-  from the response clock's own stage.** The response clock can be
-  `CANCELLED` by a severity revision without ever reaching `ACHIEVED`, or
-  never exist at all (an S0/S4 case has no response policy) — deriving
-  "already responded" from the clock's own history meant a case genuinely
-  already answered could still read as unanswered, letting a later severity
-  change start a brand-new response clock on a case an engineer had already
-  replied to. `SLAEngineRepository.RecordFirstEngineerResponse` stamps the
-  column once, the first time `CompleteResponseClock` confirms a qualifying
-  reply, and never clears it again; `GetCaseFacts`'s
-  `CSEngineerResponseComment` now reads this column directly.
+  **Known, accepted simplification: `Retroactive` always backdates to case
+  CREATION, regardless of which call site registers the clock** — correct
+  for a policy registered at creation (every real P1/managed-services
+  retroactive definition), an approximation for one that only becomes
+  applicable LATER (e.g. a severity change into P2/P3 via this same
+  re-registration pass), which upstream anchors to the triggering update
+  instead — `sla_policy` has no column distinguishing the two anchors. See
+  `registerCaseSLAClockStartOn`'s own doc comment.
+- **"Already responded" is derived live from whether an INTERNAL-type user
+  authored a public comment on the case, not from the response clock's own
+  stage.** The response clock can be `CANCELLED` by a severity revision
+  without ever reaching `ACHIEVED`, or never exist at all (an S0/S4 case has
+  no response policy) — deriving "already responded" from the clock's own
+  history meant a case genuinely already answered could still read as
+  unanswered, letting a later severity change start a brand-new response
+  clock on a case an engineer had already replied to. `GetCaseFacts`'s
+  `CSEngineerResponseComment` is an `EXISTS` over `comment` joined to
+  `"user"` by email (`cm.type = 'COMMENT'`, never `WORK_NOTE`, AND
+  `u.user_type = 'INTERNAL'` — the real, role-membership-derived column this
+  schema already keeps for this distinction), computed fresh on every read:
+  no stored column, no backfill needed, and it already reflects every reply
+  ever made, including ones posted before this engine existed.
 - **Business-day `stage`/`has_breached` are corrected consistently with the
   already-corrected elapsed percentage, in every read path** —
   `businessDayCorrectedLiveState` (`sla_engine_repo.go`) is the one shared
@@ -2624,22 +2660,42 @@ Query/SecReport Analysis family) on no severity at all.
   recompute of the same formula had no observable effect reads didn't
   already get from the view, and its own flat-wall-clock math ignored
   `pause_duration` entirely (a real bug: a paused clock would be marked
-  breached early). Correctness for every live read now goes through
+  breached early). Correctness for every LIVE read now goes through
   `sla_live` plus `businessDayCorrectedLiveState` above — there is no
-  separate persisted "recomputed" state to keep in sync.
-- **A known, undocumented-until-now schema gap: no live column distinguishes
-  the previous system's finer-grained case sub-types (Hosting, Query,
-  Hosting Query) from each other or from a plain case** — confirmed against
-  the real schema (`case`/`work_item`), not assumed: `work_item.type` has
-  only `case`/`engagement`/`service_request`/`security_report_analysis`/
-  `announcement`, and `case.issue_type` is an unrelated, currently-unused
-  impact classification. A policy whose decoded `case_type` value is
-  `hosting`/`hosting_query`/`hosting_task` can never match any real
-  Postgres case today — not a bug introduced here, a pre-existing structural
-  gap this engine's `CaseFacts.CaseType` doc comment already flags. Closing
-  it needs a product/schema decision (e.g. the sync job writing a per-case
-  category column, or some other durable signal) that is out of scope for
-  this engine.
+  separate persisted "recomputed" state to keep in sync for a row that's
+  still running. `has_breached` on a row that STOPS running (completion,
+  cancellation) is a different concern and IS still written explicitly, at
+  the moment it happens: `completeClockFlat`/`completeClockBusinessDays` set
+  it from the same pause-aware elapsed-vs-duration comparison they already
+  use for the percentage, and `ReviseClocks`' cancellation does the same
+  (split flat/business-day the same way completion is, since a bulk SQL
+  statement can't express a business-day calendar) — without this, a clock
+  that ran out the wall clock without a periodic sweep ever marking it
+  `BREACHED` first would complete or cancel with `has_breached` silently
+  left at its stale prior value.
+- **Incident vs. Query is resolved by severity, not by case_type — the two
+  underlying case_type sys_ids both map to the identical `work_item.type`
+  ('CASE'), and Postgres carries nothing else that could ever tell them
+  apart.** Confirmed directly: Incident is case severity S0-S3, Query is S4
+  (`case_severity_enum` has exactly five values — "not S4" and "S4" are
+  complete, non-overlapping characterizations of the two).
+  `translateIncidentQueryCaseType` (`sn_sla_condition_translate.go`) swaps a
+  `case_type=<Incident/Query sys_id>` clause's FIELD to `priority`
+  (`!=S4`/`=S4` respectively) rather than translating its value the way
+  every other `case_type` sys_id does — case_type alone has no value that
+  could carry this distinction. Not applied inside an `IN`/`NOT IN` list
+  (confirmed absent from every real, active case-policy row).
+- **Hosting/Hosting Query/Hosting Task are discarded by explicit product
+  decision — won't be maintained.** Their sys_ids are deliberately NOT in
+  `slaCaseTypeSysIDs`, so a clause naming one falls through to the generic
+  "no translation known" path and stays raw, untranslated text: a real,
+  decoded `CaseType` value can never equal a raw sys_id, so every policy
+  gated on one of these three types is permanently inert (a positive clause
+  always false, a negated one vacuously true) — achieved with no
+  special-case code, not a bug to fix. The Admin Task sys_id
+  (`slaAdminTaskCaseTypeSysID`) is the same: never covered by
+  `snCaseTypeSysidMap` from the start, and confirmed with the team that
+  Admin Task cases are no longer created at all, so it stays unmapped too.
 - **A second, known, accepted limitation: the business-day schedule is
   matched on `sla_policy.schedule`'s literal display name** (`"WSO2 Business
   days"`), not a schedule id or a separate calendar table — confirmed, no

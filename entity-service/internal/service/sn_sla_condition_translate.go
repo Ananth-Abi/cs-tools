@@ -54,17 +54,6 @@ func translateSLACondition(raw string) string {
 	}
 	tokens := strings.Split(raw, "^")
 	out := make([]string, 0, len(tokens))
-	// pending/droppedHead carry a dropped token's own grouping prefix forward
-	// to the next kept token -- dropping a token (a negated clause whose
-	// value is entirely known-dead, see translateSLAClauseToken) must not
-	// also silently drop ITS prefix, or the remaining clauses regroup: an
-	// "^NQ<dead>^state=1" that drops the NQ clause would otherwise merge
-	// state=1 into the PRECEDING AND-group instead of starting its own new
-	// OR'd group, and an OR run whose head clause drops would otherwise OR
-	// the next clause against the wrong preceding term instead of becoming
-	// the run's own new head.
-	pending := ""
-	droppedHead := false
 	for _, tok := range tokens {
 		prefix := ""
 		rest := tok
@@ -82,23 +71,16 @@ func translateSLACondition(raw string) string {
 			// writes -- a no-op token this grammar has no use for.
 			continue
 		}
-		translated, drop := translateSLAClauseToken(rest)
-		if drop {
-			if prefix == "NQ" {
-				pending = "NQ"
-			}
-			if prefix != "OR" {
-				droppedHead = true
-			}
-			continue
-		}
-		if pending == "NQ" {
-			prefix = "NQ"
-		} else if droppedHead && prefix == "OR" {
-			prefix = ""
-		}
-		pending, droppedHead = "", false
-		out = append(out, prefix+translated)
+		// translateSLAClauseToken never needs to omit a token entirely any
+		// more -- a clause that becomes vacuously true after translation is
+		// represented as the literal "TRUE" (internal/slacondition's own
+		// OpTrue), never dropped, so this token's own "^OR"/"^NQ" prefix is
+		// always preserved exactly as parsed. Omitting a token here instead
+		// would be WRONG outside a plain AND run: inside an OR run it can
+		// turn an always-true disjunct into a missing one that changes the
+		// result, and as a whole "^NQ" group it loses an always-true
+		// alternative entirely -- see OpTrue's own doc comment.
+		out = append(out, prefix+translateSLAClauseToken(rest))
 	}
 	return strings.Join(out, "^")
 }
@@ -156,14 +138,13 @@ func matchSLAConditionField(token string) (neutral, rest string, ok bool) {
 }
 
 // translateSLAClauseToken translates one clause (already stripped of its
-// "^OR"/"^NQ" prefix) from raw to neutral field/value spelling. drop=true
-// means the clause carries no information translation can preserve (the
-// known-dead case_type sys_id this table has no mapping for at all, or a
-// malformed, value-less clause already confirmed present in the raw
-// external data) and should be omitted from the translated condition
-// entirely, the same cleanup the one-time migrations already recorded by
-// name applied once, replicated here so it survives every later re-sync.
-func translateSLAClauseToken(token string) (translated string, drop bool) {
+// "^OR"/"^NQ" prefix) from raw to neutral field/value spelling. Never omits
+// the clause: a clause that becomes vacuously true after translation is
+// returned as the literal "TRUE" (internal/slacondition's OpTrue) rather
+// than dropped, so translateSLACondition's caller never has to reason about
+// a missing token's own "^OR"/"^NQ" prefix (see that function's own doc
+// comment on why dropping would be wrong outside a plain AND run).
+func translateSLAClauseToken(token string) string {
 	field, rest, ok := matchSLAConditionField(token)
 	if !ok {
 		// Not a field this engine's case-policy vocabulary knows at all --
@@ -174,54 +155,135 @@ func translateSLAClauseToken(token string) (translated string, drop bool) {
 		// decided this row is not a case policy for (see isCasePolicy) --
 		// never actually evaluated, but harmless to pass through unchanged
 		// regardless.
-		return token, false
+		return token
 	}
 
 	switch {
 	case strings.HasPrefix(rest, "ISNOTEMPTY"):
-		return field + "ISNOTEMPTY", false
+		return field + "ISNOTEMPTY"
 	case strings.HasPrefix(rest, "ISEMPTY"):
-		return field + "ISEMPTY", false
+		return field + "ISEMPTY"
 	case strings.HasPrefix(rest, "!="):
-		v, drop := translateSLAConditionValue(field, rest[len("!="):])
-		return field + "!=" + v, drop
+		value := strings.TrimSpace(rest[len("!="):])
+		if field == "case_type" {
+			if swapped, ok := translateIncidentQueryCaseType(value, true); ok {
+				return swapped
+			}
+		}
+		v, drop := translateSLAConditionValue(field, value)
+		if drop {
+			// A negated comparison against a value with nothing left to
+			// compare against is vacuously true (see
+			// translateSLAConditionValue's own doc comment for the one
+			// remaining drop case: a malformed, empty value).
+			return "TRUE"
+		}
+		return field + "!=" + v
 	case strings.HasPrefix(rest, ">="):
-		return field + ">=" + translateSLADateValue(rest[len(">="):]), false
+		return field + ">=" + translateSLADateValue(rest[len(">="):])
 	case strings.HasPrefix(rest, "NOT IN"):
 		v, drop := translateSLAConditionValueList(field, rest[len("NOT IN"):])
-		return field + "NOT IN" + v, drop
+		if drop {
+			// NOT IN an empty set is vacuously true, same reasoning as "!="
+			// above.
+			return "TRUE"
+		}
+		return field + "NOT IN" + v
 	case strings.HasPrefix(rest, "IN"):
 		// A positive IN clause left with no real members after translation
 		// (every value was known-dead) is NOT vacuously true -- membership in
-		// an empty set is always false -- so unlike NOT IN above, this must
-		// not be omitted as if it were a true, droppable clause. Falling back
-		// to the untranslated token keeps the clause present as a comparison
-		// against a raw sys_id/code that a decoded fact value will never
-		// equal, which evaluates false exactly as the real condition does.
+		// an empty set is always false. Falling back to the untranslated
+		// token keeps the clause present as a comparison against a raw
+		// sys_id/code that a decoded fact value will never equal, which
+		// evaluates false exactly as the real condition does.
 		v, drop := translateSLAConditionValueList(field, rest[len("IN"):])
 		if drop {
-			return token, false
+			return token
 		}
-		return field + "IN" + v, false
+		return field + "IN" + v
 	case strings.HasPrefix(rest, "="):
-		// Same reasoning as IN above: a positive equality clause whose value
-		// has no translation is false, not droppable.
-		v, drop := translateSLAConditionValue(field, rest[len("="):])
-		if drop {
-			return token, false
+		value := strings.TrimSpace(rest[len("="):])
+		if field == "case_type" {
+			if swapped, ok := translateIncidentQueryCaseType(value, false); ok {
+				return swapped
+			}
 		}
-		return field + "=" + v, false
+		// Same reasoning as IN above: a positive equality clause whose value
+		// has no translation is false, not vacuously true.
+		v, drop := translateSLAConditionValue(field, value)
+		if drop {
+			return token
+		}
+		return field + "=" + v
 	default:
-		return token, false
+		return token
+	}
+}
+
+// slaIncidentCaseTypeSysID/slaQueryCaseTypeSysID are the two case_type
+// sys_ids that both map to Postgres work_item.type = 'CASE' -- the vendor's
+// own "Incident" and "Query" case-type categories, respectively. Identified
+// by cross-referencing the real, already-decoded rows in
+// entity-service/migrations/0250_sla_policy_case_condition_enums.sql: every
+// P0-P3 response/resolution definition combines
+// slaIncidentCaseTypeSysID with an explicit severity (priority=S0..S3), and
+// the one "none of the other known types" catch-all definition (id
+// 85fe07fa-1b76-4510-d64e-64a2604bcb4b) excludes every other known
+// case_type sys_id, slaIncidentCaseTypeSysID included, but never names
+// slaQueryCaseTypeSysID at all -- by elimination, that's the one case type
+// it exists to select.
+const (
+	slaIncidentCaseTypeSysID = "8d4b87bd1b18f010cb6898aebd4bcb59"
+	slaQueryCaseTypeSysID    = "0d5b8fbd1b18f010cb6898aebd4bcba5"
+)
+
+// translateIncidentQueryCaseType handles the one case_type distinction
+// Postgres cannot represent at all: Incident vs. Query. Both sys_ids decode
+// to the identical work_item.type ('CASE'), so CaseFacts.CaseType can never
+// tell them apart -- but severity can. Confirmed directly: Incident is case
+// severity S0-S3, Query is S4, and case_severity_enum has exactly five
+// values (migration 0023), so "not S4" and "S4" are complete,
+// non-overlapping characterizations of the two. This swaps the clause's
+// FIELD itself from case_type to priority, rather than translating the
+// VALUE the way every other case_type sys_id does, because case_type alone
+// has no value that could carry this distinction.
+//
+//	case_type=Incident-sysid  -> priority!=S4
+//	case_type!=Incident-sysid -> priority=S4
+//	case_type=Query-sysid     -> priority=S4
+//	case_type!=Query-sysid    -> priority!=S4
+//
+// negated is whether the original clause was "!=" (true) or "=" (false).
+// ok=false for any other value, so the caller falls back to the generic
+// case_type value translation (translateSLAConditionValue).
+//
+// Not applied inside an IN/NOT IN value list: confirmed absent from every
+// one of the 26 real, active case-policy rows (case_type there is only ever
+// a chain of "="/"!=" clauses -- see 0250_sla_policy_case_condition_enums.sql),
+// so decomposing a list member into a field-swapped predicate is left
+// unimplemented rather than guessed at.
+func translateIncidentQueryCaseType(value string, negated bool) (translated string, ok bool) {
+	switch value {
+	case slaIncidentCaseTypeSysID:
+		if negated {
+			return "priority=S4", true
+		}
+		return "priority!=S4", true
+	case slaQueryCaseTypeSysID:
+		if negated {
+			return "priority!=S4", true
+		}
+		return "priority=S4", true
+	default:
+		return "", false
 	}
 }
 
 // translateSLAConditionValue translates one clause's value according to
-// field's own vocabulary. drop=true only for a known-dead case_type sys_id
-// this table has no name for at all (see slaCaseTypeSysIDs' own doc
-// comment) or a malformed, empty value -- both confirmed, pre-existing
-// artifacts of the raw external data (migrations 0253/0258's own history),
-// not something a real policy edit would ever produce going forward.
+// field's own vocabulary. drop=true only for a malformed, empty value -- a
+// confirmed, pre-existing artifact of the raw external data (migration
+// 0258's own history), not something a real policy edit would ever produce
+// going forward.
 func translateSLAConditionValue(field, value string) (translated string, drop bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -237,9 +299,6 @@ func translateSLAConditionValue(field, value string) (translated string, drop bo
 			return label, false
 		}
 	case "case_type":
-		if value == slaDeadCaseTypeSysID {
-			return "", true
-		}
 		if name, ok := slaCaseTypeSysIDs[value]; ok {
 			return name, false
 		}
@@ -256,17 +315,21 @@ func translateSLAConditionValue(field, value string) (translated string, drop bo
 	// value already in its neutral spelling translates to itself; a value
 	// in neither vocabulary is passed through unchanged and will simply
 	// fail to match any real case, the same fail-closed outcome an
-	// unrecognized field already has).
+	// unrecognized field already has). Covers Hosting/Hosting Query/Hosting
+	// Task (deliberately not in slaCaseTypeSysIDs at all -- see that map's
+	// own doc comment): a positive clause against one of their raw sys_ids
+	// can never equal a real, decoded CaseType value (always false), and a
+	// negated one is vacuously true -- exactly "this policy branch is
+	// permanently inert," which is the intended, product-decided outcome.
 	return value, false
 }
 
 // translateSLAConditionValueList is translateSLAConditionValue applied to
 // every comma-separated member of an IN/NOT IN clause's value list. A
-// member this table drops (the dead case_type sys_id, or a blank entry) is
-// simply omitted from the translated list rather than dropping the whole
-// clause -- a membership list with the other, real values intact is still
-// meaningful, unlike a single-value equality clause with nothing left at
-// all.
+// member this drops (a blank entry) is simply omitted from the translated
+// list rather than dropping the whole clause -- a membership list with the
+// other, real values intact is still meaningful, unlike a single-value
+// equality clause with nothing left at all.
 func translateSLAConditionValueList(field, raw string) (translated string, drop bool) {
 	parts := strings.Split(raw, ",")
 	kept := make([]string, 0, len(parts))
@@ -329,16 +392,6 @@ var slaCaseSeverityCodes = map[string]string{
 	"13": "S4",
 }
 
-// slaDeadCaseTypeSysID is a case_type sys_id referenced by exactly one real
-// policy's exclusion list (the "Query" definition's own
-// "none of the other types" clause) that resolves to nothing in
-// slaCaseTypeSysIDs or any table in this schema -- confirmed, not a gap in
-// this map. Any clause naming it is dropped outright rather than left as an
-// unresolvable raw id, matching the one-time cleanup migration 0253 already
-// recorded by name; this constant is what makes that cleanup survive a
-// re-sync instead of needing to be re-applied by hand.
-const slaDeadCaseTypeSysID = "3f5b47bd1b18f010cb6898aebd4bcbc2"
-
 // slaCaseTypeSysIDs maps the external sync job's own case_type sys_ids to
 // this engine's own CaseFacts.CaseType vocabulary. Hand-maintained, like
 // every other sys_id-keyed lookup this codebase keeps as a Go map rather
@@ -346,17 +399,38 @@ const slaDeadCaseTypeSysID = "3f5b47bd1b18f010cb6898aebd4bcbc2"
 // snCaseTypeSysidMap, the source this was built from) -- a case type added
 // upstream with no entry here simply never matches any real case (fails
 // closed), the same limitation that map already has.
+//
+// Deliberately NOT here: the Incident/Query sys_ids
+// (slaIncidentCaseTypeSysID/slaQueryCaseTypeSysID) -- both decode to the
+// identical "case" work_item.type and so cannot be told apart through this
+// map at all; they're handled separately by translateIncidentQueryCaseType,
+// which swaps the clause's field to priority instead. Also deliberately NOT
+// here, by explicit product decision: Hosting/Hosting Query/Hosting Task
+// (won't be maintained going forward), and slaAdminTaskCaseTypeSysID (see
+// its own doc comment) -- all four fall through to
+// translateSLAConditionValue's generic "no translation known" path, which
+// passes them through as raw, untranslated text. A real CaseType value can
+// never equal a raw sys_id, so every policy gated on one of these types is
+// permanently inert (a positive clause always false, a negated one
+// vacuously true) -- the intended outcome for each, achieved with no
+// special-case code.
 var slaCaseTypeSysIDs = map[string]string{
-	"8d4b87bd1b18f010cb6898aebd4bcb59": "case",
-	"0d5b8fbd1b18f010cb6898aebd4bcba5": "case",
 	"5aeff1201b74c210264c997a234bcb54": "service_request",
 	"ab36479047ccf510a0a29cd3846d43ee": "security_report_analysis",
 	"3b8b43311b58f010cb6898aebd4bcb8f": "announcement",
 	"8f8fc2c41b0bd550d64e64a2604bcb38": "engagement",
-	"bfa1473c1bbcb410cb6898aebd4bcb52": "hosting",
-	"80810ff81bbcb410cb6898aebd4bcb3c": "hosting_query",
-	"f46103f81bbcb410cb6898aebd4bcb27": "hosting_task",
 }
+
+// slaAdminTaskCaseTypeSysID is the "Admin Task" case type upstream --
+// confirmed present in the real case-type picklist, just never covered by
+// snCaseTypeSysidMap (sn_case_service.go) from the very start, and
+// deliberately left unmapped here too: confirmed directly with the team
+// that Admin Task cases are no longer created at all, so there is nothing
+// left to map it to. Referenced only for this comment's own documentation
+// value -- no code branches on it; it falls through
+// translateSLAConditionValue's generic "no translation known" path exactly
+// like an sys_id this map has simply never heard of.
+const slaAdminTaskCaseTypeSysID = "3f5b47bd1b18f010cb6898aebd4bcbc2"
 
 // slaProductSysIDs maps every product sys_id this database's own "product"
 // table carries (product.id uses the same dashed-sys_id-as-primary-key
