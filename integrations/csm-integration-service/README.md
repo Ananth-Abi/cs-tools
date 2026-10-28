@@ -237,6 +237,8 @@ Notes:
 - There are no log-level or other tuning variables; logging is structured text to stderr
   at the default `slog` level.
 - Timeouts and the 1 MiB body limit are constants in code, not configuration.
+- `UMT_INTEGRATION_ACTOR_EMAIL` is not yet listed in `.env.example`; add it to your `.env`
+  if you use the case comment or tag endpoints.
 
 ## API endpoints
 
