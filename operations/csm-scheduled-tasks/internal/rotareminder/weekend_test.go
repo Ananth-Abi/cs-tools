@@ -445,11 +445,27 @@ func TestValidInviteAddressAndScheduleURL(t *testing.T) {
 	for s, want := range map[string]string{"rota@example.com": "rota@example.com", " rota@example.com ": "rota@example.com",
 		"WSO2 Customer Service <no-reply@example.com>": "no-reply@example.com", `"Rota, CSM" <rota@example.com>`: "rota@example.com",
 		"": "", "rota": "", "Rota <rota>": "", "Rota <rota@example.com>\r\nX: y": "", "Rota\n <rota@example.com>": "",
-		"a <b@example.com>, c <d@example.com>": ""} {
+		"a <b@example.com>, c <d@example.com>": "",
+		// A control character at either end is refused too, not trimmed away.
+		"Rota <rota@example.com>\r\n": "", "rota@example.com\n": "", "\trota@example.com": "", "\x00Rota <rota@example.com>": ""} {
 		got, ok := InviteOrganizer(s)
 		if got != want || ok != (want != "") {
 			t.Errorf("InviteOrganizer(%q) = %q, %v; want %q", s, got, ok, want)
 		}
+	}
+	// An address goes into an invitation as a mailto URI, a character a URI
+	// cannot hold percent-encoded; an everyday address is unchanged.
+	for s, want := range map[string]string{"rota@example.com": "mailto:rota@example.com",
+		"first.last+tag@example.com": "mailto:first.last+tag@example.com", "ops?tag@example.com": "mailto:ops%3Ftag@example.com",
+		"a#b@example.com": "mailto:a%23b@example.com", "a%b@example.com": "mailto:a%25b@example.com", "a/b=c@example.com": "mailto:a%2Fb%3Dc@example.com"} {
+		if got := mailtoURI(s); got != want {
+			t.Errorf("mailtoURI(%q) = %q; want %q", s, got, want)
+		}
+	}
+	ics := string(Invite{UID: "u@x", OrganizerName: "CSM", OrganizerEmail: "ops?tag@example.com",
+		Attendees: []Attendee{{Name: "Ann", Email: "ann#1@example.com"}}}.ICS())
+	if !strings.Contains(ics, "ORGANIZER;CN=CSM:mailto:ops%3Ftag@example.com\r\n") || !strings.Contains(unfolded([]byte(ics)), ":mailto:ann%231@example.com\r\n") {
+		t.Errorf("invite addresses are not encoded:\n%s", ics)
 	}
 	for s, want := range map[string]bool{"https://portal.example.com/x": true, "http://localhost:3000": true, "": false,
 		"javascript:alert(1)": false, "https://": false, "https://a.example.com/x\ny": false, "/team-schedule": false} {

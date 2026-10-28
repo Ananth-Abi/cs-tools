@@ -130,14 +130,14 @@ func (inv Invite) ICS() []byte {
 		line("URL:" + inv.URL)
 	}
 	if ValidInviteAddress(inv.OrganizerEmail) {
-		line(fmt.Sprintf("ORGANIZER;CN=%s:mailto:%s", paramValue(inv.OrganizerName), inv.OrganizerEmail))
+		line(fmt.Sprintf("ORGANIZER;CN=%s:%s", paramValue(inv.OrganizerName), mailtoURI(inv.OrganizerEmail)))
 	}
 	for _, a := range inv.Attendees {
 		if !ValidInviteAddress(a.Email) {
 			continue
 		}
-		line(fmt.Sprintf("ATTENDEE;CN=%s;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:%s",
-			paramValue(a.Name), a.Email))
+		line(fmt.Sprintf("ATTENDEE;CN=%s;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:%s",
+			paramValue(a.Name), mailtoURI(a.Email)))
 	}
 	if inv.Cancel {
 		line("STATUS:CANCELLED")
@@ -174,6 +174,23 @@ func paramValue(s string) string {
 	return s
 }
 
+// mailtoURI is a plain address as a mailto URI (RFC 6068): a character an
+// address may hold but a URI may not, such as "?" (which would start a query),
+// "#" or "%", is percent-encoded. An everyday address is unchanged.
+func mailtoURI(address string) string {
+	var b strings.Builder
+	b.WriteString("mailto:")
+	for i := 0; i < len(address); i++ {
+		c := address[i]
+		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("-._~!$'()*+,;:@", c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
+}
+
 // withoutControls drops every control character (a line break included).
 func withoutControls(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -200,11 +217,16 @@ func ValidInviteAddress(s string) bool {
 // as it is, or the address inside "Name <address>", whose name the emails keep.
 // ok is false when there is no plain address to name.
 func InviteOrganizer(from string) (address string, ok bool) {
+	// A control character anywhere, ends included, refuses the sender: the
+	// emails go out with it as given, so trimming one away would hide it.
+	if strings.ContainsFunc(from, unicode.IsControl) {
+		return "", false
+	}
 	from = strings.TrimSpace(from)
 	if ValidInviteAddress(from) {
 		return from, true
 	}
-	if from == "" || strings.ContainsFunc(from, unicode.IsControl) {
+	if from == "" {
 		return "", false
 	}
 	a, err := mail.ParseAddress(from)
