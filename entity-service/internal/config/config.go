@@ -232,10 +232,11 @@ type Config struct {
 	// own doc comment.
 	AttachmentDataSource AttachmentDataSource
 	// CSMSLAEngineEnabled gates this service's own in-process SLA clock
-	// engine (internal/service/sla_engine_service.go, source='SERVICENOW'
-	// "sla" rows -- see repository.SLAEngineRepository's own doc comment
-	// for why this engine's clocks carry that tag rather than a separate
-	// 'CSM' one) -- independently of DataSource/SLADataSource, and
+	// engine (internal/service/sla_engine_service.go, source='CSM' "sla"
+	// rows -- see repository.SLAEngineRepository's own doc comment for why
+	// this engine's clocks must never carry the 'SERVICENOW' tag instead, a
+	// real external sync job's own ownership tag) -- independently of
+	// DataSource/SLADataSource, and
 	// independently of whether an external SLA engine is also tracking the
 	// same case. Defaults to true: this engine is meant to run on every
 	// deployment regardless of data source, not just the ones that already
@@ -252,14 +253,13 @@ type Config struct {
 	// external system's own synced rows as the only SLA truth, with this
 	// engine never writing a row of its own at all.
 	//
-	// Both this engine and an external sync can in principle write a
-	// source='SERVICENOW' row for the same work_item_id/target now that the
-	// two are no longer kept apart by a dedicated tag -- this engine only
-	// ever reads/writes the specific (work_item_id, target) pair it just
-	// resolved a policy for (never a blind table-wide scan), so it cannot
-	// clobber an unrelated row, but a deployment that also runs an external
-	// sync against the same cases should confirm the two are not expected
-	// to manage the identical (work_item_id, target) pair.
+	// This engine's own clocks (source='CSM') and the external ServiceNow
+	// sync's rows (source='SERVICENOW', confirmed real and continuously
+	// running -- digiops-cs/csm-sync-service's own
+	// configs/mappings/task_sla.yaml maps ServiceNow's task_sla table
+	// straight into this database's "sla" table) are kept apart by that tag
+	// precisely so the two can never collide on the same (work_item_id,
+	// target) pair -- a dual-write-mode case can genuinely have both.
 	//
 	// Known limitation: flipping this to false only stops NEW writes --
 	// any row this engine already registered and left IN_PROGRESS/BREACHED

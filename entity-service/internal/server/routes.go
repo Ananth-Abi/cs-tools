@@ -1000,10 +1000,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 
 	// This service's own in-process SLA engine (internal/service/sla_engine_service.go)
-	// writes source='SERVICENOW' rows into the "sla" table (migration 0134's
-	// enum -- see repository.SLAEngineRepository's own doc comment for why
-	// this engine's clocks aren't tagged with a separate 'CSM' value),
-	// resolving durations AND applicability from the real, decoded
+	// writes source='CSM' rows into the "sla" table (migration 0134's own
+	// original enum intent -- see repository.SLAEngineRepository's own doc
+	// comment for why this engine's clocks must never carry the
+	// 'SERVICENOW' tag, which belongs to a real, independent external sync
+	// job), resolving durations AND applicability from the real, decoded
 	// sla_policy conditions (migrations 0250-0258). Gated on db (same reason slaStatusHandler
 	// above is -- nowhere to store a clock at all with no database
 	// configured) AND on cfg.CSMSLAEngineEnabled -- an explicit, named

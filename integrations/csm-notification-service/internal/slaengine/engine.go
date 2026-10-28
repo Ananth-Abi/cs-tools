@@ -779,7 +779,7 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 		// stays down past this clock's real due time), fall back to
 		// entity-service's own live record for this one case -- see
 		// processDueMemberFallback's own doc comment.
-		return e.processDueMemberFallback(ctx, caseID, clockType, member)
+		return e.processDueMemberFallback(ctx, caseID, clockType, member, tier)
 	}
 	if !found {
 		return e.store.RemoveWake(ctx, member)
@@ -864,14 +864,30 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 //
 // Tier selection does not consult this engine's own alertedTier cursor at
 // all (Redis, the only place that cursor lives, is exactly what's
-// unreachable) — instead it sends only the single highest tier the clock's
-// current live percent-elapsed has newly crossed (highestNewlyCrossedTier),
-// discarding any lower, already-stale tier rather than sending one alert
-// per crossed threshold. An AdvanceAlertedTier write is still attempted
-// afterward, best-effort, so a later successful Redis read doesn't resend
-// the same tier once Redis recovers — see that call's own comment for why a
-// failure there is only logged, not returned.
-func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType, member string) error {
+// unreachable) — instead it computes the single highest tier the clock's
+// current live percent-elapsed has newly crossed (highestNewlyCrossedTier)
+// and only sends when that highest tier is THIS specific wake member's own
+// tier (memberTier). This matters because processDueMember calls this
+// function once per due wake member, independently — if both the 50% and
+// 75% wake members are due in the same tick (or across a short string of
+// ticks while Redis stays down) and the live percentage is already past
+// 75%, highestNewlyCrossedTier would answer "75" for BOTH calls; without
+// the memberTier comparison, both calls would send the identical "75%"
+// alert, a real, code-review-found duplicate-alerting bug. Comparing
+// against memberTier makes exactly one of those two calls actually alert
+// (the 75% one); the 50% call recognizes its own threshold is superseded
+// and only cleans up. Every due member is still removed from the wake
+// index here, win or lose — not just the one that alerts — so repeated
+// Redis failures can't leave a stale member to be resent once Redis
+// recovers (a second real bug the same review caught: the original version
+// alerted without ever calling RemoveWake, so an outage spanning several
+// ticks could resend the same degraded alert every tick, and a later
+// successful Redis read could re-examine and re-alert on members this
+// fallback had already handled). An AdvanceAlertedTier write is still
+// attempted after a genuine send, best-effort, so a later successful Redis
+// read doesn't resend the same tier once Redis recovers — see that call's
+// own comment for why a failure there is only logged, not returned.
+func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType, member string, memberTier int) error {
 	if e.entity == nil {
 		return fmt.Errorf("redis unavailable for %s and no entity-service client configured for fallback", member)
 	}
@@ -892,23 +908,42 @@ func (e *Engine) processDueMemberFallback(ctx context.Context, caseID, clockType
 		return nil
 	}
 
-	tier := highestNewlyCrossedTier(state.BusinessElapsedPercent, 0)
-	if tier == 0 {
+	highest := highestNewlyCrossedTier(state.BusinessElapsedPercent, 0)
+	if highest == 0 {
 		return nil
 	}
 
-	slog.WarnContext(ctx, "slaengine: redis unavailable, sending a degraded breach alert from entity-service's own live state", "caseId", caseID, "clockType", clockType, "tier", tier, "businessElapsedPercent", state.BusinessElapsedPercent)
-	meta := ClockMeta{CaseNumber: caseID, StartedAt: *state.StartedOn}
-	e.sendBreachAlert(ctx, meta, caseID, clockType, tier)
+	if highest != memberTier {
+		// A different wake member -- due now or very recently -- is this
+		// clock's own highest newly-crossed tier per entity-service's live
+		// reading, and that call is the one that actually alerts; this
+		// member's own threshold is superseded, so it's removed (handled,
+		// same as the normal Redis-available path would for a due member)
+		// without sending anything, avoiding the duplicate "both 50% and
+		// 75% fire the same 75% alert" bug this comparison exists to close.
+		if err := e.store.RemoveWake(ctx, member); err != nil {
+			slog.WarnContext(ctx, "slaengine: fallback: failed to remove a wake entry superseded by a higher newly-crossed tier", "caseId", caseID, "clockType", clockType, "memberTier", memberTier, "highestTier", highest, "err", err)
+		}
+		return nil
+	}
 
-	// Best-effort: record the tier as alerted so a later, successful Redis
-	// read doesn't resend it. A failure here is only logged -- the degraded
+	slog.WarnContext(ctx, "slaengine: redis unavailable, sending a degraded breach alert from entity-service's own live state", "caseId", caseID, "clockType", clockType, "tier", highest, "businessElapsedPercent", state.BusinessElapsedPercent)
+	meta := ClockMeta{CaseNumber: caseID, StartedAt: *state.StartedOn}
+	e.sendBreachAlert(ctx, meta, caseID, clockType, highest)
+
+	// Best-effort: record the tier as alerted, and remove this member's own
+	// wake entry, so neither a later successful Redis read nor a repeated
+	// fallback run (Redis still down on the next tick) resends this exact
+	// alert. Both are logged only, never returned/retried -- the degraded
 	// alert has already gone out, and returning an error would just cause a
 	// retry that resends the SAME degraded alert again, which is worse than
-	// the small, accepted risk of a duplicate if Redis stays down and this
-	// fallback runs again before it recovers.
-	if _, err := e.store.AdvanceAlertedTier(ctx, caseID, clockType, tier, *state.StartedOn); err != nil {
-		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not record the alerted-tier cursor, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", tier, "err", err)
+	// the small, accepted risk of a duplicate if Redis stays down and
+	// either write fails.
+	if _, err := e.store.AdvanceAlertedTier(ctx, caseID, clockType, highest, *state.StartedOn); err != nil {
+		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not record the alerted-tier cursor, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)
+	}
+	if err := e.store.RemoveWake(ctx, member); err != nil {
+		slog.WarnContext(ctx, "slaengine: fallback alert sent but could not remove its own wake entry, a duplicate is possible if redis stays down", "caseId", caseID, "clockType", clockType, "tier", highest, "err", err)
 	}
 	return nil
 }

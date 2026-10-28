@@ -2516,27 +2516,42 @@ Query/SecReport Analysis family) on no severity at all.
   (`sla_engine_repo.go`) for a live business-day row and leave every other
   row (24x7, or `PAUSED`/terminal regardless of schedule) reading
   `sla_live`'s own value unchanged, since those are already correct.
-- **This engine's own clocks are now tagged `source='SERVICENOW'`, not a
-  separate `'CSM'` value** (migration `0134`'s enum) — a deliberate
-  departure from that migration's own original comment ("`'CSM'` rows are
-  exclusively owned by the CSM-native engine ... the two never share a
-  row"), made now that this engine's own clocks are themselves driven by
-  real `sla_policy` data rather than a synthetic substitute. See
-  `repository.SLAEngineRepository`'s own doc comment for the exact
-  reasoning and the one residual risk it calls out (a genuinely separate
-  external writer using `'SERVICENOW'` for the identical
-  `work_item_id`/`target` pair is no longer kept apart by source alone).
-  Pre-existing `source='CSM'` rows from before this change are untouched
-  and still readable (`GET /sla-status?source=csm` still works against
-  them) — nothing retags history. **Verified, not just assumed, against
-  live staging data**: of 1268 real `source='CSM'` rows, zero are on a
-  case that isn't already `CLOSED` (across every target, including
-  `RESPONSE`) — so `GetCaseFacts`'s `CSEngineerResponseComment` check,
-  scoped to `source='SERVICENOW'` only, has no live `CSM`-tagged row it
-  could be missing on an open case today. Also confirmed:
+- **This engine's own clocks are tagged `source='CSM'`** (migration `0134`'s
+  enum) — this is migration `0134`'s own original intent, unchanged:
+  `'CSM'` rows are exclusively owned by this in-process engine, `'SERVICENOW'`
+  rows are exclusively owned by the ServiceNow sync job, and the two never
+  share a row. **This was briefly, wrongly changed to `'SERVICENOW'` for a
+  while, then reverted.** The change was made on a misreading: a
+  stale-looking `s.source = 'CSM'` filter was read as leftover wiring from
+  the old, deleted, name-keyed CSM-policy engine (migration `0203`, dropped
+  by `0259`) rather than what it actually is — this engine's own OWNERSHIP
+  TAG, a concept that didn't change at all when the name-keyed resolver was
+  replaced by the condition-driven one. **Confirmed concretely, not just by
+  re-reading the migration comment**: `digiops-cs/csm-sync-service` (a
+  separate repo sharing this exact database) has its own
+  `configs/mappings/task_sla.yaml`, which maps ServiceNow's `task_sla` table
+  directly into this database's `sla` table (`sync.tier: fast` — runs
+  continuously) and tags every row it writes `source='SERVICENOW'` — a
+  real, independent, live external writer, not a hypothetical one. Tagging
+  this engine's own clocks `'SERVICENOW'` too let them collide with that
+  sync job's rows for the same `(work_item_id, target)` pair on a
+  dual-write-mode case — each process silently overwriting state the other
+  owned. **`'SERVICENOW'` must never be reused for an engine-managed clock
+  again.** See `repository.SLAEngineRepository`'s own doc comment for the
+  full reasoning. Every `GetClockState`/`SearchActiveSLAStatuses` caller
+  that wants only this engine's own clocks (not just the bulk listing —
+  `GetClockState`'s own single-clock lookup matters just as much, since
+  csm-notification-service's pre-alert check reads through it) must pass
+  `source=csm` explicitly; both already accept the identical query
+  parameter, so this is a calling-convention fix, not a schema change.
+  **Verified, not just assumed, against live staging data**: of 1268 real
+  `source='CSM'` rows, zero are on a case that isn't already `CLOSED`
+  (across every target, including `RESPONSE`) — so `GetCaseFacts`'s
+  `CSEngineerResponseComment` check, scoped to `source='CSM'`, has no live
+  row it could be missing on an open case today. Also confirmed:
   `sla_engine_repo.go` remains the only code path in this repo that writes
-  to the `sla` table, under every `DATA_SOURCE` mode — nothing else shares
-  the `source='SERVICENOW'` tag with a second, independent writer.
+  to the `sla` table, under every `DATA_SOURCE` mode — the ServiceNow sync
+  job is the only other writer, and it is external to this repo entirely.
 
 ### CSM-native SLA clock engine (historical — the resolution mechanism below no longer exists)
 

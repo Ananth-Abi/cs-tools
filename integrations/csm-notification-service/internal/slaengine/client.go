@@ -147,19 +147,20 @@ type slaDurationPolicyResponse struct {
 // own uppercase English word ("CATASTROPHIC"), matching
 // events.CaseCreatedPayload.Priority exactly.
 //
-// NOTE: entity-service removed GET /sla-duration-policy and the static
-// sla_duration_policy table it served — real per-policy durations now live
-// directly on "sla"/"sla_policy" (see entity-service's own CLAUDE.md), and
-// this Engine no longer calls this method at all (RegisterClocks/
-// reconcileClock both get their duration from activeSLAClock.DurationSeconds/
-// clockState.DurationSeconds instead — see each one's own doc comment). This
-// method is kept, unchanged, purely because internal/paging's own rung-email
-// feature (cmd/server/main.go's slaDurations/RungEmailSending.SLADurations)
-// still calls it for its "response SLA remaining time" display — a
-// deliberately separate, pre-existing feature this change does not touch.
-// With the endpoint gone, this call now always fails at startup; that
-// feature's own documented fallback ("nil; the email then uses the
-// published defaults") already handles this gracefully.
+// NOTE: entity-service dropped the static sla_duration_policy table GET
+// /sla-duration-policy used to serve, but the endpoint itself is still
+// live — it now computes its response from the real "sla_policy" table
+// instead (see entity-service's own CLAUDE.md), and this Engine no longer
+// calls this method at all (RegisterClocks/reconcileClock both get their
+// duration from activeSLAClock.DurationSeconds/clockState.DurationSeconds
+// instead — see each one's own doc comment). This method is kept,
+// unchanged, purely because internal/paging's own rung-email feature
+// (cmd/server/main.go's slaDurations/RungEmailSending.SLADurations) is a
+// real, live consumer of it for its "response SLA remaining time" display —
+// a deliberately separate, pre-existing feature this change does not
+// touch. This was briefly, mistakenly assumed dead and the endpoint
+// deleted entirely at one point, then restored once that was caught — see
+// entity-service's own CLAUDE.md for that history.
 func (c *EntityClient) GetDurationPolicy(ctx context.Context) (map[string]map[string]time.Duration, error) {
 	respBody, err := c.do(ctx, http.MethodGet, "/sla-duration-policy", nil)
 	if err != nil {
@@ -200,8 +201,9 @@ type activeSLAClock struct {
 	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
 	// DurationSeconds is the clock's own resolved sla_policy duration
 	// (entity-service's domain.SLAStatus.DurationSeconds) — reconcileClock
-	// reads this directly instead of a static, severity-keyed duration
-	// table (GET /sla-duration-policy, now removed — see that method's own
+	// reads this directly instead of the static, severity-keyed duration
+	// table GET /sla-duration-policy used to serve (that endpoint is still
+	// live, just repointed to sla_policy now — see GetDurationPolicy's own
 	// doc comment), since this bulk fetch already carries it with no extra
 	// round trip needed.
 	DurationSeconds int64 `json:"durationSeconds"`
@@ -229,41 +231,48 @@ type searchActiveSLAStatusResponse struct {
 	Offset   int              `json:"offset"`
 }
 
-// slaEngineSourceFilter is the sla.source value this engine's own clocks now
-// carry — entity-service's condition-driven SLA engine tags every clock it
-// registers 'SERVICENOW', not a separate 'CSM' value, now that it resolves
-// real ServiceNow-synced sla_policy conditions directly rather than a
-// synthetic CSM-only substitute (see entity-service's own CLAUDE.md,
-// repository.SLAEngineRepository's doc comment, for the full reasoning and
-// the one residual risk it calls out: a genuinely separate external writer
-// using 'SERVICENOW' for the identical work_item/target pair is no longer
-// kept apart by source alone). This was 'csm' until that change; every call
-// in this file that scopes a GET /sla-status(/clock-state) read to this
-// engine's own rows must use this constant, not a literal, so the two can
-// never drift apart again.
-const slaEngineSourceFilter = "servicenow"
+// slaEngineSourceFilter is the sla.source value entity-service's own
+// in-process SLA engine tags every clock it registers — 'csm', migration
+// 0134's own original, unchanged intent: 'CSM' rows are owned by that
+// in-process engine, 'SERVICENOW' rows are owned by a real, independent,
+// continuously-running external sync job (confirmed:
+// digiops-cs/csm-sync-service's own configs/mappings/task_sla.yaml maps
+// ServiceNow's task_sla table directly into the shared "sla" table). Every
+// call in this file that scopes a GET /sla-status(/clock-state) read to
+// this engine's own rows must use this constant, not a literal, so the two
+// can never drift apart.
+//
+// **This was briefly, wrongly set to "servicenow" and then reverted.** The
+// change was made on a misreading of entity-service's own ownership tag as
+// if it meant "the old, deleted, name-keyed CSM-policy engine" rather than
+// what it actually is — this engine's OWNERSHIP TAG, unchanged in meaning
+// across that engine's redesign. Setting it to "servicenow" made this
+// client's GetActiveCSMSLAClocks/GetClockState calls scope to the SAME rows
+// the ServiceNow sync job owns — a pre-alert check (GetClockState) could
+// then pick up an unrelated synced row for the same case instead of this
+// engine's own, and the bulk reconciliation pass could ingest sync-owned
+// rows as if they were its own. See entity-service's own CLAUDE.md
+// (`repository.SLAEngineRepository`'s doc comment) for the full story.
+const slaEngineSourceFilter = "csm"
 
 // activeSLAStatusPageSize is this client's own page size for
 // GetActiveCSMSLAClocks — well under entity-service's own 2000-row cap
 // (internal/service/sla_status_service.go's maxSLAStatusLimit), chosen
 // purely so one slow page can't single-handedly reproduce the gateway
 // timeout the abandoned poll design hit (see this package's own doc
-// comment above) — this call is scoped to source=servicenow (see
+// comment above) — this call is scoped to source=csm (see
 // slaEngineSourceFilter), a much smaller row set than that design ever had
 // to page through, but there's no reason to risk a single, large round trip
 // when several small ones cost nothing extra at startup.
 const activeSLAStatusPageSize = 200
 
-// GetActiveCSMSLAClocks calls GET /sla-status?source=servicenow, paging
+// GetActiveCSMSLAClocks calls GET /sla-status?source=csm, paging
 // through every currently-open clock this engine's own entity-service
 // counterpart is tracking, and returns the full, flattened list. Called
 // once, from Engine.Reconcile, itself called once at process startup (see
 // that method's own doc comment for why) — never on a recurring basis,
 // unlike the poll design this package's own doc comment describes
-// abandoning GET /sla-status for. The method name/"CSM" in its own doc
-// comments below predates entity-service's source-tag rename (see
-// slaEngineSourceFilter's own doc comment) — kept as-is rather than
-// renamed, since "this engine's own clocks" is still exactly what it means.
+// abandoning GET /sla-status for.
 func (c *EntityClient) GetActiveCSMSLAClocks(ctx context.Context) ([]activeSLAClock, error) {
 	var all []activeSLAClock
 	offset := 0
@@ -321,8 +330,10 @@ type clockState struct {
 	// DurationSeconds mirrors entity-service's own
 	// domain.SLAClockState.DurationSeconds — the clock's real, resolved
 	// policy duration. RegisterClocks reads this to schedule tier
-	// checkpoints from the real per-policy duration instead of a static,
-	// severity-keyed table (GET /sla-duration-policy, now removed).
+	// checkpoints from the real per-policy duration instead of the static,
+	// severity-keyed table GET /sla-duration-policy used to serve (still
+	// live, repointed to sla_policy now — see GetDurationPolicy's own doc
+	// comment).
 	DurationSeconds int64 `json:"durationSeconds"`
 	// Schedule mirrors entity-service's own
 	// domain.SLAClockState.Schedule — see activeSLAClock.Schedule's own doc
@@ -330,7 +341,7 @@ type clockState struct {
 	Schedule string `json:"schedule"`
 }
 
-// GetClockState calls GET /sla-status/clock-state?workItemId=<caseID>&target=<clockType>&source=servicenow
+// GetClockState calls GET /sla-status/clock-state?workItemId=<caseID>&target=<clockType>&source=csm
 // and returns entity-service's own durable record for this exact clock,
 // right before a breach alert for it is actually sent (Engine.
 // sendBreachAlert) — a last, authoritative check against the real source of

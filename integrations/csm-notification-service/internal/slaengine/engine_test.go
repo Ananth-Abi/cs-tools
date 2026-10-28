@@ -1783,10 +1783,52 @@ func TestTick_RedisUnavailable_EntityServiceAlsoUnavailable_ReturnsError(t *test
 }
 
 // TestTick_RedisUnavailable_MultipleTiersCrossed_OnlySendsTheHighest is the
-// direct regression for the stale-tier-discard requirement: a case whose
-// percent has already crossed both 50% and 75% must only ever get ONE
-// degraded alert, for 75 -- never a backdated 50 as well.
+// direct regression for a real, code-review-found bug: when BOTH the 50%
+// and 75% wake members are due in the same tick (the realistic shape --
+// RegisterClocks schedules all three tier wake entries up front, so a
+// prolonged Redis outage naturally leaves every one of them sitting in the
+// wake index until each is individually handled, and they become due
+// together once their due-instants have all passed) and live percent has
+// already crossed both, the case must get exactly ONE degraded alert, for
+// 75 -- never two identical "tier 75" sends (the original bug: each due
+// member independently computed the same highestNewlyCrossedTier and both
+// fired), and never a backdated 50 either.
 func TestTick_RedisUnavailable_MultipleTiersCrossed_OnlySendsTheHighest(t *testing.T) {
+	base := newFakeStore()
+	startedAt := time.Now().Add(-2 * time.Hour)
+	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
+	base.wake[wakeMember("case-1", ClockResponse, 75)] = time.Now().Add(-30 * time.Second)
+	st := &alwaysFailingGetClockStore{fakeStore: base}
+
+	chat := &fakeChat{}
+	e := newTestEngine(st, chat, &fakePublisher{})
+	e.entity = &fakeEntityClockStatus{states: map[string]clockState{
+		"case-1|response": {Found: true, StartedOn: &startedAt, BusinessElapsedPercent: 80, Stage: "IN_PROGRESS"},
+	}}
+
+	if err := e.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatalf("Tick() error = %v, want nil", err)
+	}
+	if len(chat.calls) != 1 {
+		t.Fatalf("chat calls = %+v, want exactly one degraded alert, not one per due member", chat.calls)
+	}
+	if chat.calls[0].tier != "75" {
+		t.Errorf("chat calls[0].tier = %q, want %q (the highest actually crossed; 80%% has not reached 100)", chat.calls[0].tier, "75")
+	}
+	for _, tier := range []int{50, 75} {
+		if _, ok := base.wake[wakeMember("case-1", ClockResponse, tier)]; ok {
+			t.Errorf("wake entry for tier %d still present, want it removed (both due members must be cleaned up, win or lose, so repeated outages can't resend)", tier)
+		}
+	}
+}
+
+// TestTick_RedisUnavailable_SingleDueMemberBelowTheLiveHighest_IsDroppedNotMisreported
+// confirms a single due member whose own tier is BELOW the clock's true
+// live-percent highest (e.g. its sibling, higher-tier wake member already
+// fired in an earlier tick and was removed) is dropped silently rather than
+// mis-reported under its own, now-stale tier number -- the fix must not
+// trade "duplicate alerts" for "alerts sent under the wrong tier label."
+func TestTick_RedisUnavailable_SingleDueMemberBelowTheLiveHighest_IsDroppedNotMisreported(t *testing.T) {
 	base := newFakeStore()
 	startedAt := time.Now().Add(-2 * time.Hour)
 	base.wake[wakeMember("case-1", ClockResponse, 50)] = time.Now().Add(-time.Minute)
@@ -1801,11 +1843,11 @@ func TestTick_RedisUnavailable_MultipleTiersCrossed_OnlySendsTheHighest(t *testi
 	if err := e.Tick(context.Background(), time.Now()); err != nil {
 		t.Fatalf("Tick() error = %v, want nil", err)
 	}
-	if len(chat.calls) != 1 {
-		t.Fatalf("chat calls = %+v, want exactly one degraded alert, not one per crossed tier", chat.calls)
+	if len(chat.calls) != 0 {
+		t.Fatalf("chat calls = %+v, want none -- the due member's own tier (50) no longer matches the live highest (100)", chat.calls)
 	}
-	if chat.calls[0].tier != "100" {
-		t.Errorf("chat calls[0].tier = %q, want %q (the highest crossed, never a stale lower one)", chat.calls[0].tier, "100")
+	if _, ok := base.wake[wakeMember("case-1", ClockResponse, 50)]; ok {
+		t.Error("stale wake entry for tier 50 still present, want it removed")
 	}
 }
 

@@ -27,11 +27,12 @@ import (
 )
 
 // SLAEngineService is this service's own in-process SLA clock engine: it
-// registers, completes, pauses, resumes and cancels source='SERVICENOW' "sla"
-// rows (migration 0134's enum -- see repository.SLAEngineRepository's own
-// doc comment for why this engine's own clocks carry that tag rather than a
-// separate 'CSM' one now) in reaction to case-lifecycle events, sourcing
-// real durations AND
+// registers, completes, pauses, resumes and cancels source='CSM' "sla"
+// rows (migration 0134's own original enum intent -- see
+// repository.SLAEngineRepository's own doc comment for why this engine's
+// own clocks must never carry the 'SERVICENOW' tag, which belongs to a
+// real, independent, continuously-running external sync job) in reaction
+// to case-lifecycle events, sourcing real durations AND
 // real applicability from the actual, ServiceNow-synced, source='SERVICENOW'
 // sla_policy rows (decoded by migrations 0250-0258) -- evaluated via
 // internal/slacondition against the case's own current field values
@@ -54,7 +55,7 @@ import (
 // these run, and treating an SLA-tracking hiccup as a failed case mutation
 // would be strictly worse than tracking nothing.
 type SLAEngineService interface {
-	// RegisterCaseClocks resolves and registers a new source='SERVICENOW'
+	// RegisterCaseClocks resolves and registers a new source='CSM'
 	// "sla" row for every clock target (RESPONSE/WORKAROUND/RESOLUTION) whose
 	// current real sla_policy start_condition matches the case -- called
 	// once, from CreateCase, right after a case is created. projectID is

@@ -774,10 +774,12 @@ const (
 	// ledger for what it is.
 	PortalMembershipWriteEventType = "PORTAL_WRITE"
 	// SLAEngineActor is created_by/updated_by for every "sla" row this
-	// service's own in-process SLA engine writes (tagged source='SERVICENOW',
-	// migration 0134's enum -- see repository.SLAEngineRepository's own doc
-	// comment for why -- same as an external sync's rows) -- distinguishes
-	// its own rows in the audit columns regardless of source value. See
+	// service's own in-process SLA engine writes (tagged source='CSM',
+	// migration 0134's own original intent -- see
+	// repository.SLAEngineRepository's own doc comment for why this must
+	// never be 'SERVICENOW', the tag a real, independent external sync job
+	// uses for its own rows) -- distinguishes its own rows in the audit
+	// columns regardless of source value. See
 	// internal/service/sla_policy_resolver.go.
 	SLAEngineActor = "sla-engine"
 	// ProductVulnerabilitySyncActor is created_by/updated_by for every
