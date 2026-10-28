@@ -8422,8 +8422,23 @@ previous one) and the **latest report by `counted_on`** for anything else (users
 organisations, cores, MAU). It used to store the reported count as the day's value, so a
 counter published every hour showed only its last hour. A `FILE_UPLOAD` row (an offline
 report) for the same node, day and type is a separate row and is never touched. A report the
-product re-sends after a timeout is counted twice -- the endpoint has no request id to
-deduplicate on.
+product re-sends after a timeout is stored once: the hourly insert skips a row that already
+exists for the same node, count type and `counted_on` (the endpoint has no request id, so the
+report's own timestamp is the key; `RetriedReportsAreCountedOnce`).
+
+**Reading the daily table: one row per node, type and day.** Nothing stops a connected
+customer from also uploading a report that covers days the product already published, so a
+node-day can hold both an `API_CALL` and a `FILE_UPLOAD` row. The daily reads behind the
+portals' usage views (`SearchDeployedProductMetrics`' CORES rows,
+`SearchDeployedProductUsageCounts`, `SearchInstanceUsageStats`) used to `SUM` every row of a
+node, type and day, which added the two: 8 cores showed as 16, 1,000 transactions as 2,000.
+They now keep one row per node, type and day (`dailyUsageSourcePreference`: a row with a
+value, then the live row, then the latest updated) -- the same choice `rollup_monthly_usage`
+makes, so the daily views and the monthly table agree. An explicit `dataSource` filter still
+returns that source's rows alone. `data_source` is nullable (0054), and under `DESC` a NULL
+comparison sorts ahead of `TRUE`, so both test the live row with `IS TRUE`: a row with no
+source ranks with the uploaded ones. Migration 0250 redefines `rollup_monthly_usage` for that
+one change, since 0245 had already run on servers.
 
 **Project/Deployment/DeployedProduct references, verified against staging.**
 `deployment_node.product_version_id` is a real foreign key, so `Product` is
