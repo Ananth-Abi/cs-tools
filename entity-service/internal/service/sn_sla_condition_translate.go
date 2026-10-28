@@ -248,10 +248,25 @@ const (
 // VALUE the way every other case_type sys_id does, because case_type alone
 // has no value that could carry this distinction.
 //
-//	case_type=Incident-sysid  -> priority!=S4
-//	case_type!=Incident-sysid -> priority=S4
+//	case_type=Incident-sysid  -> priorityINS0,S1,S2,S3
+//	case_type!=Incident-sysid -> priorityNOT INS0,S1,S2,S3
 //	case_type=Query-sysid     -> priority=S4
 //	case_type!=Query-sysid    -> priority!=S4
+//
+// Incident's own pair uses membership (IN/NOT IN), not "!=S4"/"=S4", even
+// though the two are equivalent for a case that actually HAS a severity:
+// internal/slacondition's OpNotEqual treats a missing field as "not equal to
+// anything" (true) -- correct for a genuinely absent value, but wrong here,
+// since a non-case-type work item (engagement, service_request, ...) always
+// has an empty severity and would then satisfy a positive "priority!=S4"
+// Incident condition it has no business matching, registering a bogus clock
+// after e.g. a case-to-engagement type transfer (ReviseCaseClocks). OpIn/
+// OpNotIn both treat a missing field as "not a member"/"not excluded"
+// respectively -- false and true -- which is what every caller here actually
+// needs. Query's own pair keeps "=S4"/"!=S4": OpEqual already requires
+// presence (false when absent, correctly never matching a severity-less
+// item), and Query's negated form needing "true on absent" is itself
+// correct (a severity-less item is certainly not a Query case).
 //
 // negated is whether the original clause was "!=" (true) or "=" (false).
 // ok=false for any other value, so the caller falls back to the generic
@@ -266,9 +281,9 @@ func translateIncidentQueryCaseType(value string, negated bool) (translated stri
 	switch value {
 	case slaIncidentCaseTypeSysID:
 		if negated {
-			return "priority=S4", true
+			return "priorityNOT INS0,S1,S2,S3", true
 		}
-		return "priority!=S4", true
+		return "priorityINS0,S1,S2,S3", true
 	case slaQueryCaseTypeSysID:
 		if negated {
 			return "priority!=S4", true

@@ -35,9 +35,9 @@ func TestTranslateSLACondition(t *testing.T) {
 			want: "state=OPEN^priority=S1",
 		},
 		{
-			name: "translates Incident case_type sys_id into a severity predicate and strips u_ prefix",
+			name: "translates Incident case_type sys_id into a severity membership predicate and strips u_ prefix",
 			raw:  "u_case_type=8d4b87bd1b18f010cb6898aebd4bcb59^state=1^EQ",
-			want: "priority!=S4^state=OPEN",
+			want: "priorityINS0,S1,S2,S3^state=OPEN",
 		},
 		{
 			name: "translates Query case_type sys_id into a severity predicate",
@@ -47,7 +47,7 @@ func TestTranslateSLACondition(t *testing.T) {
 		{
 			name: "translates negated Incident/Query case_type clauses with the comparison flipped",
 			raw:  "u_case_type!=8d4b87bd1b18f010cb6898aebd4bcb59^ORu_case_type!=0d5b8fbd1b18f010cb6898aebd4bcba5^EQ",
-			want: "priority=S4^ORpriority!=S4",
+			want: "priorityNOT INS0,S1,S2,S3^ORpriority!=S4",
 		},
 		{
 			name: "translates product sys_ids across an OR run",
@@ -72,7 +72,7 @@ func TestTranslateSLACondition(t *testing.T) {
 		{
 			name: "leaves the Admin Task case_type sys_id unmapped (no longer created, confirmed with the team) and translates the Incident clause alongside it",
 			raw:  "case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^case_type!=8d4b87bd1b18f010cb6898aebd4bcb59^EQ",
-			want: "case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^priority=S4",
+			want: "case_type!=3f5b47bd1b18f010cb6898aebd4bcbc2^priorityNOT INS0,S1,S2,S3",
 		},
 		{
 			name: "falls through Hosting/Hosting Query/Hosting Task sys_ids unchanged -- permanently inert, by product decision",
@@ -226,6 +226,31 @@ func TestTranslateSLACondition_IncidentQueryCaseTypeSemantics(t *testing.T) {
 	}
 	if !cancelCond.Evaluate(s4Facts) {
 		t.Error("726dc150's cancel_condition must fire once the case is no longer S2")
+	}
+
+	// Regression: a work item with NO severity at all (an engagement,
+	// service_request, security_report_analysis or announcement -- every
+	// case-like type other than "case" always has an empty Severity) must
+	// never match a positive Incident condition. internal/slacondition's
+	// OpNotEqual treats a missing field as "not equal to anything" (true),
+	// so the earlier "priority!=S4" form wrongly matched here; the
+	// membership form (OpIn, false when absent) does not. This is the real,
+	// reachable path: ReviseCaseClocks runs on a type transfer away from
+	// "case", and a synced Incident-only start_condition must not register a
+	// clock against the transferred-to item.
+	noSeverityFacts := sysIDTranslateTestFacts("engagement", "")
+	if incidentS2Policy.Evaluate(noSeverityFacts) {
+		t.Error("an Incident condition must not match a work item with no severity at all")
+	}
+	if startCond.Evaluate(noSeverityFacts) {
+		t.Error("726dc150's Incident-or-Hosting start_condition must not match a work item with no severity at all")
+	}
+	// The mirror-image negated form must still be true for a severity-less
+	// item (it genuinely isn't an Incident, so "case_type != Incident"
+	// should hold) -- OpNotIn's "absent means not excluded" gives this for
+	// free, same as OpNotEqual did by luck before.
+	if !cancelCond.Evaluate(noSeverityFacts) {
+		t.Error("726dc150's cancel_condition (case_type != Incident/Hosting OR priority != S2) must still fire for a work item with no severity at all")
 	}
 }
 
