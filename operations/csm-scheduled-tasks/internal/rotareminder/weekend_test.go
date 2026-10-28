@@ -440,6 +440,16 @@ func TestValidInviteAddressAndScheduleURL(t *testing.T) {
 			t.Errorf("ValidInviteAddress(%q) = %v", s, got)
 		}
 	}
+	// The organizer is the sender's address, with or without its display name.
+	for s, want := range map[string]string{"rota@example.com": "rota@example.com", " rota@example.com ": "rota@example.com",
+		"WSO2 Customer Service <no-reply@example.com>": "no-reply@example.com", `"Rota, CSM" <rota@example.com>`: "rota@example.com",
+		"": "", "rota": "", "Rota <rota>": "", "Rota <rota@example.com>\r\nX: y": "", "Rota\n <rota@example.com>": "",
+		"a <b@example.com>, c <d@example.com>": ""} {
+		got, ok := InviteOrganizer(s)
+		if got != want || ok != (want != "") {
+			t.Errorf("InviteOrganizer(%q) = %q, %v; want %q", s, got, ok, want)
+		}
+	}
 	for s, want := range map[string]bool{"https://portal.example.com/x": true, "http://localhost:3000": true, "": false,
 		"javascript:alert(1)": false, "https://": false, "https://a.example.com/x\ny": false, "/team-schedule": false} {
 		if got := ValidScheduleURL(s); got != want {

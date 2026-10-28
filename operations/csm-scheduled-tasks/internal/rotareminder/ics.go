@@ -195,6 +195,25 @@ func ValidInviteAddress(s string) bool {
 	return err == nil && a.Name == "" && a.Address == s
 }
 
+// InviteOrganizer is the address an invitation names as its organizer, read
+// from the "From" the emails go out with (EMAIL_FROM_ADDRESS): a plain address
+// as it is, or the address inside "Name <address>", whose name the emails keep.
+// ok is false when there is no plain address to name.
+func InviteOrganizer(from string) (address string, ok bool) {
+	from = strings.TrimSpace(from)
+	if ValidInviteAddress(from) {
+		return from, true
+	}
+	if from == "" || strings.ContainsFunc(from, unicode.IsControl) {
+		return "", false
+	}
+	a, err := mail.ParseAddress(from)
+	if err != nil || !ValidInviteAddress(a.Address) {
+		return "", false
+	}
+	return a.Address, true
+}
+
 // ValidScheduleURL reports whether s is an http or https URL with a host and
 // no control character or space, safe to put in an email and an invitation.
 func ValidScheduleURL(s string) bool {

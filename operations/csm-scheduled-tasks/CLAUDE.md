@@ -278,9 +278,12 @@ schedules assume `TZ=UTC` like every other here.
   Nothing from the rota or the configuration can add a line to an invitation: names and notes
   are escaped and stripped of control characters, an attendee whose address is not a plain
   address is left out (`ValidInviteAddress`), and the event's URL is written only when it is
-  http(s) (`ValidScheduleURL`). At startup an `EMAIL_FROM_ADDRESS` that is not a plain address
-  turns invitations off, and a `ROTA_REMINDER_SCHEDULE_URL` that is not http(s) is dropped from
-  every email, both with a warning.
+  http(s) (`ValidScheduleURL`). The organizer is `EMAIL_FROM_ADDRESS`'s address
+  (`InviteOrganizer`): a plain `no-reply@example.com` as it is, or the address inside
+  `Customer Service <no-reply@example.com>`, whose display name the emails keep. At startup an
+  `EMAIL_FROM_ADDRESS` that is unset or holds no address turns invitations off, and a
+  `ROTA_REMINDER_SCHEDULE_URL` that is not http(s) is dropped from every email, both with a
+  warning.
 - **The task's `SUB_CRON_RECIPIENTS` are not copied** unless
   `ROTA_REMINDER_COPY_TASK_RECIPIENTS=true`; they still get its failure alerts, as everywhere
   here. Nobody is ever both a recipient and copied, or copied twice (case-insensitive).
@@ -461,7 +464,7 @@ report emails" below for why that's not a generic engine feature.
 | `ROTA_REMINDER_REDIRECT_TO` | No | Comma-separated test inbox(es) that receive every rota reminder instead of the people on the shift |
 | `ROTA_REMINDER_SCHEDULE_URL` | No | Link to the CSM portal's Team Schedule page, shown in every reminder |
 | `ROTA_REMINDER_COPY_TASK_RECIPIENTS` | No (default `false`) | Also copies each task's `SUB_CRON_RECIPIENTS` on every reminder |
-| `ROTA_REMINDER_INVITES_ENABLED` | No (default `true`) | Attaches each window's calendar invitation; off when `EMAIL_FROM_ADDRESS` is unset |
+| `ROTA_REMINDER_INVITES_ENABLED` | No (default `true`) | Attaches each window's calendar invitation; off when `EMAIL_FROM_ADDRESS` is unset or holds no address (`Name <address>` is fine) |
 | `ROTA_REMINDER_WEEKEND_REQUIRED` | No (default `CRE_WEEKEND=3,CRE_WEEKEND_NIGHT=1`) | `CODE=N` pairs: how many people each weekend shift needs on each day before the weekend is announced |
 | `ROTA_REMINDER_FAMILY` / `ROTA_REMINDER_WEEKDAY_SHIFTS` / `ROTA_REMINDER_WEEKEND_SHIFTS` | No (defaults `CRE` and the codes in "Rota reminders") | Which rota, and which shifts each task announces as `CODE=Name` pairs (the name the email shows) |
 | `ROTA_REMINDER_WINDOWS` | No (default `CRE_WEEKEND_NIGHT=08:00-18:00 America/Los_Angeles,CRE_WEEKEND_NIGHT_OC=08:00-18:00 America/Los_Angeles`) | A rotation's hours on its own clock, used in the emails and invitations instead of the Team Schedule's (`CODE=HH:MM-HH:MM Zone`, comma-separated). The Americas Weekend and the LK On-call that covers it are 08:00-18:00 Pacific time, so it moves an hour in UTC and IST when US daylight saving changes; the weekend summary says so when a change is within five weeks. A malformed value stops startup |
