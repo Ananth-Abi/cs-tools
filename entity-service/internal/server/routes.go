@@ -334,6 +334,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// only in Postgres, so its routes are registered only when a pool is
 	// configured.
 	var scheduleHandler *handler.ScheduleHandler
+	// Customer engagement allocations for the CSM Allocations page: Postgres-only,
+	// internal staff only.
+	var engagementAllocationViewHandler *handler.EngagementAllocationViewHandler
 	// The SaaS SRE rota's "Generate month" action. Postgres-only, like the
 	// rest of the Team Schedule.
 	var rotaGenerateHandler *handler.RotaGenerateHandler
@@ -1212,6 +1215,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		scheduleHandler = handler.NewScheduleHandler(
 			service.NewScheduleService(repository.NewScheduleRepository(db), accessSvc),
 		)
+		engagementAllocationViewHandler = handler.NewEngagementAllocationViewHandler(
+			service.NewEngagementAllocationViewService(repository.NewEngagementAllocationViewRepository(db), accessSvc),
+		)
 		rotaGenerateHandler = handler.NewRotaGenerateHandler(
 			service.NewRotaGenerateService(repository.NewScheduleRepository(db), repository.NewRotaGenerateRepository(db), accessSvc),
 		)
@@ -1975,6 +1981,12 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 	if customerEngagementAllocationHandler != nil {
 		mux.HandleFunc("POST /customer-engagements/allocation-events", customerEngagementAllocationHandler.ProcessAllocationEvent)
+	}
+	if engagementAllocationViewHandler != nil {
+		mux.HandleFunc("POST /customer-engagements/allocations/search", engagementAllocationViewHandler.SearchAllocations)
+		mux.HandleFunc("GET /customer-engagements/allocations/{id}", engagementAllocationViewHandler.GetAllocation)
+		mux.HandleFunc("GET /customer-engagements/allocations/{id}/updates", engagementAllocationViewHandler.ListAllocationUpdates)
+		mux.HandleFunc("POST /customer-engagements/allocations/{id}/updates", engagementAllocationViewHandler.CreateAllocationUpdate)
 	}
 	if onboardingStepHandler != nil {
 		mux.HandleFunc("PUT /onboarding-steps/{membershipSfId}/{step}", onboardingStepHandler.UpsertOnboardingStep)

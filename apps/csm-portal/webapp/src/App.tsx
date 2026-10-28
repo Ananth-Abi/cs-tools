@@ -108,6 +108,8 @@ import CreateSecurityReportPage from "@features/csm-security-center/pages/Create
 import ProductVulnerabilityDetailPage from "@features/csm-security-center/pages/ProductVulnerabilityDetailPage";
 import CsmEngagementsPage from "@features/csm-engagements/pages/CsmEngagementsPage";
 import CsmEngagementCreatePage from "@features/csm-engagements/pages/CsmEngagementCreatePage";
+import CsmAllocationsPage from "@features/csm-allocations/pages/CsmAllocationsPage";
+import CsmAllocationDetailPage from "@features/csm-allocations/pages/CsmAllocationDetailPage";
 import CsmTimeCardsPage from "@features/csm-timecards/pages/CsmTimeCardsPage";
 import CsmAnnouncementsPage from "@features/csm-announcements/pages/CsmAnnouncementsPage";
 import CsmAnnouncementCreatePage from "@features/csm-announcements/pages/CsmAnnouncementCreatePage";
@@ -591,6 +593,11 @@ export default function App(): JSX.Element {
                   <Route
                     path="engagements/:caseId"
                     element={<CaseDetailRouteSync kind="engagement" />}
+                  />
+                  <Route path="allocations" element={<CsmAllocationsPage />} />
+                  <Route
+                    path="allocations/:allocationId"
+                    element={<CsmAllocationDetailPage />}
                   />
                   <Route path="updates" element={<CsmUpdatesPage />} />
                   {/* Security Center's own Security reports / Vulnerabilities

@@ -14753,6 +14753,213 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /engagement-allocations/search:
+    post:
+      summary: Search customer engagement allocations.
+      operationId: searchEngagementAllocations
+      description: >
+        One page of customer engagement allocations with their engagement,
+        account and engineer, filtered, sorted (default newest `startDate`
+        first) and counted. Internal staff only. The body is validated by the
+        entity service and forwarded unchanged; the response is returned as
+        sent. `limit` defaults to 20, at most 50.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEngagementAllocationsRequest'
+      responses:
+        "200":
+          description: One page of allocations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEngagementAllocationsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /engagement-allocations/{id}:
+    get:
+      summary: One customer engagement allocation.
+      operationId: getEngagementAllocation
+      description: Internal staff only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EngagementAllocationView'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /engagement-allocations/{id}/updates:
+    get:
+      summary: The status updates written against an allocation, newest first.
+      operationId: listEngagementAllocationUpdates
+      description: "Internal staff only. `limit` defaults to 20, at most 50."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: One page of updates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEngagementAllocationUpdatesResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    post:
+      summary: Post a status update on an allocation.
+      operationId: createEngagementAllocationUpdate
+      description: >
+        Only the engineer the allocation is for may post; the entity service
+        decides that from the caller's identity and the portal does not check
+        it. A 403 or 400 carries the entity service's own reason in `message`.
+        `subject` is required, at most 512 characters; `content` is required,
+        at most 8000.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEngagementAllocationUpdateRequest'
+      responses:
+        "201":
+          description: The stored update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EngagementAllocationUpdate'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /team-schedule/on-duty:
     get:
       summary: Who is on duty at an instant.
@@ -17198,6 +17405,118 @@ components:
           type: string
           nullable: true
           enum: [T1, T2, T3, null]
+    SearchEngagementAllocationsRequest:
+      type: object
+      properties:
+        pagination:
+          type: object
+          properties:
+            limit: { type: integer, description: Defaults to 20; at most 50. }
+            offset: { type: integer }
+        filters:
+          type: object
+          properties:
+            searchQuery: { type: string, description: "Matches the allocation reference, engagement name and engagement display id." }
+            accountId: { type: string, format: uuid }
+            accountName: { type: string, description: Substring match. }
+            engineerId: { type: string, format: uuid, description: Platform user id of the allocated engineer. }
+            engagementId: { type: string, format: uuid }
+            states:
+              type: array
+              items: { type: string, description: An allocation state such as CONFIRMED. }
+            from: { type: string, format: date, description: Keep allocations ending on or after this date. }
+            to: { type: string, format: date, description: Keep allocations starting on or before this date. }
+        sortBy:
+          type: object
+          properties:
+            field: { type: string, enum: [startDate, endDate, state, allocationId, accountName, engineerName, utilization] }
+            order: { type: string, enum: [asc, desc] }
+    EngagementAllocationPerson:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+    EngagementAllocationView:
+      type: object
+      required: [id, engagement]
+      properties:
+        id: { type: string, format: uuid }
+        allocationId: { type: string, description: Human-readable reference. }
+        state: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        startTime: { type: string, description: "Wall-clock time in `timezone`, e.g. 09:00:00." }
+        endTime: { type: string }
+        timezone: { type: string }
+        utilization: { type: number }
+        engagement:
+          type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
+            displayId: { type: string }
+            name: { type: string }
+            type: { type: string }
+            modeOfDelivery: { type: string }
+            state: { type: string }
+            businessUnit: { type: string }
+            isPaid: { type: boolean }
+            projectId: { type: string, format: uuid }
+            plannedStartDate: { type: string, format: date }
+            plannedEndDate: { type: string, format: date }
+            actualStartDate: { type: string, format: date }
+            actualEndDate: { type: string, format: date }
+        account:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        engineer: { $ref: '#/components/schemas/EngagementAllocationPerson' }
+        latestUpdateDate: { type: string, format: date-time }
+    SearchEngagementAllocationsResponse:
+      type: object
+      required: [allocations, total, limit, offset, hasMore]
+      properties:
+        allocations:
+          type: array
+          items: { $ref: '#/components/schemas/EngagementAllocationView' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    EngagementAllocationUpdate:
+      type: object
+      required: [id, createdOn]
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string }
+        content: { type: string }
+        state: { type: string, enum: [DRAFT, PUBLISHED, CANCELLED] }
+        visibility: { type: string, enum: [INTERNAL, CUSTOMER] }
+        cycleStartDate: { type: string, format: date }
+        publishedDate: { type: string, format: date-time }
+        createdOn: { type: string, format: date-time }
+        author: { $ref: '#/components/schemas/EngagementAllocationPerson' }
+    ListEngagementAllocationUpdatesResponse:
+      type: object
+      required: [updates, total, limit, offset, hasMore]
+      properties:
+        updates:
+          type: array
+          items: { $ref: '#/components/schemas/EngagementAllocationUpdate' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+    CreateEngagementAllocationUpdateRequest:
+      type: object
+      required: [subject, content]
+      properties:
+        subject: { type: string, maxLength: 512 }
+        content: { type: string, maxLength: 8000 }
     ErrorPayload:
       type: object
       description: >-

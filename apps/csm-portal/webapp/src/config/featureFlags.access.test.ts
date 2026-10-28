@@ -79,6 +79,7 @@ describe("feature visibility by portal access", () => {
       "dashboard",
       "support",
       "engagements",
+      "allocations",
       "announcements",
       "customers",
       "user-scan",
