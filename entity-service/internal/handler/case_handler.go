@@ -145,7 +145,9 @@ func (h *CaseHandler) CreateCase(w http.ResponseWriter, r *http.Request) {
 // own ActorEmail (see that doc comment): honored only when the caller's own
 // x-jwt-assertion names a client id in h.m2mClientIDs, and rejected outright
 // if it arrives alongside a real x-user-id-token. CaseService.UpdateCase
-// itself rejects it on every branch except MarkFixIssued.
+// itself rejects it on every branch except MarkFixIssued. Unlike those two,
+// this one's value is only trimmed, never lowercased -- see its own
+// normalization block below for why.
 func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	var req domain.UpdateCaseRequest
 	if !decodeRequest(w, r, &req) {
@@ -166,7 +168,13 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		actorEmail := strings.ToLower(strings.TrimSpace(*req.ActorEmail))
+		// Trimmed, not lowercased -- unlike CreateCaseComment/AddCaseTag's own
+		// ActorEmail, this value is stored verbatim as work_item_activity's
+		// created_by/user_email (CaseService.updateCaseMarkFixIssued) and is
+		// not necessarily even an email address in practice (a configured
+		// display label like "WSO2 Updates" is a real, intended case) -- so
+		// case must be preserved exactly as the trusted caller sent it.
+		actorEmail := strings.TrimSpace(*req.ActorEmail)
 		if actorEmail == "" {
 			writeServiceError(w, r, &apierror.ValidationError{
 				Msg: "actorEmail must not be blank",

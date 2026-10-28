@@ -748,13 +748,16 @@ func runPatchCase(h *CaseHandler, req *http.Request) *httptest.ResponseRecorder 
 
 // TestPatchCase_TrustedM2MClient_MarkFixIssued_ActorEmail covers the path
 // this field was added for: a trusted M2M caller's markFixIssued update
-// reaches CaseService.UpdateCase with the claimed actorEmail, lowercased and
-// trimmed.
+// reaches CaseService.UpdateCase with the claimed actorEmail, trimmed but
+// with its case preserved exactly -- unlike AddCaseTag/CreateCaseComment's
+// own actorEmail, this value is not necessarily a real email address (a
+// configured display label like "WSO2 Updates" is an intended use), so
+// lowercasing it would corrupt it.
 func TestPatchCase_TrustedM2MClient_MarkFixIssued_ActorEmail(t *testing.T) {
 	stub := &stubCaseService{updateCaseResp: domain.UpdateCaseResponse{Message: "Case updated successfully"}}
 	h := NewCaseHandler(stub, map[string]bool{testTrustedM2MClientID: true})
 
-	req := patchCaseRequest(testPatchCaseCaseID, `{"markFixIssued":true,"actorEmail":"  Integration-A@Example.com  "}`, "", testTrustedM2MClientID)
+	req := patchCaseRequest(testPatchCaseCaseID, `{"markFixIssued":true,"actorEmail":"  WSO2 Updates  "}`, "", testTrustedM2MClientID)
 	rec := runPatchCase(h, req)
 
 	if rec.Code != http.StatusOK {
@@ -763,8 +766,8 @@ func TestPatchCase_TrustedM2MClient_MarkFixIssued_ActorEmail(t *testing.T) {
 	if !stub.updateCaseCalled {
 		t.Fatalf("expected UpdateCase to be called")
 	}
-	if stub.updateCaseReq.ActorEmail == nil || *stub.updateCaseReq.ActorEmail != "integration-a@example.com" {
-		t.Fatalf("expected actorEmail %q, got %v", "integration-a@example.com", stub.updateCaseReq.ActorEmail)
+	if stub.updateCaseReq.ActorEmail == nil || *stub.updateCaseReq.ActorEmail != "WSO2 Updates" {
+		t.Fatalf("expected actorEmail %q (trimmed, case preserved), got %v", "WSO2 Updates", stub.updateCaseReq.ActorEmail)
 	}
 }
 
