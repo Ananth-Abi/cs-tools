@@ -50,9 +50,9 @@ const renderAt = (path: string) => {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/knowledge_articles/:id" element={<KBArticlePage />} />
-          <Route path="/knowledge_bases" element={<KBBrowsePage />} />
-          <Route path="/knowledge_bases/:id" element={<KBBrowsePage />} />
+          <Route path="/knowledge-articles/:id" element={<KBArticlePage />} />
+          <Route path="/knowledge-bases" element={<KBBrowsePage />} />
+          <Route path="/knowledge-bases/:id" element={<KBBrowsePage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -69,14 +69,14 @@ beforeEach(() => {
 describe("KBArticlePage errors", () => {
   it("shows not found for a 404 without retrying or offering retry", async () => {
     vi.mocked(getArticle).mockRejectedValue(new BackendApiError(404, "Article not found."));
-    renderAt("/knowledge_articles/abc");
+    renderAt("/knowledge-articles/abc");
     expect(await screen.findByRole("heading", { level: 1, name: "Article not found" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(getArticle).toHaveBeenCalledTimes(1);
   });
 
   it("does not call the backend for an id it would reject", async () => {
-    renderAt("/knowledge_articles/bad%20id");
+    renderAt("/knowledge-articles/bad%20id");
     expect(await screen.findByRole("heading", { level: 1, name: "Article not found" })).toBeInTheDocument();
     expect(getArticle).not.toHaveBeenCalled();
   });
@@ -95,7 +95,7 @@ describe("KBArticlePage errors", () => {
       .mockRejectedValueOnce(new BackendApiError(502, "bad gateway"))
       .mockRejectedValueOnce(new BackendApiError(502, "bad gateway"))
       .mockResolvedValue(article);
-    renderAt("/knowledge_articles/abc");
+    renderAt("/knowledge-articles/abc");
     const retry = await screen.findByRole("button", { name: "Try again" });
     expect(screen.queryByText("Article not found")).toBeNull();
     fireEvent.click(retry);
@@ -117,10 +117,10 @@ describe("KBBrowsePage", () => {
     vi.mocked(searchArticles)
       .mockResolvedValueOnce({ articles: [mk("a")], total: 2, limit: 20, offset: 0, hasMore: true })
       .mockResolvedValueOnce({ articles: [mk("b")], total: 2, limit: 20, offset: 20, hasMore: false });
-    renderAt("/knowledge_bases?q=snip");
+    renderAt("/knowledge-bases?q=snip");
 
     const link = await screen.findByRole("link", { name: /Title a/ });
-    expect(link).toHaveAttribute("href", "/knowledge_articles/a");
+    expect(link).toHaveAttribute("href", "/knowledge-articles/a");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent('Search results for "snip"');
     expect(screen.getByRole("searchbox", { name: "Search articles" })).toBeInTheDocument();
     expect(screen.queryByText(/x\{\}/)).toBeNull();

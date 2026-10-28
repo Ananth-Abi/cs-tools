@@ -19,14 +19,14 @@ export interface BrowseParams {
   q?: string;
 }
 
-/** `/knowledge_bases[/:id]` URL with the given filters, every value percent-encoded. */
+/** `/knowledge-bases[/:id]` URL with the given filters, every value percent-encoded. */
 export function browseUrl({ knowledgeBaseId, q }: BrowseParams = {}): string {
   const path = knowledgeBaseId
-    ? `/knowledge_bases/${encodeURIComponent(knowledgeBaseId)}`
-    : "/knowledge_bases";
+    ? `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`
+    : "/knowledge-bases";
   return q ? `${path}?q=${encodeURIComponent(q)}` : path;
 }
 
-/** `/knowledge_articles/:id` URL. */
+/** `/knowledge-articles/:id` URL. */
 export const articleUrl = (id: string): string =>
-  `/knowledge_articles/${encodeURIComponent(id)}`;
+  `/knowledge-articles/${encodeURIComponent(id)}`;

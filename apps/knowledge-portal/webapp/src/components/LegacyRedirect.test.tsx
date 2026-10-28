@@ -29,9 +29,9 @@ const finalLocation = (from: string): string | null => {
     <MemoryRouter initialEntries={[from]}>
       <Routes>
         <Route path="/" element={<Where />} />
-        <Route path="/knowledge_bases" element={<Where />} />
-        <Route path="/knowledge_bases/:id" element={<Where />} />
-        <Route path="/knowledge_articles/:id" element={<Where />} />
+        <Route path="/knowledge-bases" element={<Where />} />
+        <Route path="/knowledge-bases/:id" element={<Where />} />
+        <Route path="/knowledge-articles/:id" element={<Where />} />
         <Route path="/kb" element={<LegacyKbRedirect />} />
         <Route path="/browse" element={<PreviousBrowseRedirect />} />
         <Route path="/articles/:id" element={<PreviousArticleRedirect />} />
@@ -46,19 +46,19 @@ const UUID = "c824fa41-1b95-9910-9871-eac5624bcb6e";
 
 describe("legacy redirects", () => {
   it.each([
-    [`/kb?id=kb_search&kb_knowledge_base=${HEX}`, `/knowledge_bases/${UUID}`],
-    [`/kb?id=kb_search&kb_knowledge_base=${HEX}&q=jwt`, `/knowledge_bases/${UUID}?q=jwt`],
-    ["/kb?id=kb_search", "/knowledge_bases"],
-    [`/kb?id=kb_article_view&sys_kb_id=${HEX}`, `/knowledge_articles/${UUID}`],
+    [`/kb?id=kb_search&kb_knowledge_base=${HEX}`, `/knowledge-bases/${UUID}`],
+    [`/kb?id=kb_search&kb_knowledge_base=${HEX}&q=jwt`, `/knowledge-bases/${UUID}?q=jwt`],
+    ["/kb?id=kb_search", "/knowledge-bases"],
+    [`/kb?id=kb_article_view&sys_kb_id=${HEX}`, `/knowledge-articles/${UUID}`],
     ["/kb?id=kb_article_view&sysparm_article=KB0012345", "/"],
     ["/kb?id=kb_search&kb_knowledge_base=zzz", "/"],
     ["/kb?id=unknown", "/"],
     ["/kb", "/"],
-    ["/browse", "/knowledge_bases"],
-    ["/browse?q=jwt", "/knowledge_bases?q=jwt"],
-    ["/browse?knowledgeBaseId=kb_1&q=jwt", "/knowledge_bases/kb_1?q=jwt"],
-    ["/browse?knowledgeBaseId=a/b", "/knowledge_bases"],
-    ["/articles/abc", "/knowledge_articles/abc"],
+    ["/browse", "/knowledge-bases"],
+    ["/browse?q=jwt", "/knowledge-bases?q=jwt"],
+    ["/browse?knowledgeBaseId=kb_1&q=jwt", "/knowledge-bases/kb_1?q=jwt"],
+    ["/browse?knowledgeBaseId=a/b", "/knowledge-bases"],
+    ["/articles/abc", "/knowledge-articles/abc"],
     ["/articles/bad%20id", "/"],
   ])("%s -> %s", (from, to) => {
     expect(finalLocation(from)).toBe(to);

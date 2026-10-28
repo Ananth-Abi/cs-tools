@@ -30,9 +30,9 @@ export default function App(): JSX.Element {
     <Routes>
       <Route path="/" element={<KBLayout />}>
         <Route index element={<KBHomePage />} />
-        <Route path="knowledge_bases" element={<KBBrowsePage />} />
-        <Route path="knowledge_bases/:id" element={<KBBrowsePage />} />
-        <Route path="knowledge_articles/:id" element={<KBArticlePage />} />
+        <Route path="knowledge-bases" element={<KBBrowsePage />} />
+        <Route path="knowledge-bases/:id" element={<KBBrowsePage />} />
+        <Route path="knowledge-articles/:id" element={<KBArticlePage />} />
         <Route path="kb" element={<LegacyKbRedirect />} />
         <Route path="browse" element={<PreviousBrowseRedirect />} />
         <Route path="articles/:id" element={<PreviousArticleRedirect />} />

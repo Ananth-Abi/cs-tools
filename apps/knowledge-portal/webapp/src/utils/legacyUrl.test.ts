@@ -34,23 +34,23 @@ describe("legacyIdToUuid", () => {
 
 describe("legacyKbTarget", () => {
   it("maps a knowledge base search", () => {
-    expect(legacyKbTarget(`?id=kb_search&kb_knowledge_base=${HEX}`)).toBe(`/knowledge_bases/${UUID}`);
+    expect(legacyKbTarget(`?id=kb_search&kb_knowledge_base=${HEX}`)).toBe(`/knowledge-bases/${UUID}`);
   });
 
   it("keeps a search term from q or keyword", () => {
     expect(legacyKbTarget(`?id=kb_search&kb_knowledge_base=${HEX}&q=a%20b`)).toBe(
-      `/knowledge_bases/${UUID}?q=a%20b`,
+      `/knowledge-bases/${UUID}?q=a%20b`,
     );
-    expect(legacyKbTarget("?id=kb_search&keyword=oauth")).toBe("/knowledge_bases?q=oauth");
+    expect(legacyKbTarget("?id=kb_search&keyword=oauth")).toBe("/knowledge-bases?q=oauth");
   });
 
   it("maps a search without a knowledge base to all articles", () => {
-    expect(legacyKbTarget("?id=kb_search")).toBe("/knowledge_bases");
-    expect(legacyKbTarget("?id=kb_search&kb_knowledge_base=")).toBe("/knowledge_bases");
+    expect(legacyKbTarget("?id=kb_search")).toBe("/knowledge-bases");
+    expect(legacyKbTarget("?id=kb_search&kb_knowledge_base=")).toBe("/knowledge-bases");
   });
 
   it("maps an article view", () => {
-    expect(legacyKbTarget(`?id=kb_article_view&sys_kb_id=${HEX}`)).toBe(`/knowledge_articles/${UUID}`);
+    expect(legacyKbTarget(`?id=kb_article_view&sys_kb_id=${HEX}`)).toBe(`/knowledge-articles/${UUID}`);
   });
 
   it("returns null for anything unmappable", () => {
@@ -70,14 +70,14 @@ describe("legacyKbTarget", () => {
 
 describe("previous format targets", () => {
   it("maps /browse params", () => {
-    expect(previousBrowseTarget("")).toBe("/knowledge_bases");
-    expect(previousBrowseTarget("?q=x")).toBe("/knowledge_bases?q=x");
-    expect(previousBrowseTarget("?knowledgeBaseId=kb_1&q=x")).toBe("/knowledge_bases/kb_1?q=x");
-    expect(previousBrowseTarget("?knowledgeBaseId=//evil.example")).toBe("/knowledge_bases");
+    expect(previousBrowseTarget("")).toBe("/knowledge-bases");
+    expect(previousBrowseTarget("?q=x")).toBe("/knowledge-bases?q=x");
+    expect(previousBrowseTarget("?knowledgeBaseId=kb_1&q=x")).toBe("/knowledge-bases/kb_1?q=x");
+    expect(previousBrowseTarget("?knowledgeBaseId=//evil.example")).toBe("/knowledge-bases");
   });
 
   it("maps /articles ids", () => {
-    expect(previousArticleTarget("abc")).toBe("/knowledge_articles/abc");
+    expect(previousArticleTarget("abc")).toBe("/knowledge-articles/abc");
     expect(previousArticleTarget("bad id")).toBeNull();
     expect(previousArticleTarget(undefined)).toBeNull();
   });
