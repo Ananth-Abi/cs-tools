@@ -280,6 +280,32 @@ func TestAllocationViewSearch_Validation(t *testing.T) {
 	}
 }
 
+// Every value of engagement_allocation_state_enum (migrations 0079 and 0110)
+// must be accepted as a filter, or the list page's state filter returns 400.
+func TestAllocationViewSearch_AcceptsEveryEnumState(t *testing.T) {
+	states := []string{"TENTATIVE", "READY_FOR_CLEARANCE", "CONFIRMED", "CLEARANCE_IN_PROGRESS", "ALLOCATION_CANCELLED",
+		"ACCEPTED_BY_CONSULTANT", "REJECTED_OTHER", "REJECTED_BY_CONSULTANT", "CONFIRMED_VISA_PENDING", "REJECTED_VISA_ISSUES"}
+	for _, st := range states {
+		_, err := NewEngagementAllocationViewService(newAllocationViewFixture(), alwaysUnrestrictedAccess{}).Search(
+			context.Background(), domain.SearchEngagementAllocationsRequest{Filters: domain.EngagementAllocationFilters{States: []string{st}}})
+		if err != nil {
+			t.Errorf("state %s: %v", st, err)
+		}
+	}
+}
+
+// With several bad ids the message always names the first in field order.
+func TestAllocationViewSearch_InvalidIDMessageIsDeterministic(t *testing.T) {
+	req := domain.SearchEngagementAllocationsRequest{Filters: domain.EngagementAllocationFilters{AccountID: "x", EngineerID: "y", EngagementID: "z"}}
+	for i := 0; i < 20; i++ {
+		_, err := NewEngagementAllocationViewService(newAllocationViewFixture(), alwaysUnrestrictedAccess{}).Search(context.Background(), req)
+		var ve *apierror.ValidationError
+		if !errors.As(err, &ve) || ve.Msg != "accountId must be a UUID" {
+			t.Fatalf("iteration %d: err = %v", i, err)
+		}
+	}
+}
+
 func TestAllocationViewListUpdates_PagesAndMissingAllocation(t *testing.T) {
 	repo := newAllocationViewFixture()
 	repo.updateRows = []domain.EngagementAllocationUpdate{{ID: "u1"}}

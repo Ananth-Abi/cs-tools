@@ -67,6 +67,16 @@ func (h *EngagementAllocationHandler) SearchEngagementAllocations(w http.Respons
 	writeJSON(w, http.StatusOK, result)
 }
 
+// allocationIDParam returns the {id} path value, or writes a 400 and reports false.
+func allocationIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return "", false
+	}
+	return id, true
+}
+
 // GetEngagementAllocation handles GET /engagement-allocations/{id}.
 func (h *EngagementAllocationHandler) GetEngagementAllocation(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
@@ -75,7 +85,11 @@ func (h *EngagementAllocationHandler) GetEngagementAllocation(w http.ResponseWri
 		return
 	}
 
-	result, err := h.entity.GetEngagementAllocation(r.Context(), r.PathValue("id"))
+	id, ok := allocationIDParam(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.entity.GetEngagementAllocation(r.Context(), id)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetEngagementAllocation failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to load the engagement allocation.")
@@ -94,8 +108,12 @@ func (h *EngagementAllocationHandler) ListEngagementAllocationUpdates(w http.Res
 		return
 	}
 
+	id, ok := allocationIDParam(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	result, err := h.entity.ListEngagementAllocationUpdates(r.Context(), r.PathValue("id"), q.Get("limit"), q.Get("offset"))
+	result, err := h.entity.ListEngagementAllocationUpdates(r.Context(), id, q.Get("limit"), q.Get("offset"))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity ListEngagementAllocationUpdates failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to load the allocation updates.")
@@ -111,12 +129,16 @@ func (h *EngagementAllocationHandler) ListEngagementAllocationUpdates(w http.Res
 // it: that refusal and a validation failure keep their own reason, so the caller
 // can say why nothing was posted.
 func (h *EngagementAllocationHandler) CreateEngagementAllocationUpdate(w http.ResponseWriter, r *http.Request) {
+	id, ok := allocationIDParam(w, r)
+	if !ok {
+		return
+	}
 	body, userID, ok := readScheduleBody(w, r)
 	if !ok {
 		return
 	}
 
-	result, err := h.entity.CreateEngagementAllocationUpdate(r.Context(), r.PathValue("id"), body)
+	result, err := h.entity.CreateEngagementAllocationUpdate(r.Context(), id, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateEngagementAllocationUpdate failed", "userID", userID, "err", err)
 		mapAllocationUpdateError(w, err, "Failed to post the update.")

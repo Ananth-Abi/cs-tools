@@ -39,7 +39,7 @@ const (
 var allocationStates = map[string]bool{
 	"TENTATIVE": true, "READY_FOR_CLEARANCE": true, "CONFIRMED": true, "CLEARANCE_IN_PROGRESS": true,
 	"ALLOCATION_CANCELLED": true, "ACCEPTED_BY_CONSULTANT": true, "REJECTED_OTHER": true,
-	"REJECTED_BY_CONSULTANT": true, "CONFIRMED_VISA_PENDING": true,
+	"REJECTED_BY_CONSULTANT": true, "CONFIRMED_VISA_PENDING": true, "REJECTED_VISA_ISSUES": true,
 }
 
 // EngagementAllocationViewService serves the allocation list, detail and
@@ -92,9 +92,10 @@ func (s *engagementAllocationViewService) Search(ctx context.Context, req domain
 	if len(f.SearchQuery) > maxSearchQueryLen || len(f.AccountName) > maxSearchQueryLen {
 		return domain.SearchEngagementAllocationsResponse{}, &apierror.ValidationError{Msg: "search text is too long"}
 	}
-	for field, id := range map[string]string{"accountId": f.AccountID, "engineerId": f.EngineerID, "engagementId": f.EngagementID} {
-		if err := validateUserID(id); err != nil {
-			return domain.SearchEngagementAllocationsResponse{}, &apierror.ValidationError{Msg: field + " must be a UUID"}
+	// Checked in a fixed order so the message names the same field every time.
+	for _, c := range []struct{ field, id string }{{"accountId", f.AccountID}, {"engineerId", f.EngineerID}, {"engagementId", f.EngagementID}} {
+		if err := validateUserID(c.id); err != nil {
+			return domain.SearchEngagementAllocationsResponse{}, &apierror.ValidationError{Msg: c.field + " must be a UUID"}
 		}
 	}
 	for _, st := range f.States {

@@ -272,3 +272,31 @@ func TestEngagementAllocations_RoutePermissions(t *testing.T) {
 		})
 	}
 }
+
+func TestEngagementAllocations_RejectsNonUUIDID(t *testing.T) {
+	fail := func(t *testing.T) *mockAllocationClient {
+		boom := func() { t.Fatal("upstream must not be called for a non-UUID id") }
+		return &mockAllocationClient{
+			getFn:    func(context.Context, string) ([]byte, error) { boom(); return nil, nil },
+			listFn:   func(context.Context, string, string, string) ([]byte, error) { boom(); return nil, nil },
+			createFn: func(context.Context, string, []byte) ([]byte, error) { boom(); return nil, nil },
+		}
+	}
+	for _, id := range []string{"abc", "00000000-0000-0000-0000-00000000000g", ""} {
+		req := func(method, body string) *http.Request {
+			r := httptest.NewRequest(method, "/engagement-allocations/x/updates", strings.NewReader(body))
+			r.SetPathValue("id", id)
+			return withUser(r)
+		}
+		h := NewEngagementAllocationHandler(fail(t))
+		w := httptest.NewRecorder()
+		h.GetEngagementAllocation(w, req(http.MethodGet, ""))
+		assertStatus(t, w, http.StatusBadRequest)
+		w = httptest.NewRecorder()
+		h.ListEngagementAllocationUpdates(w, req(http.MethodGet, ""))
+		assertStatus(t, w, http.StatusBadRequest)
+		w = httptest.NewRecorder()
+		h.CreateEngagementAllocationUpdate(w, req(http.MethodPost, `{"subject":"s","content":"c"}`))
+		assertStatus(t, w, http.StatusBadRequest)
+	}
+}
