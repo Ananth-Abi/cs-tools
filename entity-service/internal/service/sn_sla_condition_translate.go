@@ -54,6 +54,17 @@ func translateSLACondition(raw string) string {
 	}
 	tokens := strings.Split(raw, "^")
 	out := make([]string, 0, len(tokens))
+	// pending/droppedHead carry a dropped token's own grouping prefix forward
+	// to the next kept token -- dropping a token (a negated clause whose
+	// value is entirely known-dead, see translateSLAClauseToken) must not
+	// also silently drop ITS prefix, or the remaining clauses regroup: an
+	// "^NQ<dead>^state=1" that drops the NQ clause would otherwise merge
+	// state=1 into the PRECEDING AND-group instead of starting its own new
+	// OR'd group, and an OR run whose head clause drops would otherwise OR
+	// the next clause against the wrong preceding term instead of becoming
+	// the run's own new head.
+	pending := ""
+	droppedHead := false
 	for _, tok := range tokens {
 		prefix := ""
 		rest := tok
@@ -73,8 +84,20 @@ func translateSLACondition(raw string) string {
 		}
 		translated, drop := translateSLAClauseToken(rest)
 		if drop {
+			if prefix == "NQ" {
+				pending = "NQ"
+			}
+			if prefix != "OR" {
+				droppedHead = true
+			}
 			continue
 		}
+		if pending == "NQ" {
+			prefix = "NQ"
+		} else if droppedHead && prefix == "OR" {
+			prefix = ""
+		}
+		pending, droppedHead = "", false
 		out = append(out, prefix+translated)
 	}
 	return strings.Join(out, "^")
@@ -168,11 +191,26 @@ func translateSLAClauseToken(token string) (translated string, drop bool) {
 		v, drop := translateSLAConditionValueList(field, rest[len("NOT IN"):])
 		return field + "NOT IN" + v, drop
 	case strings.HasPrefix(rest, "IN"):
+		// A positive IN clause left with no real members after translation
+		// (every value was known-dead) is NOT vacuously true -- membership in
+		// an empty set is always false -- so unlike NOT IN above, this must
+		// not be omitted as if it were a true, droppable clause. Falling back
+		// to the untranslated token keeps the clause present as a comparison
+		// against a raw sys_id/code that a decoded fact value will never
+		// equal, which evaluates false exactly as the real condition does.
 		v, drop := translateSLAConditionValueList(field, rest[len("IN"):])
-		return field + "IN" + v, drop
+		if drop {
+			return token, false
+		}
+		return field + "IN" + v, false
 	case strings.HasPrefix(rest, "="):
+		// Same reasoning as IN above: a positive equality clause whose value
+		// has no translation is false, not droppable.
 		v, drop := translateSLAConditionValue(field, rest[len("="):])
-		return field + "=" + v, drop
+		if drop {
+			return token, false
+		}
+		return field + "=" + v, false
 	default:
 		return token, false
 	}

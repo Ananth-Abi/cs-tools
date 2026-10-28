@@ -97,6 +97,14 @@ func businessDayCorrectedLiveState(schedule, stage string, startedOn *time.Time,
 	if stage != "IN_PROGRESS" && stage != "BREACHED" {
 		return "", false, 0, false
 	}
+	if durationSeconds <= 0 {
+		// businessDayElapsedSnapshot's own breached = elapsed >= duration
+		// would be vacuously true against a zero/negative duration (elapsed
+		// is clamped to >= 0), reporting BREACHED at 0% -- a missing or
+		// not-yet-set duration must leave sla_live's own value alone rather
+		// than correct it into something worse.
+		return "", false, 0, false
+	}
 	duration := time.Duration(durationSeconds * float64(time.Second))
 	businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
 	_, _, pct, breached := businessDayElapsedSnapshot(*startedOn, time.Now().UTC(), businessPause, duration)
@@ -930,12 +938,24 @@ func (r *slaEngineRepo) CompleteClockByPolicy(ctx context.Context, workItemID, t
 // (workItemID, target) regardless of policy (CompleteClock's own bulk
 // behavior); a non-empty policyID additionally restricts to that one
 // policy's own row (CompleteClockByPolicy).
+// A non-empty policyID targets exactly one row, which can only ever be flat
+// or business-day, so the first path to report a hit is authoritative and the
+// other is skipped. policyID == "" is CompleteClock's bulk case: two policies
+// can match the same (workItemID, target) at once with different schedules
+// (e.g. a Hosting case's OS and managed-services resolution clocks), so both
+// paths must always run and their results combined -- stopping at the first
+// hit would leave a same-target sibling clock on the other schedule open
+// forever.
 func (r *slaEngineRepo) completeClock(ctx context.Context, workItemID, target, policyID string) (bool, error) {
 	ok, err := r.completeClockFlat(ctx, workItemID, target, policyID)
-	if err != nil || ok {
-		return ok, err
+	if err != nil {
+		return false, err
 	}
-	return r.completeClockBusinessDays(ctx, workItemID, target, policyID)
+	if ok && policyID != "" {
+		return true, nil
+	}
+	bdOK, err := r.completeClockBusinessDays(ctx, workItemID, target, policyID)
+	return ok || bdOK, err
 }
 
 func (r *slaEngineRepo) completeClockFlat(ctx context.Context, workItemID, target, policyID string) (bool, error) {
@@ -980,6 +1000,10 @@ func (r *slaEngineRepo) completeClockFlat(ctx context.Context, workItemID, targe
 // Finalizes an open pause segment into both pause_duration (flat) and
 // business_pause_duration (business-day), mirroring completedElapsedExpr's
 // own CASE for the flat path.
+// completeClockBusinessDays locks and completes EVERY open business-day row
+// matching (workItemID, target[, policyID]), not just one -- a target with
+// two simultaneously-open business-day policies (not just one flat/one
+// business-day) must have both finalized by a single bulk CompleteClock call.
 func (r *slaEngineRepo) completeClockBusinessDays(ctx context.Context, workItemID, target, policyID string) (bool, error) {
 	var found bool
 	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
@@ -989,11 +1013,7 @@ func (r *slaEngineRepo) completeClockBusinessDays(ctx context.Context, workItemI
 			policyFilter = " AND sp.id = $3::uuid"
 			args = append(args, policyID)
 		}
-		var slaID string
-		var startOn time.Time
-		var pausedOn *time.Time
-		var pauseSeconds, businessPauseSeconds, durationSeconds float64
-		row := tx.QueryRow(ctx, `
+		rows, err := tx.Query(ctx, `
 			SELECT s.id, s.start_on, s.paused_on,
 			       COALESCE(EXTRACT(EPOCH FROM s.pause_duration), 0),
 			       COALESCE(EXTRACT(EPOCH FROM s.business_pause_duration), 0),
@@ -1006,54 +1026,71 @@ func (r *slaEngineRepo) completeClockBusinessDays(ctx context.Context, workItemI
 			  AND sp.schedule = '`+slaScheduleWSO2BusinessDays+`'
 			  AND s.stage::TEXT `+slaEngineOpenStageFilter+policyFilter+`
 			FOR UPDATE OF s`, args...)
-		if err := row.Scan(&slaID, &startOn, &pausedOn, &pauseSeconds, &businessPauseSeconds, &durationSeconds); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
+		if err != nil {
 			return fmt.Errorf("complete business-day sla clock: select: %w", err)
+		}
+		type openRow struct {
+			id                                                  string
+			startOn                                             time.Time
+			pausedOn                                            *time.Time
+			pauseSeconds, businessPauseSeconds, durationSeconds float64
+		}
+		var open []openRow
+		for rows.Next() {
+			var o openRow
+			if err := rows.Scan(&o.id, &o.startOn, &o.pausedOn, &o.pauseSeconds, &o.businessPauseSeconds, &o.durationSeconds); err != nil {
+				rows.Close()
+				return fmt.Errorf("complete business-day sla clock: scan: %w", err)
+			}
+			open = append(open, o)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("complete business-day sla clock: rows: %w", err)
 		}
 
 		now := time.Now().UTC()
-		flatPause := time.Duration(pauseSeconds * float64(time.Second))
-		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
-		if pausedOn != nil {
-			// An open pause segment at completion time -- finalize it into
-			// both totals, same as completedElapsedExpr's CASE does for the
-			// flat path.
-			flatPause += now.Sub(*pausedOn)
-			businessPause += businessdays.Elapsed(*pausedOn, now)
-		}
+		for _, o := range open {
+			flatPause := time.Duration(o.pauseSeconds * float64(time.Second))
+			businessPause := time.Duration(o.businessPauseSeconds * float64(time.Second))
+			if o.pausedOn != nil {
+				// An open pause segment at completion time -- finalize it
+				// into both totals, same as completedElapsedExpr's CASE does
+				// for the flat path.
+				flatPause += now.Sub(*o.pausedOn)
+				businessPause += businessdays.Elapsed(*o.pausedOn, now)
+			}
 
-		elapsed := businessdays.Elapsed(startOn, now) - businessPause
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		duration := time.Duration(durationSeconds * float64(time.Second))
-		remaining := duration - elapsed
-		if remaining < 0 {
-			remaining = 0
-		}
-		pct := 0.0
-		if durationSeconds > 0 {
-			pct = elapsed.Seconds() / durationSeconds * 100
-		}
+			elapsed := businessdays.Elapsed(o.startOn, now) - businessPause
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			duration := time.Duration(o.durationSeconds * float64(time.Second))
+			remaining := duration - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+			pct := 0.0
+			if o.durationSeconds > 0 {
+				pct = elapsed.Seconds() / o.durationSeconds * 100
+			}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE sla SET stage = 'ACHIEVED'::sla_stage_enum, end_on = NOW(), is_active = FALSE,
-			    business_elapsed_percentage = $2,
-			    business_duration = $3::interval,
-			    remaining_business_duration = $4::interval,
-			    pause_duration = $5::interval,
-			    business_pause_duration = $6::interval,
-			    paused_on = NULL,
-			    updated_on = NOW(), updated_by = $7
-			WHERE id = $1::uuid`,
-			slaID, pct, formatIntervalLiteral(elapsed), formatIntervalLiteral(remaining),
-			formatIntervalLiteral(flatPause), formatIntervalLiteral(businessPause), sqlActorLiteral,
-		); err != nil {
-			return fmt.Errorf("complete business-day sla clock: update: %w", err)
+			if _, err := tx.Exec(ctx, `
+				UPDATE sla SET stage = 'ACHIEVED'::sla_stage_enum, end_on = NOW(), is_active = FALSE,
+				    business_elapsed_percentage = $2,
+				    business_duration = $3::interval,
+				    remaining_business_duration = $4::interval,
+				    pause_duration = $5::interval,
+				    business_pause_duration = $6::interval,
+				    paused_on = NULL,
+				    updated_on = NOW(), updated_by = $7
+				WHERE id = $1::uuid`,
+				o.id, pct, formatIntervalLiteral(elapsed), formatIntervalLiteral(remaining),
+				formatIntervalLiteral(flatPause), formatIntervalLiteral(businessPause), sqlActorLiteral,
+			); err != nil {
+				return fmt.Errorf("complete business-day sla clock: update: %w", err)
+			}
+			found = true
 		}
-		found = true
 		return nil
 	})
 	if err != nil {
@@ -1146,12 +1183,20 @@ func (r *slaEngineRepo) SetPausedByPolicy(ctx context.Context, workItemID, targe
 // policyID == "" acts on every open clock of (workItemID, target) regardless
 // of policy (SetPaused's own bulk behavior); a non-empty policyID
 // additionally restricts to that one policy's own row (SetPausedByPolicy).
+// Same both-paths-when-bulk reasoning as completeClock above: policyID == ""
+// must run both the flat and business-day branches and combine their
+// results, since two policies on different schedules can both be open for
+// the same (workItemID, target) at once.
 func (r *slaEngineRepo) setPaused(ctx context.Context, workItemID, target, policyID string, paused bool) (bool, error) {
 	ok, err := r.setPausedFlat(ctx, workItemID, target, policyID, paused)
-	if err != nil || ok {
-		return ok, err
+	if err != nil {
+		return false, err
 	}
-	return r.setPausedBusinessDays(ctx, workItemID, target, policyID, paused)
+	if ok && policyID != "" {
+		return true, nil
+	}
+	bdOK, err := r.setPausedBusinessDays(ctx, workItemID, target, policyID, paused)
+	return ok || bdOK, err
 }
 
 func (r *slaEngineRepo) setPausedFlat(ctx context.Context, workItemID, target, policyID string, paused bool) (bool, error) {
@@ -1207,6 +1252,9 @@ func (r *slaEngineRepo) setPausedFlat(ctx context.Context, workItemID, target, p
 // business_pause_duration/pause_duration and leaves the frozen figures
 // alone), computed with internal/businessdays.Elapsed instead of flat SQL
 // arithmetic.
+// setPausedBusinessDays locks and transitions EVERY open business-day row
+// matching (workItemID, target[, policyID]) -- same bulk reasoning as
+// completeClockBusinessDays above.
 func (r *slaEngineRepo) setPausedBusinessDays(ctx context.Context, workItemID, target, policyID string, paused bool) (bool, error) {
 	var found bool
 	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
@@ -1216,11 +1264,7 @@ func (r *slaEngineRepo) setPausedBusinessDays(ctx context.Context, workItemID, t
 			policyFilter = " AND sp.id = $3::uuid"
 			args = append(args, policyID)
 		}
-		var slaID string
-		var startOn time.Time
-		var pausedOn *time.Time
-		var pauseSeconds, businessPauseSeconds, durationSeconds float64
-		row := tx.QueryRow(ctx, `
+		rows, err := tx.Query(ctx, `
 			SELECT s.id, s.start_on, s.paused_on,
 			       COALESCE(EXTRACT(EPOCH FROM s.pause_duration), 0),
 			       COALESCE(EXTRACT(EPOCH FROM s.business_pause_duration), 0),
@@ -1233,79 +1277,96 @@ func (r *slaEngineRepo) setPausedBusinessDays(ctx context.Context, workItemID, t
 			  AND sp.schedule = '`+slaScheduleWSO2BusinessDays+`'
 			  AND s.stage::TEXT `+slaEngineOpenStageFilter+policyFilter+`
 			FOR UPDATE OF s`, args...)
-		if err := row.Scan(&slaID, &startOn, &pausedOn, &pauseSeconds, &businessPauseSeconds, &durationSeconds); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
+		if err != nil {
 			return fmt.Errorf("set business-day sla clock paused: select: %w", err)
+		}
+		type openRow struct {
+			id                                                  string
+			startOn                                             time.Time
+			pausedOn                                            *time.Time
+			pauseSeconds, businessPauseSeconds, durationSeconds float64
+		}
+		var open []openRow
+		for rows.Next() {
+			var o openRow
+			if err := rows.Scan(&o.id, &o.startOn, &o.pausedOn, &o.pauseSeconds, &o.businessPauseSeconds, &o.durationSeconds); err != nil {
+				rows.Close()
+				return fmt.Errorf("set business-day sla clock paused: scan: %w", err)
+			}
+			open = append(open, o)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("set business-day sla clock paused: rows: %w", err)
 		}
 
 		now := time.Now().UTC()
-		flatPause := time.Duration(pauseSeconds * float64(time.Second))
-		businessPause := time.Duration(businessPauseSeconds * float64(time.Second))
-		duration := time.Duration(durationSeconds * float64(time.Second))
+		for _, o := range open {
+			flatPause := time.Duration(o.pauseSeconds * float64(time.Second))
+			businessPause := time.Duration(o.businessPauseSeconds * float64(time.Second))
+			duration := time.Duration(o.durationSeconds * float64(time.Second))
 
-		var (
-			newStage                            string
-			newPausedOn                         *time.Time
-			newFlatPause, newBusinessPause      time.Duration
-			pct                                 *float64
-			businessDuration, remainingDuration *time.Duration
-		)
-		if paused {
-			newStage = "PAUSED"
-			freeze := now
-			if pausedOn != nil {
-				freeze = *pausedOn // idempotent re-pause: re-derive the identical frozen snapshot
+			var (
+				newStage                            string
+				newPausedOn                         *time.Time
+				newFlatPause, newBusinessPause      time.Duration
+				pct                                 *float64
+				businessDuration, remainingDuration *time.Duration
+			)
+			if paused {
+				newStage = "PAUSED"
+				freeze := now
+				if o.pausedOn != nil {
+					freeze = *o.pausedOn // idempotent re-pause: re-derive the identical frozen snapshot
+				}
+				newPausedOn = &freeze
+				newFlatPause = flatPause
+				newBusinessPause = businessPause
+				elapsed := businessdays.Elapsed(o.startOn, freeze) - businessPause
+				if elapsed < 0 {
+					elapsed = 0
+				}
+				remaining := duration - elapsed
+				if remaining < 0 {
+					remaining = 0
+				}
+				p := 0.0
+				if o.durationSeconds > 0 {
+					p = elapsed.Seconds() / o.durationSeconds * 100
+				}
+				pct = &p
+				businessDuration = &elapsed
+				remainingDuration = &remaining
+			} else {
+				newStage = "IN_PROGRESS"
+				newPausedOn = nil
+				newFlatPause = flatPause
+				newBusinessPause = businessPause
+				if o.pausedOn != nil {
+					newFlatPause += now.Sub(*o.pausedOn)
+					newBusinessPause += businessdays.Elapsed(*o.pausedOn, now)
+				}
+				// business_elapsed_percentage/business_duration/
+				// remaining_business_duration are left untouched on resume --
+				// same as setPausedFlat's own ELSE branches.
 			}
-			newPausedOn = &freeze
-			newFlatPause = flatPause
-			newBusinessPause = businessPause
-			elapsed := businessdays.Elapsed(startOn, freeze) - businessPause
-			if elapsed < 0 {
-				elapsed = 0
-			}
-			remaining := duration - elapsed
-			if remaining < 0 {
-				remaining = 0
-			}
-			p := 0.0
-			if durationSeconds > 0 {
-				p = elapsed.Seconds() / durationSeconds * 100
-			}
-			pct = &p
-			businessDuration = &elapsed
-			remainingDuration = &remaining
-		} else {
-			newStage = "IN_PROGRESS"
-			newPausedOn = nil
-			newFlatPause = flatPause
-			newBusinessPause = businessPause
-			if pausedOn != nil {
-				newFlatPause += now.Sub(*pausedOn)
-				newBusinessPause += businessdays.Elapsed(*pausedOn, now)
-			}
-			// business_elapsed_percentage/business_duration/
-			// remaining_business_duration are left untouched on resume --
-			// same as setPausedFlat's own ELSE branches.
-		}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE sla SET stage = $2::sla_stage_enum,
-			    paused_on = $3,
-			    pause_duration = $4::interval,
-			    business_pause_duration = $5::interval,
-			    business_elapsed_percentage = COALESCE($6, business_elapsed_percentage),
-			    business_duration = COALESCE($7::interval, business_duration),
-			    remaining_business_duration = COALESCE($8::interval, remaining_business_duration),
-			    updated_on = NOW(), updated_by = $9
-			WHERE id = $1::uuid`,
-			slaID, newStage, newPausedOn, formatIntervalLiteral(newFlatPause), formatIntervalLiteral(newBusinessPause),
-			pct, formatIntervalOrNil(businessDuration), formatIntervalOrNil(remainingDuration), sqlActorLiteral,
-		); err != nil {
-			return fmt.Errorf("set business-day sla clock paused: update: %w", err)
+			if _, err := tx.Exec(ctx, `
+				UPDATE sla SET stage = $2::sla_stage_enum,
+				    paused_on = $3,
+				    pause_duration = $4::interval,
+				    business_pause_duration = $5::interval,
+				    business_elapsed_percentage = COALESCE($6, business_elapsed_percentage),
+				    business_duration = COALESCE($7::interval, business_duration),
+				    remaining_business_duration = COALESCE($8::interval, remaining_business_duration),
+				    updated_on = NOW(), updated_by = $9
+				WHERE id = $1::uuid`,
+				o.id, newStage, newPausedOn, formatIntervalLiteral(newFlatPause), formatIntervalLiteral(newBusinessPause),
+				pct, formatIntervalOrNil(businessDuration), formatIntervalOrNil(remainingDuration), sqlActorLiteral,
+			); err != nil {
+				return fmt.Errorf("set business-day sla clock paused: update: %w", err)
+			}
+			found = true
 		}
-		found = true
 		return nil
 	})
 	if err != nil {
@@ -1337,7 +1398,6 @@ func (r *slaEngineRepo) RecordFirstEngineerResponse(ctx context.Context, workIte
 	}
 	return nil
 }
-
 
 // ReviseClocks implements SLAEngineRepository.
 //

@@ -72,8 +72,8 @@ func NewTaskSlaRepository(db *Scoped) TaskSlaRepository {
 // since-removed periodic worker last wrote -- see that view's own doc
 // comment. Aliased "sla" so every other column reference here is unchanged.
 //
-// sla.schedule/business_pause_duration and pol.duration are read here
-// purely to feed scanTaskSlaView's own business-day correction
+// sla.schedule/business_pause_duration/duration and pol.duration are read
+// here purely to feed scanTaskSlaView's own business-day correction
 // (businessDayCorrectedLiveState) -- sla_live has no business-day calendar
 // of its own, so for a 'WSO2 Business days' clock its live_stage/
 // live_elapsed_percentage are flat-wall-clock figures that can disagree with
@@ -81,6 +81,13 @@ func NewTaskSlaRepository(db *Scoped) TaskSlaRepository {
 // This endpoint (POST /task-slas/search, the case detail SLA tab) had no
 // correction at all before -- the gap GetClockState/SearchActiveSLAStatuses
 // already had was fixed first and this one was missed.
+//
+// The clock's own sla.duration is used ahead of the policy's pol.duration --
+// GetClockState's own correction already prefers the clock's stored
+// duration, and the two can legitimately differ (a policy's duration can
+// change after a clock was registered against its old value); falling back
+// to pol.duration only covers an older row this engine never backfilled one
+// onto.
 const taskSlaViewColumns = `
 	sla.id, sla.live_stage::TEXT,
 	sla.work_item_id, wi.number, wi.type::TEXT,
@@ -89,7 +96,7 @@ const taskSlaViewColumns = `
 	EXTRACT(EPOCH FROM sla.live_business_duration), EXTRACT(EPOCH FROM sla.live_remaining_business_duration),
 	sla.start_on, sla.end_on,
 	COALESCE(sla.schedule, ''), COALESCE(EXTRACT(EPOCH FROM sla.business_pause_duration), 0),
-	COALESCE(EXTRACT(EPOCH FROM pol.duration), 0)`
+	COALESCE(EXTRACT(EPOCH FROM sla.duration), EXTRACT(EPOCH FROM pol.duration), 0)`
 
 const taskSlaViewJoins = `
 	FROM sla_live sla
@@ -289,6 +296,7 @@ func (r *taskSlaRepo) GetTaskSla(ctx context.Context, id string) (domain.TaskSla
 		       pol.start_condition, pol.stop_condition,
 		       pol.timezone_source::TEXT, pol.reset_action::TEXT,
 		       EXTRACT(EPOCH FROM pol.duration),
+		       COALESCE(EXTRACT(EPOCH FROM sla.duration), EXTRACT(EPOCH FROM pol.duration)),
 		       sla.schedule, sla.timezone,
 		       sla.live_elapsed_percentage,
 		       EXTRACT(EPOCH FROM sla.live_business_duration), EXTRACT(EPOCH FROM sla.live_remaining_business_duration),
@@ -311,6 +319,7 @@ func (r *taskSlaRepo) GetTaskSla(ctx context.Context, id string) (domain.TaskSla
 		startCondition, stopCondition *string
 		timezoneSource, resetAction   *string
 		policyDurationSecs            *float64
+		clockDurationSecs             *float64
 		schedule, timezone            *string
 		elapsedPct                    *float64
 		businessDurationSecs          *float64
@@ -328,6 +337,7 @@ func (r *taskSlaRepo) GetTaskSla(ctx context.Context, id string) (domain.TaskSla
 		&startCondition, &stopCondition,
 		&timezoneSource, &resetAction,
 		&policyDurationSecs,
+		&clockDurationSecs,
 		&schedule, &timezone,
 		&elapsedPct,
 		&businessDurationSecs, &remainingBusinessSecs,
@@ -344,9 +354,13 @@ func (r *taskSlaRepo) GetTaskSla(ctx context.Context, id string) (domain.TaskSla
 	// Business-day correction -- see taskSlaViewColumns' own doc comment for
 	// why sla_live's own live_stage/live_elapsed_percentage can disagree for
 	// a 'WSO2 Business days' clock, and businessDayCorrectedLiveState's own
-	// doc comment for the confirmed example.
-	if stage != nil && schedule != nil && policyDurationSecs != nil {
-		if correctedStage, _, pct, ok := businessDayCorrectedLiveState(*schedule, *stage, startOn, businessPauseSeconds, *policyDurationSecs); ok {
+	// doc comment for the confirmed example. Uses the clock's own
+	// sla.duration ahead of the policy's pol.duration (policyDurationSecs is
+	// kept separate, purely for the definition's own displayed Duration
+	// field) -- see taskSlaViewColumns' own doc comment for why the two can
+	// legitimately differ.
+	if stage != nil && schedule != nil && clockDurationSecs != nil {
+		if correctedStage, _, pct, ok := businessDayCorrectedLiveState(*schedule, *stage, startOn, businessPauseSeconds, *clockDurationSecs); ok {
 			stage = &correctedStage
 			elapsedPct = &pct
 		}

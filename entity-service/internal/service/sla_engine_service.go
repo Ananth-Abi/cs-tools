@@ -422,9 +422,17 @@ func (s *slaEngineService) ApplyCaseStateEffects(ctx context.Context, caseID str
 	}
 
 	// Re-evaluate start conditions against the case's current facts, same as
-	// case creation -- see this method's own doc comment.
+	// case creation -- see this method's own doc comment. A policy whose
+	// cancel condition is ALSO true for these same facts is skipped here:
+	// without this check, a policy that both starts and cancels under the
+	// current facts would be cancelled by the loop above and immediately
+	// re-registered by this one, resetting on every subsequent update and
+	// never reaching a real stop.
 	policies, _ := s.resolveApplicablePolicies(ctx, facts)
 	for _, policy := range policies {
+		if slaPolicyShouldCancel(policy, f) {
+			continue
+		}
 		startOn := registerCaseSLAClockStartOn(policy, facts.CreatedOn)
 		if _, err := s.repo.RegisterClock(ctx, caseID, policy, startOn); err != nil {
 			slog.ErrorContext(ctx, "sla engine: apply case state effects: register newly-applicable clock failed", "caseId", caseID, "clockType", policy.Target, "policy", policy.Name, "err", err)

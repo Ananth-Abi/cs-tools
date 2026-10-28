@@ -64,9 +64,9 @@ func TestTranslateSLACondition(t *testing.T) {
 			want: "case_type!=case",
 		},
 		{
-			name: "drops a malformed, value-less trailing clause",
+			name: "keeps a malformed, value-less trailing clause as a false disjunct rather than dropping it",
 			raw:  "priority!=S4^ORstate=",
-			want: "priority!=S4",
+			want: "priority!=S4^ORstate=",
 		},
 		{
 			name: "strips the javascript date-literal wrapper",
