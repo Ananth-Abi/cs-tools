@@ -20,8 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -668,15 +671,14 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 		       (wi.account_id IS NOT NULL),
 		       (wi.workaround_provided_on IS NOT NULL),
 		       (wi.eta_shared_on IS NOT NULL),
-		       EXISTS (
-		           SELECT 1 FROM comment cm
+		       COALESCE(wi.description, ''),
+		       (SELECT array_agg(cm.content) FROM comment cm
 		           JOIN "user" u ON LOWER(u.email) = LOWER(cm.created_by)
 		           JOIN user_role ur ON ur.user_id = u.id
 		           JOIN role r ON r.id = ur.role_id
 		           WHERE cm.work_item_id = wi.id
 		             AND cm.type = 'COMMENT'
-		             AND r.name = $2
-		       )
+		             AND r.name = $2)
 		FROM work_item wi
 		LEFT JOIN "case" c ON c.id = wi.id
 		` + caseLikeJoins + `
@@ -687,11 +689,12 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 		WHERE wi.id = $1`
 
 	var facts CaseFacts
-	var caseType string
+	var caseType, description string
 	var state, severity *string
+	var candidateComments []string
 	err := r.db.QueryRow(ctx, query, workItemID, r.csEngineerRole).Scan(
 		&caseType, &state, &severity, &facts.CreatedOn, &facts.ProjectType, &facts.Product,
-		&facts.HasAccount, &facts.WorkaroundProvided, &facts.FixEtaShared, &facts.CSEngineerResponseComment,
+		&facts.HasAccount, &facts.WorkaroundProvided, &facts.FixEtaShared, &description, &candidateComments,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CaseFacts{}, &apierror.NotFoundError{Msg: "work item not found: " + workItemID}
@@ -699,6 +702,19 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 	if err != nil {
 		return CaseFacts{}, fmt.Errorf("get case facts: %w", err)
 	}
+	// CSEngineerResponseComment is true only if at least one candidate
+	// comment is a REAL reply, not the case's own description echoed back as
+	// its "first comment" -- the external sync job's own business rules
+	// generate that echo automatically at case creation (mirrorInitialSNComments
+	// copies it into this same "comment" table), attributed to whoever
+	// created the case, not to a genuine responder. When the creator is
+	// internal staff logging a case on a customer's behalf (confirmed live:
+	// a case created and "responded to" by the same account, a second
+	// apart), that echo alone used to satisfy this check -- a response that
+	// never actually happened. hasQualifyingResponseComment applies the same
+	// echo-detection internal/service.isAnnouncementOriginComment already
+	// uses for the identical echo on announcements.
+	facts.CSEngineerResponseComment = hasQualifyingResponseComment(description, candidateComments)
 	facts.CaseType = caseType
 	if state != nil {
 		facts.State = *state
@@ -707,6 +723,49 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 		facts.Severity = *severity
 	}
 	return facts, nil
+}
+
+// slaResponseEchoHTMLTagPattern/slaResponseEchoComparableText/
+// hasQualifyingResponseComment mirror internal/service's own
+// isAnnouncementOriginComment/echoComparableText byte-for-byte (not
+// importable across layers: that package is internal/service, this one is
+// internal/repository, and service already imports repository). Both exist
+// for the identical underlying problem -- the external sync job's own
+// business rules auto-generate a case's "first comment" as a verbatim echo
+// of its description/title, and that echo must never be mistaken for a
+// genuine, separate statement -- just applied to a different fact
+// (CSEngineerResponseComment here, "is this the announcement's own origin
+// post" there).
+var slaResponseEchoHTMLTagPattern = regexp.MustCompile(`<[^>]*>`)
+
+func slaResponseEchoComparableText(s string) string {
+	s = html.UnescapeString(slaResponseEchoHTMLTagPattern.ReplaceAllString(s, ""))
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// hasQualifyingResponseComment reports whether candidates (every public
+// comment on this case authored by a CS_ENGINEER_ROLE holder) contains at
+// least one real reply -- i.e. at least one entry whose text, once reduced
+// to its visible characters, is NOT identical to the case's own description.
+// A blank description has nothing to echo, so every candidate counts (same
+// "nothing to repeat" rule isAnnouncementOriginComment applies). Deliberately
+// an equality check, not "contains": a reply that quotes the description and
+// adds something of its own is a real response, never mistaken for the echo.
+func hasQualifyingResponseComment(description string, candidates []string) bool {
+	d := slaResponseEchoComparableText(description)
+	for _, c := range candidates {
+		if d == "" || slaResponseEchoComparableText(c) != d {
+			return true
+		}
+	}
+	return false
 }
 
 // CancelClock implements SLAEngineRepository.
