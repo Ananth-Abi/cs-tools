@@ -781,23 +781,37 @@ func slaPolicyRefColumnsPrefixed(alias string) string {
 }
 
 // slaEngineRegisterClockQuery inserts a new source='CSM' "sla" row for
-// ($1=workItemID, $2=policy.ID, $5=policy.Target) unless an existing row for
-// that exact (work_item, policy) pair is either still active
-// (slaEngineActiveStageFilter) or already reached a stage $6 names as
-// blocking (slaEngineRevisionBlockStages(policy.Target), bound by
-// registerClockExec -- per-target, see that function's own doc comment) --
-// a CANCELLED row blocks neither, deliberately, since cancellation is what
-// frees that slot up for a fresh registration (see
-// SLAEngineRepository.ReviseClocks). Scoped by sp.id = $2, not just
-// sp.target::TEXT = $5, so two distinct policies that both resolve for the
-// same target (the real Hosting-case shape RegisterClock's own doc comment
-// describes) can each register their own independent clock, rather than the
-// first one's active row blocking the second's insert. Shared, identical
-// SQL text between RegisterClock (run against the pool directly) and
-// ReviseClocks (run inside its own transaction) -- sqlExecutor is satisfied
-// by both *pgxpool.Pool and pgx.Tx. $8 is start_on -- NOW() for an ordinary
+// ($1=workItemID, $2=policy.ID) unless an existing row for that exact
+// (work_item, policy) pair is either still active (slaEngineActiveStageFilter)
+// or already reached a stage $5 names as blocking
+// (slaEngineRevisionBlockStages(policy.Target), bound by registerClockExec --
+// per-target, see that function's own doc comment) -- a CANCELLED row blocks
+// neither, deliberately, since cancellation is what frees that slot up for a
+// fresh registration (see SLAEngineRepository.ReviseClocks). Scoped by
+// sp.id = $2, not sp.target, so two distinct policies that both resolve for
+// the same target (the real Hosting-case shape RegisterClock's own doc
+// comment describes) can each register their own independent clock, rather
+// than the first one's active row blocking the second's insert -- policy.Target
+// itself has no place in this query at all (registerClockExec only needs it
+// Go-side, to compute the $5 blocking-stage list). Shared, identical SQL text
+// between RegisterClock (run against the pool directly) and ReviseClocks (run
+// inside its own transaction) -- sqlExecutor is satisfied by both
+// *pgxpool.Pool and pgx.Tx. $7 is start_on -- NOW() for an ordinary
 // registration, or an explicit earlier instant for policy.Retroactive (see
 // SLAEngineService.RegisterCaseClocks' own doc comment).
+//
+// Regression, caught post-merge-review: an earlier revision of this query
+// used to reference policy.Target directly (hence the "$5=policy.Target"
+// this comment used to say) and was refactored to the sp.id-scoped NOT EXISTS
+// clauses above instead -- but registerClockExec's own Exec call kept passing
+// policy.Target as a positional argument nobody renumbered or removed. A
+// parameter pgx sends that the query text never references anywhere has no
+// context for Postgres to infer its type from during Parse, which fails
+// every single call with 42P18 (indeterminate_datatype) against a real
+// database -- invisible here because the only tests exercising the real SQL
+// (sla_engine_repo_integration_test.go) are skipped unless
+// CASE_STATS_TEST_DSN is set, so this shipped with the engine registering
+// nothing at all. Fixed by dropping the unused argument and renumbering.
 const slaEngineRegisterClockQuery = `
 	INSERT INTO sla (
 		id, created_on, updated_on, created_by, updated_by,
@@ -806,7 +820,7 @@ const slaEngineRegisterClockQuery = `
 		remaining_business_duration, has_breached, source
 	)
 	SELECT gen_random_uuid(), NOW(), NOW(), $3, $3,
-	       $1::uuid, $2::uuid, $7, TRUE, 'IN_PROGRESS'::sla_stage_enum, $8::timestamptz,
+	       $1::uuid, $2::uuid, $6, TRUE, 'IN_PROGRESS'::sla_stage_enum, $7::timestamptz,
 	       $4::interval, 0, INTERVAL '0', $4::interval, FALSE, 'CSM'::sla_source_enum
 	WHERE NOT EXISTS (
 		SELECT 1 FROM sla s
@@ -820,7 +834,7 @@ const slaEngineRegisterClockQuery = `
 		WHERE s.work_item_id = $1::uuid
 		  AND s.source = 'CSM'
 		  AND s.sla_policy_id = $2::uuid
-		  AND s.stage::TEXT = ANY($6::text[])
+		  AND s.stage::TEXT = ANY($5::text[])
 	)`
 
 // sqlExecutor is the subset of *pgxpool.Pool/pgx.Tx this file's queries
@@ -840,7 +854,7 @@ func registerClockExec(ctx context.Context, exec sqlExecutor, workItemID string,
 	if startOn.IsZero() {
 		startOn = time.Now().UTC()
 	}
-	tag, err := exec.Exec(ctx, slaEngineRegisterClockQuery, workItemID, policy.ID, sqlActorLiteral, formatIntervalLiteral(policy.Duration), policy.Target, slaEngineRevisionBlockStages(policy.Target), nullableSchedule(policy.Schedule), startOn)
+	tag, err := exec.Exec(ctx, slaEngineRegisterClockQuery, workItemID, policy.ID, sqlActorLiteral, formatIntervalLiteral(policy.Duration), slaEngineRevisionBlockStages(policy.Target), nullableSchedule(policy.Schedule), startOn)
 	if err != nil {
 		return false, fmt.Errorf("register csm sla clock: %w", err)
 	}
