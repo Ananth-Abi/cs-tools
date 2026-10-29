@@ -71,8 +71,9 @@ const renderAt = (path: string) => {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/" element={<KBHomePage />} />
-          <Route path="/articles/:id" element={<KBArticlePage />} />
-          <Route path="/browse" element={<KBBrowsePage />} />
+          <Route path="/knowledge-articles/:id" element={<KBArticlePage />} />
+          <Route path="/knowledge-bases" element={<KBBrowsePage />} />
+          <Route path="/knowledge-bases/:id" element={<KBBrowsePage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -94,7 +95,7 @@ describe("KBBrowsePage empty pages with hasMore", () => {
       .mockResolvedValueOnce(page([], 0, 100, true))
       .mockResolvedValueOnce(page([], 20, 100, true))
       .mockResolvedValueOnce(page(["a"], 40, 100, false));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
 
     expect(await screen.findByRole("link", { name: /Title a/ })).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(3);
@@ -108,7 +109,7 @@ describe("KBBrowsePage empty pages with hasMore", () => {
     search
       .mockResolvedValueOnce(page([], 0, 100, true))
       .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
 
     await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
     expect(screen.queryByText("No articles matched")).toBeNull();
@@ -122,7 +123,7 @@ describe("KBBrowsePage empty pages with hasMore", () => {
     search.mockImplementation((req) =>
       Promise.resolve(page([], req.offset ?? 0, 900, true)),
     );
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
 
     expect(await screen.findByText("No articles found yet")).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(5);
@@ -138,18 +139,18 @@ describe("KBBrowsePage empty pages with hasMore", () => {
 
   it("says 'up to N' when no knowledge base is selected and exact N when one is", async () => {
     search.mockResolvedValue(page(["a"], 0, 57, true));
-    const first = renderAt("/browse");
+    const first = renderAt("/knowledge-bases");
     expect(await screen.findByText("Showing 1 of up to 57 articles")).toBeInTheDocument();
     first.unmount();
 
     search.mockResolvedValue(page(["a"], 0, 57, true));
-    renderAt("/browse?knowledgeBaseId=kb");
+    renderAt("/knowledge-bases/kb");
     expect(await screen.findByText("57 articles, showing 1")).toBeInTheDocument();
   });
 
   it("shows the empty state once hasMore is false", async () => {
     search.mockResolvedValue(page([], 0, 0, false));
-    renderAt("/browse?q=nothing");
+    renderAt("/knowledge-bases?q=nothing");
     expect(await screen.findByText("No articles matched")).toBeInTheDocument();
   });
 });
@@ -160,7 +161,7 @@ describe("KBBrowsePage load more", () => {
     search
       .mockResolvedValueOnce(page(["a"], 0, 2, true))
       .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
 
     const button = await screen.findByRole("button", { name: "Load more" });
     button.focus();
@@ -180,7 +181,7 @@ describe("KBBrowsePage load more", () => {
     search
       .mockResolvedValueOnce(page(["a"], 0, 2, true))
       .mockRejectedValue(new BackendApiError(400, "bad request"));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
 
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     expect(await screen.findByText("More articles could not be loaded.")).toBeInTheDocument();
@@ -198,7 +199,7 @@ describe("KBBrowsePage load more", () => {
     search
       .mockResolvedValueOnce(page(["a", "b"], 0, 3, true, 2))
       .mockResolvedValueOnce(page(["b", "c"], 2, 3, false, 2));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     await screen.findByRole("link", { name: /Title c/ });
     expect(screen.getAllByRole("link", { name: /Title b/ })).toHaveLength(1);
@@ -207,7 +208,7 @@ describe("KBBrowsePage load more", () => {
 
   it("does not loop on the same offset when the backend reports limit 0 with hasMore", async () => {
     search.mockResolvedValue(page([], 0, 5, true, 0));
-    renderAt("/browse");
+    renderAt("/knowledge-bases");
     expect(await screen.findByText("No articles matched")).toBeInTheDocument();
     expect(search).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
@@ -215,14 +216,14 @@ describe("KBBrowsePage load more", () => {
 
   it("shows a refine-your-search hint when the offset cap ends paging", async () => {
     search.mockResolvedValue(page(["a"], 9990, 50000, true, 20));
-    renderAt("/browse?knowledgeBaseId=kb");
+    renderAt("/knowledge-bases/kb");
     expect(await screen.findByText(/Refine your search/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   it("shows an unknown knowledge base message for a 404", async () => {
     search.mockRejectedValue(new BackendApiError(404, "knowledge base not found"));
-    renderAt("/browse?knowledgeBaseId=gone");
+    renderAt("/knowledge-bases/gone");
     expect(
       await screen.findByText("This knowledge base does not exist or is no longer available."),
     ).toBeInTheDocument();
@@ -270,20 +271,20 @@ describe("KBHomePage recent articles", () => {
 describe("document title and headings on the article page", () => {
   it("titles the not-found state itself", async () => {
     vi.mocked(getArticle).mockRejectedValue(new BackendApiError(404, "missing"));
-    renderAt("/articles/abc");
+    renderAt("/knowledge-articles/abc");
     await screen.findByRole("heading", { level: 1, name: "Article not found" });
     await waitFor(() => expect(document.title).toBe("Article not found - WSO2 Knowledge Base"));
   });
 
   it("titles an invalid id as not found without calling the backend", async () => {
-    renderAt("/articles/bad%20id");
+    renderAt("/knowledge-articles/bad%20id");
     await screen.findByRole("heading", { level: 1, name: "Article not found" });
     expect(document.title).toBe("Article not found - WSO2 Knowledge Base");
   });
 
   it("titles the load-failure state itself", async () => {
     vi.mocked(getArticle).mockRejectedValue(new BackendApiError(400, "bad"));
-    renderAt("/articles/abc");
+    renderAt("/knowledge-articles/abc");
     await screen.findByText("The article could not be loaded.");
     await waitFor(() => expect(document.title).toBe("Article could not be loaded - WSO2 Knowledge Base"));
   });
@@ -292,7 +293,7 @@ describe("document title and headings on the article page", () => {
     vi.mocked(getArticle).mockResolvedValue(
       article("abc", { title: "Real title", body: "<h1>Body h1</h1><h2>Sub</h2><p>x</p>" }),
     );
-    renderAt("/articles/abc");
+    renderAt("/knowledge-articles/abc");
     await screen.findByRole("heading", { level: 1, name: "Real title" });
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 2, name: "Body h1" })).toBeInTheDocument();

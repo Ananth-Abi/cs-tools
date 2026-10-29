@@ -20,6 +20,7 @@ import NotFoundState from "@components/NotFoundState";
 import KBHomePage from "@features/kb/pages/KBHomePage";
 import KBBrowsePage from "@features/kb/pages/KBBrowsePage";
 import KBArticlePage from "@features/kb/pages/KBArticlePage";
+import { LegacyKbRedirect, PreviousArticleRedirect, PreviousBrowseRedirect } from "@components/LegacyRedirect";
 import KBLayout from "@layouts/KBLayout";
 
 // The whole app is public and read-only: no auth guard, no login, no
@@ -29,8 +30,12 @@ export default function App(): JSX.Element {
     <Routes>
       <Route path="/" element={<KBLayout />}>
         <Route index element={<KBHomePage />} />
-        <Route path="browse" element={<KBBrowsePage />} />
-        <Route path="articles/:id" element={<KBArticlePage />} />
+        <Route path="knowledge-bases" element={<KBBrowsePage />} />
+        <Route path="knowledge-bases/:id" element={<KBBrowsePage />} />
+        <Route path="knowledge-articles/:id" element={<KBArticlePage />} />
+        <Route path="kb" element={<LegacyKbRedirect />} />
+        <Route path="browse" element={<PreviousBrowseRedirect />} />
+        <Route path="articles/:id" element={<PreviousArticleRedirect />} />
         <Route path="*" element={<NotFoundState />} />
       </Route>
     </Routes>
