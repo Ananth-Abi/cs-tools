@@ -1649,13 +1649,40 @@ func (s *caseService) applyCustomerReplyStateTransition(ctx context.Context, req
 	if req.Type != domain.CommentTypeComment {
 		return
 	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, req.CaseID, "customer reply")
+}
+
+// applyCustomerAttachmentStateTransition is the attachment counterpart of
+// applyCustomerReplyStateTransition: a customer who uploads a file to a case
+// that is Awaiting Info or Solution Proposed has answered WSO2's request as
+// surely as one who comments, so the same rule applies (the shared
+// moveToWaitingOnWSO2OnCustomerActivity). Called only once an attachment is
+// truly stored and complete (CreateCaseAttachment with status complete,
+// ConfirmCaseAttachment for the two-step upload, and the dual-write create),
+// never for a pending placeholder. Only an attachment on the case itself
+// counts. The uploader is the calling identity in every one of those flows,
+// so the same scope-based customer check as for comments applies.
+// Best-effort: the attachment is already committed, so a failure here is
+// logged and never fails the upload.
+func (s *caseService) applyCustomerAttachmentStateTransition(ctx context.Context, referenceType domain.ReferenceType, caseID string) {
+	if referenceType != domain.ReferenceTypeCase {
+		return
+	}
+	s.moveToWaitingOnWSO2OnCustomerActivity(ctx, caseID, "customer attachment")
+}
+
+// moveToWaitingOnWSO2OnCustomerActivity is the rule shared by a customer's
+// comment and a customer's attachment: when the caller is a customer and the
+// record is Awaiting Info or Solution Proposed, move it to Waiting on WSO2
+// through this service's own UpdateCase. activity ("customer reply" or "customer attachment") labels log lines only.
+func (s *caseService) moveToWaitingOnWSO2OnCustomerActivity(ctx context.Context, caseID, activity string) {
 	if !s.isCustomerCommentAuthor(ctx) {
 		return
 	}
 
-	cv, err := s.GetCaseByID(ctx, req.CaseID)
+	cv, err := s.GetCaseByID(ctx, caseID)
 	if err != nil {
-		slog.ErrorContext(ctx, "create comment: customer reply state transition not evaluated, get case failed", "caseId", req.CaseID)
+		slog.ErrorContext(ctx, activity+" state transition not evaluated, get case failed", "caseId", caseID)
 		return
 	}
 	if derefState(cv.State) != domain.CaseStateAwaitingInfo && derefState(cv.State) != domain.CaseStateSolutionProposed {
@@ -1663,8 +1690,8 @@ func (s *caseService) applyCustomerReplyStateTransition(ctx context.Context, req
 	}
 
 	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
-	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &waitingOnWSO2}); err != nil {
-		slog.ErrorContext(ctx, "create comment: move case to waiting on wso2 after customer reply failed", "caseId", req.CaseID)
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: caseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "move case to waiting on wso2 after "+activity+" failed", "caseId", caseID)
 	}
 }
 
@@ -1853,6 +1880,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		if *req.State != domain.CaseStateClosed && *req.State != domain.CaseStateSolutionProposed {
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is closed or solution_proposed"}
 		}
+	}
+	// ActorEmail is only meaningful on the MarkFixIssued branch today -- the
+	// only UpdateCase field an M2M-only caller (no forwarded end-user
+	// identity) can reach on the Postgres data source. Reject it combined
+	// with anything else rather than silently ignoring it.
+	if req.ActorEmail != nil && req.MarkFixIssued == nil {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "actorEmail is only allowed when markFixIssued is also provided"}
 	}
 	if req.WatchList != nil {
 		return s.updateCaseWatchList(ctx, req)
@@ -2788,13 +2822,21 @@ func (s *caseService) updateCaseMarkFixIssued(ctx context.Context, req domain.Up
 		return domain.UpdateCaseResponse{}, err
 	}
 
-	// resolveActorOrM2M so the integration that marks a fix released (an M2M
-	// caller with no end-user token) is still attributed, to its client id.
-	// Best-effort: an unresolvable caller just skips the entry.
+	// req.ActorEmail, once the handler has verified it against the trusted
+	// M2M client set, takes priority over resolveActorOrM2M's own fallback:
+	// it names the real third-party integration that triggered this call
+	// (e.g. one of several consumers behind csm-integration-service, each
+	// mapped to its own email there), rather than csm-integration-service's
+	// single shared service-to-service client id. Best-effort either way --
+	// an unresolvable caller just skips the entry.
 	if !alreadySet {
-		if actor, err := s.resolveActorOrM2M(ctx); err == nil {
-			s.recordFieldChangeActivity(ctx, req.ID, "fix_issued_on", "", fixIssued.UTC().Format(time.RFC3339), actor.Email)
+		actorEmail := ""
+		if req.ActorEmail != nil {
+			actorEmail = *req.ActorEmail
+		} else if actor, err := s.resolveActorOrM2M(ctx); err == nil {
+			actorEmail = actor.Email
 		}
+		s.recordFieldChangeActivity(ctx, req.ID, "fix_issued_on", "", fixIssued.UTC().Format(time.RFC3339), actorEmail)
 	}
 
 	if !alreadySet && s.snWriteback != nil {
@@ -3826,6 +3868,13 @@ func (s *caseService) CreateCaseAttachment(ctx context.Context, req domain.Creat
 		return domain.CreateAttachmentResponse{}, err
 	}
 
+	// A pending row is a placeholder for an upload that may never finish; the
+	// customer's file only truly exists once ConfirmCaseAttachment runs, which
+	// is where the state transition fires for that flow.
+	if a.Status == domain.AttachmentStatusComplete {
+		s.applyCustomerAttachmentStateTransition(ctx, req.ReferenceType, req.ReferenceID)
+	}
+
 	return domain.CreateAttachmentResponse{
 		Message: "Attachment created successfully",
 		Attachment: domain.AttachmentDetail{
@@ -3881,6 +3930,8 @@ func (s *caseService) ConfirmCaseAttachment(ctx context.Context, id string) (dom
 	if err != nil {
 		return domain.ConfirmAttachmentResponse{}, err
 	}
+
+	s.applyCustomerAttachmentStateTransition(ctx, existing.ReferenceType, existing.ReferenceID)
 
 	return domain.ConfirmAttachmentResponse{
 		Message: "Attachment confirmed successfully",
