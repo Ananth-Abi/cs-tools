@@ -703,3 +703,48 @@ func TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause(t *testing.T) {
 		t.Errorf("pause_duration = %vs, want ~%vs -- the still-open segment must be folded in", pauseDurationSeconds, openPause.Seconds())
 	}
 }
+
+// TestSLAEngineIntegration_ActiveClockPoliciesRunsAgainstRealPostgres is the
+// regression test for a real, reported, production-confirmed bug:
+// slaPolicyRefColumnsPrefixed used to blindly prepend the table alias to
+// each WHOLE column expression ("alias + c" over strings like
+// "EXTRACT(EPOCH FROM duration)"), producing invalid SQL
+// ("sp.EXTRACT(EPOCH FROM duration)") that Postgres rejects with "syntax
+// error at or near \"FROM\"" (SQLSTATE 42601) -- EXTRACT(field FROM source)
+// is its own special syntax, not a plain comma-argument function call, so
+// it cannot be schema/alias-qualified as a whole. This made
+// ActiveClockPolicies fail on every single call, for every case, in every
+// environment, confirmed directly against real staging logs -- which
+// silently broke every condition-driven pause/resume/complete transition
+// system-wide, since ApplyCaseStateEffects's per-target loop depends on this
+// query to find anything to evaluate at all. A fake-repository unit test
+// can't catch an actual SQL syntax error; only a real database can.
+func TestSLAEngineIntegration_ActiveClockPoliciesRunsAgainstRealPostgres(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped, "")
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Resolution (Open Source)", "RESOLUTION")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(resolution): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy, time.Time{}); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+
+	refs, err := repo.ActiveClockPolicies(ctx, slaEngineIntegrationWorkItemID, "RESOLUTION")
+	if err != nil {
+		t.Fatalf("ActiveClockPolicies: %v -- this must not be a SQL syntax error", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("ActiveClockPolicies returned %d refs, want 1", len(refs))
+	}
+	if refs[0].ID != policy.ID {
+		t.Errorf("ActiveClockPolicies returned policy %q, want %q", refs[0].ID, policy.ID)
+	}
+	if refs[0].Duration != policy.Duration {
+		t.Errorf("ActiveClockPolicies Duration = %v, want %v -- EXTRACT(EPOCH FROM sp.duration) must resolve correctly", refs[0].Duration, policy.Duration)
+	}
+}

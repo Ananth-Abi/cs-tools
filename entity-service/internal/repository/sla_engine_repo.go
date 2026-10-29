@@ -960,19 +960,31 @@ func (r *slaEngineRepo) ActiveClockPolicies(ctx context.Context, workItemID, tar
 // needed wherever the query joins "sla_policy" under an alias alongside
 // another table that also has an "id"/"name" column (e.g. ActiveClockPolicies'
 // own join against "sla").
+//
+// Regression, caught against real production logs: blindly prepending alias
+// to each whole expression (as an earlier revision did -- "alias + c" over
+// strings like "EXTRACT(EPOCH FROM duration)") produces invalid SQL.
+// EXTRACT(field FROM source) is its own special SQL-standard syntax, not a
+// plain comma-argument function call, so "sp.EXTRACT(EPOCH FROM duration)"
+// makes Postgres try to parse "sp.EXTRACT" as a schema-qualified function
+// invocation and then fail on the bare FROM keyword inside the parentheses
+// -- exactly the confirmed, live failure ("syntax error at or near \"FROM\"",
+// SQLSTATE 42601) that made ActiveClockPolicies fail on every single call
+// since it was introduced, for every case, in every environment: with the
+// lookup always erroring, ApplyCaseStateEffects's per-target loop never had
+// a policy to evaluate, so its own stop/cancel/pause/resume switch never ran
+// at all. The alias has to go on the actual column reference inside each
+// expression, never wrapped around the whole expression.
 func slaPolicyRefColumnsPrefixed(alias string) string {
 	cols := []string{
-		"id", "name", "target::TEXT", "EXTRACT(EPOCH FROM duration)", "COALESCE(schedule, '')", "source::TEXT",
-		"COALESCE(start_condition, '')", "COALESCE(stop_condition, '')",
-		"COALESCE(pause_condition, '')", "COALESCE(resume_condition, '')", "COALESCE(cancel_condition, '')",
-		"COALESCE(retroactive, FALSE)", "COALESCE(when_to_cancel::TEXT, 'CANCEL_CONDITIONS_ARE_MET')",
-		"COALESCE(when_to_resume::TEXT, 'RESUME_CONDITIONS_ARE_MET')",
+		alias + "id", alias + "name", alias + "target::TEXT",
+		"EXTRACT(EPOCH FROM " + alias + "duration)", "COALESCE(" + alias + "schedule, '')", alias + "source::TEXT",
+		"COALESCE(" + alias + "start_condition, '')", "COALESCE(" + alias + "stop_condition, '')",
+		"COALESCE(" + alias + "pause_condition, '')", "COALESCE(" + alias + "resume_condition, '')", "COALESCE(" + alias + "cancel_condition, '')",
+		"COALESCE(" + alias + "retroactive, FALSE)", "COALESCE(" + alias + "when_to_cancel::TEXT, 'CANCEL_CONDITIONS_ARE_MET')",
+		"COALESCE(" + alias + "when_to_resume::TEXT, 'RESUME_CONDITIONS_ARE_MET')",
 	}
-	out := make([]string, len(cols))
-	for i, c := range cols {
-		out[i] = alias + c
-	}
-	return strings.Join(out, ", ")
+	return strings.Join(cols, ", ")
 }
 
 // slaEngineRegisterClockQuery inserts a new source='CSM' "sla" row for
