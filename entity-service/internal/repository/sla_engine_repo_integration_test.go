@@ -108,7 +108,7 @@ func TestSLAEngineIntegration_ReviseClocksDoesNotResurrectTerminalClock(t *testi
 	// test.
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	respPolicy, err := repo.FindPolicyByName(ctx, "P0 - Response (Managed Services)", "RESPONSE")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestSLAEngineIntegration_ReviseClocksReplacesBreachedClock(t *testing.T) {
 	// WithSystemIdentity + Scoped: work_item is RLS-protected (see seedSLAEngineWorkItem).
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	workaroundPolicy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {
@@ -275,7 +275,7 @@ func TestSLAEngineIntegration_ReviseClocksCancelComputesHasBreachedLive(t *testi
 	// WithSystemIdentity + Scoped: work_item is RLS-protected (see seedSLAEngineWorkItem).
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	workaroundPolicy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {
@@ -325,7 +325,7 @@ func TestSLAEngineIntegration_ReviseClocksPreservesBreachedResponseClock(t *test
 	// WithSystemIdentity + Scoped: work_item is RLS-protected (see seedSLAEngineWorkItem).
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	responsePolicy, err := repo.FindPolicyByName(ctx, "P0 - Response (Managed Services)", "RESPONSE")
 	if err != nil {
@@ -372,7 +372,7 @@ func TestSLAEngineIntegration_CompleteClockFinalizesBreachedClock(t *testing.T) 
 	seedSLAEngineWorkItem(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	policy, err := repo.FindPolicyByName(ctx, "P0 - Response (Managed Services)", "RESPONSE")
 	if err != nil {
@@ -429,7 +429,7 @@ func TestSLAEngineIntegration_SetPausedPausesBreachedClock(t *testing.T) {
 	seedSLAEngineWorkItem(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {
@@ -478,7 +478,7 @@ func TestSLAEngineIntegration_SetPausedFreezesElapsedTime(t *testing.T) {
 	seedSLAEngineWorkItem(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {
@@ -568,7 +568,7 @@ func TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration(t *testing.T) 
 	seedSLAEngineWorkItem(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {
@@ -656,7 +656,7 @@ func TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause(t *testing.T) {
 	seedSLAEngineWorkItem(t, pool)
 	ctx := repository.WithSystemIdentity(context.Background())
 	scoped := repository.NewScoped(pool)
-	repo := repository.NewSLAEngineRepository(scoped)
+	repo := repository.NewSLAEngineRepository(scoped, "")
 
 	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
 	if err != nil {

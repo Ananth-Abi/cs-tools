@@ -821,7 +821,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	var slaDurationPolicyHandler *handler.SLADurationPolicyHandler
 	if db != nil {
 		slaDurationPolicyHandler = handler.NewSLADurationPolicyHandler(
-			service.NewSLADurationPolicyService(repository.NewSLAEngineRepository(repository.NewScoped(db)), accessSvc))
+			service.NewSLADurationPolicyService(repository.NewSLAEngineRepository(repository.NewScoped(db), cfg.CSEngineerRole), accessSvc))
 	}
 
 	// Every project-stats route is available on both data sources. In
@@ -1016,7 +1016,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// constructing one -- no other code path needs to know why.
 	var slaEngineSvc service.SLAEngineService
 	if db != nil && cfg.CSMSLAEngineEnabled {
-		slaEngineSvc = service.NewSLAEngineService(repository.NewSLAEngineRepository(repository.NewScoped(db)))
+		slaEngineSvc = service.NewSLAEngineService(repository.NewSLAEngineRepository(repository.NewScoped(db), cfg.CSEngineerRole))
 	}
 
 	caseRepo := repository.NewCaseRepository(repository.NewScoped(db), crVisibility)

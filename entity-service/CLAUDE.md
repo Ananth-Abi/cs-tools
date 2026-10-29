@@ -2385,11 +2385,11 @@ row" or a hardcoded pause/resume/complete switch in the section below as
 superseded.
 
 **Why**: the name-keyed lookup this replaces was confirmed to silently
-resolve nothing for most of the real table's 42 `source='SERVICENOW'`
-policies, which are gated on far more than severity (case type, product,
-project type, account presence, creation date, whether a CS engineer has
-already replied) and in several cases (`ServiceRequest SLA`, the
-Query/SecReport Analysis family) on no severity at all.
+resolve nothing for most of the real table's 42 policies written by the
+external sync job, which are gated on far more than severity (case type,
+product, project type, account presence, creation date, whether a CS
+engineer has already replied) and in several cases (`ServiceRequest SLA`,
+the Query/SecReport Analysis family) on no severity at all.
 
 - **`internal/slacondition`** parses one condition column
   (`start_condition`/`stop_condition`/`pause_condition`/`resume_condition`/
@@ -2408,31 +2408,44 @@ Query/SecReport Analysis family) on no severity at all.
   `project`/`project_type`/`deployed_product`/`product`, reusing
   `case_repo.go`'s own `caseLikeRowTypeColumn`/`caseLikeStateColumn`/
   `caseLikeJoins`). `cs_engineer_response_comment` has no dedicated column
-  anywhere in this schema — it's derived from whether the case's own
-  CSM-registered RESPONSE clock has already reached `ACHIEVED`, which is a
-  real, documented approximation: a case closed before anyone replied also
-  completes RESPONSE (via its own `stop_condition`'s `stateINCLOSED` branch),
-  so that case reads as "already responded" too. `RegisterCaseClocks`/
-  `ReviseCaseClocks` override `CaseFacts.Severity` from their own
-  `severity *domain.CaseSeverity` parameter (a caller's in-flight value may
-  be more current than a fresh read, e.g. on the ServiceNow dual-write
-  path); `ApplyCaseStateEffects` overrides `CaseFacts.State` from its own
-  `state` parameter the same way. **`case_type` can only ever be
+  anywhere in this schema — it's a live `EXISTS` over `comment` joined to
+  `"user"` (by email) and from there to `user_role`/`role`, true when a
+  public (`type = 'COMMENT'`, never `WORK_NOTE`) comment was authored by a
+  user holding the `CS_ENGINEER_ROLE` role (`slaEngineRepo.csEngineerRole`)
+  — the same role `caseService.isSupportEngineerAuthor` checks before ever
+  completing the RESPONSE clock, so the two agree: a case never reads as
+  "already responded" from a commenter who could never actually complete
+  that clock. `CS_ENGINEER_ROLE` unset makes this always false. Previous
+  revisions derived this from the RESPONSE clock reaching `ACHIEVED`, then
+  from any `user_type = 'INTERNAL'` commenter — both were confirmed wrong
+  (a cancelled-but-never-achieved clock undercounted; any internal
+  commenter overcounted against the narrower completion check) and are no
+  longer how this works. `RegisterCaseClocks`/`ReviseCaseClocks` override
+  `CaseFacts.Severity` from their own `severity *domain.CaseSeverity`
+  parameter (a caller's in-flight value may be more current than a fresh
+  read, e.g. on the ServiceNow dual-write path); `ApplyCaseStateEffects`
+  overrides `CaseFacts.State` from its own `state` parameter the same way.
+  **`case_type` can only ever be
   `case`/`engagement`/`service_request`/`security_report_analysis`/
   `announcement` on this data source** — `hosting`/`hosting_query`/
-  `hosting_task` are real values in `sla_policy`'s own decoded vocabulary
-  (ServiceNow-only case types) but `work_item_type_enum` has no matching
-  label at all, so no Postgres `work_item` row can ever carry one; a policy
-  conditioned on one of those three simply never matches today. Not a bug,
-  a real, structural schema gap — would need a migration (out of scope
-  here) to close.
+  `hosting_task` are real values in the sync job's own decoded vocabulary
+  but `work_item_type_enum` has no matching label at all, so no Postgres
+  `work_item` row can ever carry one; a policy conditioned on one of those
+  three simply never matches. By explicit product decision these three are
+  discarded outright, not a gap to close — Hosting-specific policies are no
+  longer maintained upstream. Incident vs. Query is a related but distinct
+  gap that IS closed, not structural: both decode to the identical
+  `work_item.type`, but the translator (`sn_sla_condition_translate.go`)
+  recovers the distinction from severity instead (Incident = S0-S3, Query =
+  S4, confirmed against the real policy data) — see that file's own doc
+  comment on `translateIncidentQueryCaseType`.
 - **`slaPolicyResolver.resolve(ctx, target, facts)`** (target =
   `RESPONSE`/`WORKAROUND`/`RESOLUTION`) replaces the old severity-keyed
-  `resolve`: it lists every active `source='SERVICENOW'` candidate for that
-  target (`ListCandidatePolicies`), classifies each as a genuine case policy
-  via `isCasePolicy` (an explicit `case_type` token, or any other field
-  that exists ONLY in this engine's own `CaseFacts` vocabulary — `account`,
-  `product`, `project_type`, `cs_engineer_response_comment`,
+  `resolve`: it lists every active candidate for that target written by the
+  external sync job (`ListCandidatePolicies`), classifies each as a genuine
+  case policy via `isCasePolicy` (an explicit `case_type` token, or any
+  other field that exists ONLY in this engine's own `CaseFacts` vocabulary —
+  `account`, `product`, `project_type`, `cs_engineer_response_comment`,
   `u_workaround_provided`, `fix_eta_shared`, `opened_at`, `sys_created_on`
   — as long as none of the incident/escalation-only skip markers are
   present). **Deliberately excludes `priority`/`state`** — an earlier
@@ -2445,14 +2458,22 @@ Query/SecReport Analysis family) on no severity at all.
   `slacondition`'s not-equal-on-absent-field semantics. `isCasePolicy` is a
   strict inclusion check now — a policy must name a field this engine
   knows is case-exclusive, never "priority"/"state" alone — evaluates each
-  survivor's `start_condition` against `facts`,
-  and returns the match. Zero matches is logged and treated as "no clock
-  registered", exactly like the old design's absent map entry. More than
-  one match is real (e.g. `"Hosting Q/T - Response (Managed Service)"` and
-  `"Query - Response (Open Source)"` both match a hosting_query/task case)
-  — handled explicitly, not silently: every match is logged by name, and
-  the lowest `sla_policy.id` (`ListCandidatePolicies`' own `ORDER BY`) wins
-  deterministically, so the same case always resolves the same way.
+  survivor's `start_condition` against `facts`, and returns **every**
+  match, not just one: `RegisterClock`/`ReviseClocks` register one clock
+  per matching policy (see `ActiveClockPolicies`' own doc comment), since
+  the real data has cases where two distinct policies legitimately both
+  apply to the same target at once (a Hosting case's open-source-track and
+  managed-services-track resolution clocks both ran historically). An
+  earlier revision picked only the lowest-id match and silently dropped the
+  rest — found, during review, to also silently double-register two
+  functionally-identical RESPONSE policies for a security-report case
+  (`"SecReport Analysis response (1 hour)"` and `"P1 - Response (Open
+  Source)"`'s own SRA branch, confirmed against real staging data: same
+  target, same duration, same trigger) once every-match registration
+  shipped — not yet resolved; needs a decision on which of the two,
+  if either, should be retired or narrowed. Zero matches is logged and
+  treated as "no clock registered", exactly like the old design's absent
+  map entry.
 - **`RegisterCaseClocks`/`ReviseCaseClocks`** iterate all three targets
   (`slaTargetOrder`) and resolve each independently — a clock target is
   registered only when some real policy's `start_condition` actually

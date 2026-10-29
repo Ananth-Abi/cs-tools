@@ -279,15 +279,23 @@ type CaseFacts struct {
 	// "cs_engineer_response_comment" field: whether a qualifying
 	// support-engineer reply has ever been posted on this case. Computed
 	// live by GetCaseFacts' own query -- an EXISTS over "comment" joined to
-	// "user" by email, for a public (type = 'COMMENT', never WORK_NOTE) row
-	// whose author is an INTERNAL-type user ("user".user_type, the real,
-	// role-membership-derived column this schema already keeps for exactly
-	// this distinction -- domain.UserTypeInternal) -- rather than a stored
-	// column: no schema change needed, and a live query over "comment"
-	// already reflects every reply ever made, including ones posted before
-	// this engine existed, with no backfill required. A created_by that
-	// matches no "user" row (blank, or an address with no account) simply
-	// never joins, so it's never counted -- never an error.
+	// "user" (by email) and from there to user_role/role, for a public
+	// (type = 'COMMENT', never WORK_NOTE) row whose author holds the
+	// CS_ENGINEER_ROLE role (slaEngineRepo.csEngineerRole,
+	// config.Config.CSEngineerRole) -- the SAME role
+	// caseService.isSupportEngineerAuthor checks before ever calling
+	// SLAEngineService.CompleteResponseClock, not the broader
+	// "user".user_type = 'INTERNAL' an earlier revision used. The two checks
+	// must agree: a broader fact here would report "already responded" for
+	// an internal commenter (e.g. an account manager) who can never actually
+	// complete the clock, letting a later severity change skip registering a
+	// response clock the case genuinely still needs. Live query, not a
+	// stored column: no schema change needed, and it already reflects every
+	// reply ever made, including ones posted before this engine existed,
+	// with no backfill required. A created_by that matches no "user" row, or
+	// a user with no CS_ENGINEER_ROLE grant, simply never joins, so it's
+	// never counted -- never an error. CS_ENGINEER_ROLE unset makes this
+	// always false (see NewSLAEngineRepository's own doc comment).
 	//
 	// This is deliberately NOT derived from the response clock's own stage
 	// reaching ACHIEVED, which an earlier version of this field did -- a
@@ -518,16 +526,27 @@ type SLAEngineRepository interface {
 
 type slaEngineRepo struct {
 	db *Scoped
+	// csEngineerRole is config.Config.CSEngineerRole (CS_ENGINEER_ROLE) --
+	// see GetCaseFacts' own doc comment for why CaseFacts.CSEngineerResponseComment
+	// must use this exact role, not a looser "any internal user" check.
+	csEngineerRole string
 }
 
 // NewSLAEngineRepository constructs an SLAEngineRepository backed by the
-// given Scoped connection. This engine runs on a process-startup background
-// worker (cmd/api/main.go's slaEngineCtx), never an HTTP request, so that
-// context must carry WithSystemIdentity(ctx) rather than inheriting nothing
-// -- Scoped requires an identity on ctx even though sla itself has no RLS
-// since migration 0153.
-func NewSLAEngineRepository(db *Scoped) SLAEngineRepository {
-	return &slaEngineRepo{db: db}
+// given Scoped connection and the CS_ENGINEER_ROLE role name. This engine
+// runs on a process-startup background worker (cmd/api/main.go's
+// slaEngineCtx), never an HTTP request, so that context must carry
+// WithSystemIdentity(ctx) rather than inheriting nothing -- Scoped requires
+// an identity on ctx even though sla itself has no RLS since migration 0153.
+//
+// An empty csEngineerRole (CS_ENGINEER_ROLE unset) makes
+// CaseFacts.CSEngineerResponseComment always false -- the same "can't
+// confirm, not an error" posture caseService.isSupportEngineerAuthor already
+// has for the identical gap (see that method's own doc comment): a role name
+// that's never a real row in the "role" table simply never matches, so no
+// special-casing is needed in the query itself.
+func NewSLAEngineRepository(db *Scoped, csEngineerRole string) SLAEngineRepository {
+	return &slaEngineRepo{db: db, csEngineerRole: csEngineerRole}
 }
 
 // FindPolicyByName implements SLAEngineRepository.
@@ -631,6 +650,17 @@ func (r *slaEngineRepo) ListCandidatePolicies(ctx context.Context, target string
 // why a case-like work item's state/type can't be read off a single column.
 // severity is read from "case" directly (c.severity): only a CASE-typed
 // work item ever has one (domain.CaseView's own doc comment).
+//
+// CaseFacts.CSEngineerResponseComment checks the commenter's OWN
+// CS_ENGINEER_ROLE role membership (user_role/role joined on r.name =
+// r.csEngineerRole), not the looser "any user_type = 'INTERNAL'" an earlier
+// revision used -- caseService.completeResponseSLAOnComment (the one place a
+// response clock is ever actually completed) only fires for that same exact
+// role, via isSupportEngineerAuthor. The two must agree: a looser fact would
+// report "already responded" for an internal commenter (e.g. an account
+// manager) who can never actually complete the clock, so a later severity
+// change would skip registering a response clock the case genuinely still
+// needs.
 func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (CaseFacts, error) {
 	const query = `
 		SELECT LOWER(` + caseLikeRowTypeColumn + `), ` + caseLikeStateColumn + `, c.severity::TEXT,
@@ -641,9 +671,11 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 		       EXISTS (
 		           SELECT 1 FROM comment cm
 		           JOIN "user" u ON LOWER(u.email) = LOWER(cm.created_by)
+		           JOIN user_role ur ON ur.user_id = u.id
+		           JOIN role r ON r.id = ur.role_id
 		           WHERE cm.work_item_id = wi.id
 		             AND cm.type = 'COMMENT'
-		             AND u.user_type = 'INTERNAL'
+		             AND r.name = $2
 		       )
 		FROM work_item wi
 		LEFT JOIN "case" c ON c.id = wi.id
@@ -657,7 +689,7 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 	var facts CaseFacts
 	var caseType string
 	var state, severity *string
-	err := r.db.QueryRow(ctx, query, workItemID).Scan(
+	err := r.db.QueryRow(ctx, query, workItemID, r.csEngineerRole).Scan(
 		&caseType, &state, &severity, &facts.CreatedOn, &facts.ProjectType, &facts.Product,
 		&facts.HasAccount, &facts.WorkaroundProvided, &facts.FixEtaShared, &facts.CSEngineerResponseComment,
 	)
@@ -679,41 +711,145 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 
 // CancelClock implements SLAEngineRepository.
 func (r *slaEngineRepo) CancelClock(ctx context.Context, workItemID, target string) (bool, error) {
-	const query = `
+	return r.cancelClock(ctx, workItemID, target, "")
+}
+
+// CancelClockByPolicy implements SLAEngineRepository.
+func (r *slaEngineRepo) CancelClockByPolicy(ctx context.Context, workItemID, target, policyID string) (bool, error) {
+	return r.cancelClock(ctx, workItemID, target, policyID)
+}
+
+// cancelClock is CancelClock/CancelClockByPolicy's shared implementation --
+// same both-paths-when-bulk reasoning as completeClock/setPaused above.
+//
+// Also computes has_breached, same as ReviseClocks' own cancellation and
+// CompleteClock already do: a clock cancelled by its own policy's cancel
+// condition (applyCaseStateEffectsForPolicy, the live caller of
+// CancelClockByPolicy) can genuinely have run past its duration before the
+// cancelling event happened (e.g. a workaround/resolution clock that
+// breached while the case sat untouched, then got a late severity change);
+// without this, that breach silently disappeared the moment the clock was
+// cancelled -- a real, reported gap this method shared with ReviseClocks
+// before that one was fixed.
+func (r *slaEngineRepo) cancelClock(ctx context.Context, workItemID, target, policyID string) (bool, error) {
+	ok, err := r.cancelClockFlat(ctx, workItemID, target, policyID)
+	if err != nil {
+		return false, err
+	}
+	if ok && policyID != "" {
+		return true, nil
+	}
+	bdOK, err := r.cancelClockBusinessDays(ctx, workItemID, target, policyID)
+	return ok || bdOK, err
+}
+
+func (r *slaEngineRepo) cancelClockFlat(ctx context.Context, workItemID, target, policyID string) (bool, error) {
+	policyFilter := ""
+	args := []any{workItemID, target, sqlActorLiteral}
+	if policyID != "" {
+		policyFilter = " AND sp.id = $4::uuid"
+		args = append(args, policyID)
+	}
+	query := `
 		UPDATE sla s
-		SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE, updated_on = NOW(), updated_by = $3
+		SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE,
+		    has_breached = (` + completedElapsedExpr + ` >= s.duration),
+		    updated_on = NOW(), updated_by = $3
 		FROM sla_policy sp
 		WHERE s.sla_policy_id = sp.id
 		  AND s.work_item_id = $1::uuid
 		  AND s.source = 'CSM'
 		  AND sp.target::TEXT = $2
-		  AND s.stage::TEXT ` + slaEngineOpenStageFilter
+		  AND COALESCE(sp.schedule, '') != '` + slaScheduleWSO2BusinessDays + `'
+		  AND s.stage::TEXT ` + slaEngineOpenStageFilter + policyFilter
 
-	tag, err := r.db.Exec(ctx, query, workItemID, target, sqlActorLiteral)
+	tag, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
 		return false, fmt.Errorf("cancel csm sla clock: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
 
-// CancelClockByPolicy implements SLAEngineRepository.
-func (r *slaEngineRepo) CancelClockByPolicy(ctx context.Context, workItemID, target, policyID string) (bool, error) {
-	const query = `
-		UPDATE sla s
-		SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE, updated_on = NOW(), updated_by = $4
-		FROM sla_policy sp
-		WHERE s.sla_policy_id = sp.id
-		  AND s.work_item_id = $1::uuid
-		  AND s.source = 'CSM'
-		  AND sp.target::TEXT = $2
-		  AND sp.id = $3::uuid
-		  AND s.stage::TEXT ` + slaEngineOpenStageFilter
+// cancelClockBusinessDays is cancelClock's 'WSO2 Business days' branch --
+// same pause-aware elapsed-vs-duration computation as
+// completeClockBusinessDays, just writing CANCELLED instead of ACHIEVED and
+// leaving the clock's displayed elapsed/remaining/percentage columns alone
+// (a cancelled clock, unlike a completed one, was never actually satisfied,
+// so there's no "real outcome" figure to freeze the way completion does --
+// only has_breached, a simple past/future-tense fact, needs recording here).
+func (r *slaEngineRepo) cancelClockBusinessDays(ctx context.Context, workItemID, target, policyID string) (bool, error) {
+	var found bool
+	err := r.db.InTx(ctx, func(tx pgx.Tx) error {
+		policyFilter := ""
+		args := []any{workItemID, target}
+		if policyID != "" {
+			policyFilter = " AND sp.id = $3::uuid"
+			args = append(args, policyID)
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT s.id, s.start_on, s.paused_on,
+			       COALESCE(EXTRACT(EPOCH FROM s.business_pause_duration), 0),
+			       EXTRACT(EPOCH FROM s.duration)
+			FROM sla s
+			JOIN sla_policy sp ON sp.id = s.sla_policy_id
+			WHERE s.work_item_id = $1::uuid
+			  AND s.source = 'CSM'
+			  AND sp.target::TEXT = $2
+			  AND sp.schedule = '`+slaScheduleWSO2BusinessDays+`'
+			  AND s.stage::TEXT `+slaEngineOpenStageFilter+policyFilter+`
+			FOR UPDATE OF s`, args...)
+		if err != nil {
+			return fmt.Errorf("cancel business-day sla clock: select: %w", err)
+		}
+		type openRow struct {
+			id                                    string
+			startOn                               time.Time
+			pausedOn                              *time.Time
+			businessPauseSeconds, durationSeconds float64
+		}
+		var open []openRow
+		for rows.Next() {
+			var o openRow
+			if err := rows.Scan(&o.id, &o.startOn, &o.pausedOn, &o.businessPauseSeconds, &o.durationSeconds); err != nil {
+				rows.Close()
+				return fmt.Errorf("cancel business-day sla clock: scan: %w", err)
+			}
+			open = append(open, o)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("cancel business-day sla clock: rows: %w", err)
+		}
 
-	tag, err := r.db.Exec(ctx, query, workItemID, target, policyID, sqlActorLiteral)
+		now := time.Now().UTC()
+		for _, o := range open {
+			businessPause := time.Duration(o.businessPauseSeconds * float64(time.Second))
+			if o.pausedOn != nil {
+				businessPause += businessdays.Elapsed(*o.pausedOn, now)
+			}
+			elapsed := businessdays.Elapsed(o.startOn, now) - businessPause
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			duration := time.Duration(o.durationSeconds * float64(time.Second))
+			hasBreached := elapsed >= duration
+
+			if _, err := tx.Exec(ctx, `
+				UPDATE sla SET stage = 'CANCELLED'::sla_stage_enum, is_active = FALSE,
+				    has_breached = $2,
+				    updated_on = NOW(), updated_by = $3
+				WHERE id = $1::uuid`,
+				o.id, hasBreached, sqlActorLiteral,
+			); err != nil {
+				return fmt.Errorf("cancel business-day sla clock: update: %w", err)
+			}
+			found = true
+		}
+		return nil
+	})
 	if err != nil {
-		return false, fmt.Errorf("cancel csm sla clock by policy: %w", err)
+		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	return found, nil
 }
 
 // ActiveClockPolicies implements SLAEngineRepository.
