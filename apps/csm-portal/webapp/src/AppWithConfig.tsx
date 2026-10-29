@@ -24,6 +24,7 @@ import { loggerConfig } from "@config/loggerConfig";
 import LoggerProvider from "@context/logger/LoggerProvider";
 import { ThemePreferenceProvider } from "@context/theme/ThemePreferenceContext";
 import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
+import { NewCaseDraftProvider } from "@context/new-case-draft/NewCaseDraftContext";
 import { authConfig } from "@config/authConfig";
 
 // React-Query devtools ship from a devDependency and must not enter the
@@ -115,7 +116,9 @@ export default function AppWithConfig(): JSX.Element {
               <CaseTabsBehaviorProvider>
                 <QueryClientProvider client={queryClient}>
                   <AppErrorBoundary>
-                    <App />
+                    <NewCaseDraftProvider>
+                      <App />
+                    </NewCaseDraftProvider>
                   </AppErrorBoundary>
                   {ReactQueryDevtools && (
                     <Suspense fallback={null}>

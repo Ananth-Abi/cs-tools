@@ -429,7 +429,7 @@ unset one (except the three marked optional).
 | `AUTH_SECURITY_TEAM_ROLES` | Yes | Read-only `view`, `view_operations`, `security_center`; never any state-changing permission |
 | `AUTH_WORKNOTE_CREATOR_ROLES` | No (optional) | Posting a `work_note` comment on a case only; none of `write`'s other actions |
 | `AUTH_COMMENT_UPDATER_ROLES` | No (optional) | Reaching comment edit/delete, and editing or deleting **any** comment (a plain `cs_engineer` only succeeds on their own); also `security_center` |
-| `AUTH_ONBOARDING_LEAD_ROLES` | No (optional) | Setting a project's onboarding status and owner (`PATCH /projects/{id}`) only; no read access and no other write. `admin` always can, `cs_engineer` cannot. Unset means only `admin` can |
+| `AUTH_ONBOARDING_LEAD_ROLES` | No (optional) | Setting a project's onboarding status, owner and dates (`PATCH /projects/{id}`) only; no read access and no other write. `admin` always can, `cs_engineer` cannot. Unset means only `admin` can |
 | `AUTH_SALES_SOLUTIONS_ROLES` | No (optional) | Only `view_shared_entity` (the shared case, account, project and team-member reads); also reported by `GET /users/me` so the webapp can pick a navigation |
 
 Example: `AUTH_ESCALATOR_ROLES=example-escalators-role,example-leads-role`.
@@ -447,11 +447,11 @@ Permissions and the routes they guard (`internal/handler/access.go` is the sourc
 | `escalate` | `POST /cases/{id}/escalations`; de-escalating also requires being one of the case's team leads |
 | `download_attachment` | `GET /attachments/{id}/content`, `POST /attachments/{id}/share` |
 | `write` | Every other `POST`/`PATCH`/`DELETE` |
-| `admin` | Admin-only routes such as `POST /users`, `GET /roles/grantable`, knowledge-base administration |
+| `admin` | Admin-only routes such as `POST /users`, `POST /users/{id}/roles`, `GET /roles/grantable`, knowledge-base administration |
 | `security_center` | `/products/vulnerabilities` routes. Security-report cases are gated inside the case handler |
 | `create_announcement` | Writes on `/announcement-requests` (together with `write`), and `POST /cases` with `type: announcement` |
 | `update_delete_comment` | `PATCH`/`DELETE /comments/{id}`; which comment may be touched is decided per comment (see `AUTH_COMMENT_UPDATER_ROLES`) |
-| `manage_onboarding` | `PATCH /projects/{id}` when the body sets `onboardingStatus` or `onboardingOwner`; checked inside the handler. `onboarding_lead` and `admin`. The route itself (`update_project`) admits `cs_engineer`, `admin` and `onboarding_lead`; any other field in the body still needs `write` |
+| `manage_onboarding` | `PATCH /projects/{id}` when the body sets `onboardingStatus`, `onboardingOwner` or any of the four onboarding dates (`onboardingStartDate`, `onboardingGoLivePlanDate`, `onboardingGoLiveDate`, `onboardingExpiryDate`); checked inside the handler. `onboarding_lead` and `admin`. The route itself (`update_project`) admits `cs_engineer`, `admin` and `onboarding_lead`; any other field in the body still needs `write` |
 | `use_plg`, `manage_playbooks` | The `/plg/*` routes: `cs_engineer` and `admin` use them; authoring playbook templates is `admin` only |
 
 A caller with none of the required roles gets `403`. Some actions need more than the role: posting a
@@ -516,7 +516,7 @@ Both are parsed at startup and a malformed value is fatal.
 |---|---|---|---|---|
 | `CSM_TEAM_REGISTRY` | No | none (empty registry, startup warns) | Team catalogue: rows separated by `,`, fields by `\|`: `teamKey\|Display Name[\|FAMILY[\|creGroupId[\|sreGroupId]]]`. `FAMILY` is one of `CRE-ABT`, `CRE`, `SRE-ABT`, `SRE`, `SME` (case-insensitive) or empty; group ids are 32 hex characters. Duplicate keys or names fail startup naming the row | `alpha\|Alpha Team\|CRE-ABT,beta\|Beta Team\|SRE-ABT` |
 | `CSM_USER_ROLES` | No | `agent,admin,commenter,customer,customer_admin,partner,partner_admin,internal,external,timecard_approver` | Assignable-role allow-list, comma list; validates the `roleIds` user filter and is served by `POST /roles/search`. Duplicates are fatal | `agent,admin,internal,external` |
-| `ASGARDEO_ROLE_IDS` | No | none | JSON object mapping a real role name (exactly as listed in `AUTH_<ROLE>_ROLES`) to its identity-provider role id. Enables SCIM-backed features: `GET /users/time-card-approvers`, granting roles through `POST /users` (`grantRoles`, `GET /roles/grantable`) and `csmPlatformRoles` on `GET /users/{id}`. A name without an entry just has those features off. The variable name is historical | `{"example-approver-role":"00000000-0000-0000-0000-000000000000"}` |
+| `ASGARDEO_ROLE_IDS` | No | none | JSON object mapping a real role name (exactly as listed in `AUTH_<ROLE>_ROLES`) to its identity-provider role id. Enables SCIM-backed features: `GET /users/time-card-approvers`, granting roles through `POST /users` (`grantRoles`) and `POST /users/{id}/roles` (`GET /roles/grantable` reports the same resolved set both read), and `csmPlatformRoles` on `GET /users/{id}`. A name without an entry just has those features off. The variable name is historical | `{"example-approver-role":"00000000-0000-0000-0000-000000000000"}` |
 | `ASGARDEO_ROLE_GROUP_NAMES` | No | none | JSON object mapping a **portal role key** (not a real Asgardeo role name -- see `ASGARDEO_ROLE_IDS` above) to a list of Asgardeo **group display names** (not ids -- matched case-sensitively against the name shown in the Asgardeo console). A second, independent way `csmPlatformRoles` on `GET /users/{id}` can grant a portal role: by Asgardeo group membership, instead of (or alongside) a role assignment. A portal role key without an entry simply has no group that grants it, and leaving this variable unset entirely changes nothing -- group matching is purely additive on top of `ASGARDEO_ROLE_IDS` | `{"cs_engineer":["CSM Engineers"]}` |
 | `CSM_ANNOUNCEMENT_EXCLUDED_PROJECT_KEYS` | No | none | Comma list of project keys that an "all customer projects" announcement audience search always excludes (the caller cannot opt out). Requires `CUSTOMER_ENTITY_DATA_SOURCE` not to be `postgres` | `PROJA,PROJB` |
 
@@ -629,7 +629,7 @@ main service plus the `/plg/*` routes). Main areas:
 | Accounts, projects, products, deployments | `/accounts/*`, `/projects/*` (contacts, metadata), `/products/*`, `/deployments/*` and deployed products |
 | Operations | `/incidents`, `/change-requests` (including approvals), `/problems`, `/incident-tasks`, `/outages`, `/alerts`, `/smart-alerts` |
 | Time cards and updates | `/time-cards/*`, `/updates/product-update-levels`, `/updates/levels/search` |
-| Users and roles | `/users/me`, `/users/search`, `/users/{id}`, `POST /users`, `/roles/search`, `/roles/grantable`, `/teams/search` |
+| Users and roles | `/users/me`, `/users/search`, `/users/{id}`, `POST /users`, `POST /users/{id}/roles`, `/roles/search`, `/roles/grantable`, `/teams/search` |
 | Team schedule | `/team-schedule/*` (assignments, absences, rotas, paging chain) |
 | Knowledge base | `/kb-articles/*`, `/knowledge-bases/*`, `/kb-manager-*` |
 | Announcements | `/announcements/*`, `/announcement-requests/*` |

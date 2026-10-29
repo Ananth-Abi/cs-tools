@@ -773,12 +773,18 @@ const (
 	// DELETED, and this value makes a portal-originated write visible in the
 	// ledger for what it is.
 	PortalMembershipWriteEventType = "PORTAL_WRITE"
-	// SLAEngineActor is created_by/updated_by for every "sla" row the
-	// CSM-native SLA engine writes (source='CSM', migration 0134) --
-	// distinguishes its own rows in the audit columns from the ServiceNow
-	// sync's, which share the same table but never carry this value. See
+	// SLAEngineActor is created_by/updated_by for every "sla" row this
+	// service's own in-process SLA engine writes (tagged source='CSM',
+	// migration 0134's own original intent -- see
+	// repository.SLAEngineRepository's own doc comment for why this must
+	// never be 'SERVICENOW', the tag a real, independent external sync job
+	// uses for its own rows) -- distinguishes its own rows in the audit
+	// columns regardless of source value. See
 	// internal/service/sla_policy_resolver.go.
 	SLAEngineActor = "sla-engine"
+	// ProductVulnerabilitySyncActor is created_by/updated_by for every
+	// product_vulnerability row the full-replace sync writes.
+	ProductVulnerabilitySyncActor = "product-vulnerability-sync"
 )
 
 // SalesforceEntityLinkedOpportunity is the Linked_Opportunity__c custom
@@ -930,6 +936,33 @@ type SalesforceMembershipUpsert struct {
 	// in after the upsert; every other group membership of this project
 	// contact is removed.
 	ProjectGroups []string
+
+	// DeferredSalesforceWrite, when set, makes the repository record a
+	// salesforce_write_request row in the transaction that writes these
+	// rows: the Salesforce half did not run (sales-entity-service was
+	// unavailable), the sf_id columns stay NULL, and the request row is what
+	// the asynchronous consumer later carries out. Portal writes only.
+	DeferredSalesforceWrite *DeferredSalesforceWrite
+	// CompletesSalesforceWriteRequestID, when set, is the
+	// salesforce_write_request row this upsert fulfils: it is marked
+	// SUCCEEDED in the same transaction that stamps the Salesforce ids, so
+	// the request and the rows can never disagree about whether the write
+	// happened. Set only by the deferred-write consumer.
+	CompletesSalesforceWriteRequestID string
+	// AdoptProjectContactID, when set, is the project_contact row a deferred
+	// write committed with NULL ids, which this upsert must stamp rather
+	// than match afresh. The deferred row sits under the project's account;
+	// Salesforce may place the contact on another account (a partner's), in
+	// which case the ordinary (account, user) and (project, account_contact)
+	// lookups would miss the row and insert a second membership. With this
+	// set, the row's account_contact is moved to the resolved account and
+	// the row itself is updated in place. Set only by the deferred-write
+	// completion.
+	AdoptProjectContactID string // CancelsSalesforceWriteRequestID, when set, is the salesforce_write_request
+	// row a local-only deactivation closes as CANCELLED in the same
+	// transaction: the row was FAILED or never published, so there is no
+	// Salesforce half to undo and nothing may pick the request up later.
+	CancelsSalesforceWriteRequestID string
 }
 
 // SalesforceMembershipUpsertResult reports what the upsert resolved or created.
@@ -955,6 +988,9 @@ type SalesforceMembershipUpsertResult struct {
 	// carries the project ADMIN role (or the contact's Salesforce isCsAdmin
 	// flag is set), which is exactly when AdminRoleName is held.
 	IsAccountAdmin bool
+	// SalesforceWriteRequestID is the id of the salesforce_write_request row
+	// written for DeferredSalesforceWrite, "" when the write was not deferred.
+	SalesforceWriteRequestID string
 }
 
 // SalesforceContactUpsert is the Contact writer's input: one Salesforce
@@ -1046,6 +1082,12 @@ type ProjectMembership struct {
 	// ("Portal user", "Admin", ...), exactly as they were written to
 	// Salesforce — not the derived project_role/project_group values.
 	Roles []string `json:"roles"`
+	// SalesforceSync is "" when the membership is in Salesforce, PENDING
+	// while its Salesforce write is still owed (sales-entity-service was
+	// unavailable at invitation time and the write was deferred), FAILED
+	// when that deferred write gave up. MembershipSfID and ContactSfID are
+	// empty while it is PENDING or FAILED.
+	SalesforceSync string `json:"salesforceSync,omitempty"`
 }
 
 // CreateProjectMembershipRequest is the body of POST /projects/{id}/contacts:
@@ -1460,7 +1502,10 @@ type ProjectEngagementFields struct {
 	GoLiveDate               *time.Time `json:"goLiveDate"`
 	GoLivePlanDate           *time.Time `json:"goLivePlanDate"`
 	OnboardingExpiryDate     *time.Time `json:"onboardingExpiryDate"`
-	OnboardingStatus         *string    `json:"onboardingStatus"`
+	// OnboardingStartDate is populated on Postgres data sources only (nil
+	// elsewhere).
+	OnboardingStartDate *time.Time `json:"onboardingStartDate"`
+	OnboardingStatus    *string    `json:"onboardingStatus"`
 }
 
 type ProjectDetailsView struct {
@@ -1540,6 +1585,16 @@ type ProjectUpdateRequest struct {
 	// Must be an active internal user. Clearing the owner is not supported:
 	// null and omitted both leave it unchanged.
 	OnboardingOwner *string `json:"onboardingOwner,omitempty"`
+	// OnboardingStartDate, OnboardingGoLivePlanDate, OnboardingGoLiveDate and
+	// OnboardingExpiryDate set the project's onboarding dates, as "YYYY-MM-DD"
+	// (Postgres data sources only; rejected on the ServiceNow data source). A
+	// malformed date is a 400, as is a go-live plan, go-live or expiry date
+	// earlier than the (supplied or stored) start date. Clearing a date is not
+	// supported: null and omitted both leave it unchanged.
+	OnboardingStartDate      *string `json:"onboardingStartDate,omitempty"`
+	OnboardingGoLivePlanDate *string `json:"onboardingGoLivePlanDate,omitempty"`
+	OnboardingGoLiveDate     *string `json:"onboardingGoLiveDate,omitempty"`
+	OnboardingExpiryDate     *string `json:"onboardingExpiryDate,omitempty"`
 }
 
 // ProjectUpdateResponse is the result of a project update operation
@@ -1561,10 +1616,16 @@ type ProjectUpdateResult struct {
 	ComplianceViolationClosureState *string         `json:"complianceViolationClosureState"`
 	SuspensionProcessState          json.RawMessage `json:"suspensionProcessState"`
 	VerificationEnabled             *bool           `json:"verificationEnabled,omitempty"`
-	// OnboardingStatus and OnboardingOwner are populated on Postgres data
-	// sources only.
+	// OnboardingStatus, OnboardingOwner and the onboarding dates are populated
+	// on Postgres data sources only.
 	OnboardingStatus *string    `json:"onboardingStatus,omitempty"`
 	OnboardingOwner  *PersonRef `json:"onboardingOwner,omitempty"`
+	// The onboarding dates are named as the project read names them
+	// (goLiveDate, goLivePlanDate, onboardingExpiryDate).
+	OnboardingStartDate  *time.Time `json:"onboardingStartDate,omitempty"`
+	GoLivePlanDate       *time.Time `json:"goLivePlanDate,omitempty"`
+	GoLiveDate           *time.Time `json:"goLiveDate,omitempty"`
+	OnboardingExpiryDate *time.Time `json:"onboardingExpiryDate,omitempty"`
 }
 
 // ProjectConsumptionStatus represents the product consumption state and keys for a project.
@@ -2203,7 +2264,11 @@ type DeploymentView struct {
 	ProjectSfID *string `json:"projectSfId"`
 	// Active reports whether the deployment is active; null when the data
 	// source does not say.
-	Active    *bool     `json:"active"`
+	Active *bool `json:"active"`
+	// AirGapped reports whether the deployment's products cannot reach WSO2, so
+	// its licence file is issued to stop them publishing usage online; null when
+	// the data source does not carry it (ServiceNow).
+	AirGapped *bool     `json:"airGapped"`
 	CreatedOn time.Time `json:"createdOn"`
 	UpdatedOn time.Time `json:"updatedOn"`
 	// DeployedProductCount is the number of deployed products in this
@@ -2298,6 +2363,20 @@ type UpdateDeploymentRequest struct {
 	Type        *DeploymentType `json:"type"`
 	Description **string        `json:"description"`
 	Active      *bool           `json:"active"`
+}
+
+// SetDeploymentAirGappedRequest is the body of PUT /deployments/{id}/air-gapped.
+type SetDeploymentAirGappedRequest struct {
+	AirGapped *bool `json:"airGapped"`
+}
+
+// DeploymentAirGapped is a deployment's air-gapped state after it was set.
+type DeploymentAirGapped struct {
+	ID        string    `json:"id"`
+	Number    *string   `json:"number"`
+	AirGapped bool      `json:"airGapped"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
 }
 
 // UpdateDeploymentResponse is the response for PATCH /deployments/{id}.
@@ -4607,6 +4686,10 @@ type ChangeRequestSortField string
 const (
 	ChangeRequestSortFieldCreatedOn ChangeRequestSortField = "createdOn"
 	ChangeRequestSortFieldUpdatedOn ChangeRequestSortField = "updatedOn"
+	// PostgreSQL only: the planned window. A change request with no planned
+	// date sorts last in either direction.
+	ChangeRequestSortFieldPlannedStartOn ChangeRequestSortField = "plannedStartOn"
+	ChangeRequestSortFieldPlannedEndOn   ChangeRequestSortField = "plannedEndOn"
 )
 
 // ChangeRequestSortOrder controls the sort direction.
@@ -4659,8 +4742,60 @@ type SearchChangeRequestsFilters struct {
 	//     "rejected". Distinct from approvedBy/approvedOn on
 	//     ChangeRequestDetail, which are derived from a narrower
 	//     Customer-Approval-stage record, not this CR-wide field.
+	//   - "tag" (op in / notIn): tag names, matched case-insensitively; in =
+	//     carries any of them, notIn = carries none. PostgreSQL only, internal
+	//     callers only.
+	//   - "updatedOn" / "plannedStartOn" / "plannedEndOn" (op gte/lte): same
+	//     value syntax as "createdOn", on the last update / planned start /
+	//     planned end. PostgreSQL only.
+	//   - "type" (op in): change types (standard, normal, emergency, ...).
+	//     PostgreSQL only.
 	// See service.ParseChangeRequestFieldFilters.
 	Filters []ChangeRequestFieldFilter `json:"filters,omitempty"`
+
+	// Tags / ExcludeTags are the parsed "tag" filter, set by the service from
+	// Filters before the repository runs. Never read from the wire.
+	Tags        []string `json:"-"`
+	ExcludeTags []string `json:"-"`
+	// The other list filters the PostgreSQL search applies from Filters, set by
+	// the service the same way. Never read from the wire.
+	AssignmentGroupIDs               []string            `json:"-"`
+	AssignedUserIDs                  []string            `json:"-"`
+	UpdatedStart, UpdatedEnd         *time.Time          `json:"-"`
+	PlannedStartFrom, PlannedStartTo *time.Time          `json:"-"`
+	PlannedEndFrom, PlannedEndTo     *time.Time          `json:"-"`
+	Types                            []ChangeRequestType `json:"-"`
+
+	// AnyOf expresses cross-field OR, as on case search: each branch's Filters
+	// are ANDed, the branches are OR'd, and the result is ANDed with everything
+	// else. Branch fields (op in only): state, impact, projectId, type,
+	// assignmentGroupId, assignedUserId, tag (tag: internal callers only).
+	// PostgreSQL only.
+	AnyOf []ChangeRequestFilterBranch `json:"anyOf,omitempty"`
+	// OrGroups is AnyOf parsed by the PostgreSQL service. Never read from the wire.
+	OrGroups []ChangeRequestFilterGroup `json:"-"`
+}
+
+// ChangeRequestFilterBranch is one branch of SearchChangeRequestsFilters.AnyOf.
+type ChangeRequestFilterBranch struct {
+	Filters []ChangeRequestFieldFilter `json:"filters"`
+}
+
+// ChangeRequestFilterGroup is one parsed, ANDed branch of
+// SearchChangeRequestsFilters.AnyOf (enum values already in their column form).
+type ChangeRequestFilterGroup struct {
+	States, Impacts, ProjectIDs, ChangeModels, AssignmentGroupIDs, AssignedUserIDs, Tags []string
+}
+
+// IncidentFilterBranch is one branch of SearchIncidentsFilters.AnyOf.
+type IncidentFilterBranch struct {
+	Filters []IncidentFieldFilter `json:"filters"`
+}
+
+// IncidentFilterGroup is one parsed, ANDed branch of SearchIncidentsFilters.AnyOf
+// (enum values already in their column form).
+type IncidentFilterGroup struct {
+	States, Priorities, Categories, ServiceIDs, AssignmentGroupIDs, AssignedUserIDs []string
 }
 
 // SearchChangeRequestsRequest is the input for a change request search operation.
@@ -4877,6 +5012,10 @@ type ProjectContact struct {
 	// happen on genuine customer rows, not only on integration/system accounts.
 	CustomerContactPresent bool `json:"customerContactPresent"`
 	GrantsCaseAccess       bool `json:"grantsCaseAccess"`
+	// SalesforceSync is omitted for a membership that is in Salesforce;
+	// PENDING while a deferred Salesforce write is still owed for it,
+	// FAILED when that write gave up (see domain.SalesforceWriteRequest).
+	SalesforceSync *string `json:"salesforceSync,omitempty"`
 }
 
 // SearchProjectContactsRequest is the input for POST /projects/{id}/contacts/search.
@@ -5067,9 +5206,9 @@ type PatchChangeRequestRequest struct {
 	// change touches (an explicitly empty array clears it, and with it the
 	// deployment products that follow from it). Together
 	// with ProjectID and DeploymentProductIDs it is editable
-	// only before implementation starts: once the change request has reached
-	// implement (or any later state) a change is refused with a
-	// ValidationError, while resending the stored value is accepted. The
+	// only until the change request is approved: once it has reached
+	// customer_approval or scheduled (or any later state) a change is refused
+	// with a ValidationError, while resending the stored value is accepted. The
 	// relationship rules are those of CreateChangeRequestRequest.ProjectID.
 	// Changing ProjectID while deployments are stored requires DeploymentIDs
 	// in the same request. Cannot be combined with the single DeploymentID /
@@ -5621,6 +5760,10 @@ type SearchProductVulnerabilitiesFilters struct {
 	Priority       *VulnerabilityPriority `json:"priority,omitempty"`
 	ProductName    string                 `json:"productName,omitempty"`
 	ProductVersion string                 `json:"productVersion,omitempty"`
+	// CveID matches one CVE exactly (case- and surrounding-whitespace-insensitive,
+	// no wildcards), unlike SearchQuery's substring match. A blank value means
+	// "not provided".
+	CveID string `json:"cveId,omitempty"`
 }
 
 // SearchProductVulnerabilitiesRequest is the input for POST /products/vulnerabilities/search.
@@ -5657,8 +5800,9 @@ type SearchProductVulnerabilitiesResponse struct {
 }
 
 // ProductVulnerabilitySyncItem is one entry submitted to a full-replace sync of product
-// vulnerabilities. WSO2ID is the join key the downstream data source uses to match this item
-// against an existing record.
+// vulnerabilities. WSO2ID is the join key used to match this item against an existing
+// record (the business_key column). ScannerName is accepted for wire compatibility but has
+// no column in product_vulnerability and is not stored by the Postgres data source.
 type ProductVulnerabilitySyncItem struct {
 	WSO2ID                 string `json:"wso2Id"`
 	ComponentName          string `json:"componentName"`
@@ -5972,11 +6116,16 @@ type SearchITServicesResponse struct {
 }
 
 // CreateCallRequestRequest is the input for POST /call-requests.
+// State is optional. A nil state means the field was omitted, so the request
+// starts pending_on_wso2 (the customer raised it). A supplied value, including
+// an empty string, is validated: only pending_on_customer is accepted, which
+// is what the CSM portal sends when an agent raises the request.
 type CreateCallRequestRequest struct {
-	CaseID          string   `json:"caseId"`
-	Reason          string   `json:"reason"`
-	UTCTimes        []string `json:"utcTimes"`
-	DurationMinutes int      `json:"durationInMinutes"`
+	CaseID          string                `json:"caseId"`
+	Reason          string                `json:"reason"`
+	UTCTimes        []string              `json:"utcTimes"`
+	DurationMinutes int                   `json:"durationInMinutes"`
+	State           *CallRequestStateType `json:"state,omitempty"`
 }
 
 // CreateCallRequestResponse is the output for POST /call-requests.
@@ -6426,6 +6575,10 @@ type SearchIncidentsFilters struct {
 	//     ServiceNow's raw incident_state numeric keys.
 	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
 	//   - "businessServiceId" (op in): business_service sys_id UUIDs.
+	//   - "category" (op in): incident category labels (e.g. "SOFTWARE"),
+	//     case-insensitive. PostgreSQL only.
+	//   - "updatedOn" (op gte/lte): same syntax as "createdOn", on the
+	//     incident's last update. PostgreSQL only.
 	//   - "createdOn" (op gte/lte): RFC3339 timestamp, YYYY-MM-DD date, or a
 	//     relative-date placeholder (e.g. "__daysAgo:90__"), same syntax as
 	//     case search's own "createdOn" filter.
@@ -6451,8 +6604,40 @@ type SearchIncidentsFilters struct {
 	//     column, so the keys (1 New, 2 In Progress, 3 On Hold, 6 Resolved,
 	//     7 Closed, 8 Canceled) are applied to `state`, ANDed with any "state"
 	//     filter; a key with no state is a 400.
+	//   - "slaBreached" (op eq): a single boolean value; identical in meaning
+	//     to "slaViolated" (restricts to incidents with, or without, a
+	//     currently-breached SLA record) under the name every work-item type
+	//     shares. Supplying both with different values is a 400.
+	//   - "taskSLABusinessElapsedPercent" (op gte/lte): a non-negative
+	//     integer; restricts to incidents having an SLA record whose
+	//     business-elapsed percentage is within the bound(s) (both bounds
+	//     apply to the same SLA record). Uncapped above. Not supported by the
+	//     ServiceNow-backed incident service: rejected with a 400 there, and
+	//     therefore also when SLA_DATA_SOURCE routes the search to it.
 	// See service.ParseIncidentFieldFilters.
 	Filters []IncidentFieldFilter `json:"filters,omitempty"`
+	// ParsedTaskSLA is populated by the service layer from the
+	// "taskSLABusinessElapsedPercent" filter before the request reaches the
+	// Postgres repository; it carries no wire representation of its own.
+	ParsedTaskSLA *TaskSLAFilter `json:"-"`
+
+	// AssignmentGroupIDs / Categories / UpdatedStart / UpdatedEnd are the parsed
+	// "assignmentGroupId", "category" and "updatedOn" filters, set by the
+	// Postgres incident service from Filters before the repository runs. Never
+	// read from the wire.
+	AssignmentGroupIDs []string   `json:"-"`
+	Categories         []string   `json:"-"`
+	UpdatedStart       *time.Time `json:"-"`
+	UpdatedEnd         *time.Time `json:"-"`
+
+	// AnyOf expresses cross-field OR, as on case search: each branch's Filters
+	// are ANDed, the branches are OR'd, and the result is ANDed with everything
+	// else. Branch fields (op in only): state, priority, category,
+	// businessServiceId, assignmentGroupId, assignedUserId. PostgreSQL only.
+	AnyOf []IncidentFilterBranch `json:"anyOf,omitempty"`
+	// OrGroups is AnyOf parsed by the PostgreSQL incident service. Never read
+	// from the wire.
+	OrGroups []IncidentFilterGroup `json:"-"`
 }
 
 // SearchIncidentsRequest is the input for POST /incidents/search.
@@ -7823,6 +8008,19 @@ type GlobalSearchResponse struct {
 // VulnerabilityMetaResponse is the response for GET /products/vulnerabilities/meta.
 type VulnerabilityMetaResponse struct {
 	Severities []ChoiceListItem `json:"severities"`
+	// Products lists every distinct product name found in the vulnerability
+	// data, each with its distinct versions, both sorted ascending. The values
+	// are the exact strings the search filters match on, so any option is
+	// guaranteed to be selectable. Always a JSON array, empty when the backing
+	// data source has no such query.
+	Products []VulnerabilityProductOption `json:"products"`
+}
+
+// VulnerabilityProductOption is one product name with the distinct versions
+// the vulnerability data carries for it.
+type VulnerabilityProductOption struct {
+	Name     string   `json:"name"`
+	Versions []string `json:"versions"`
 }
 
 // --- case feedback (ServiceNow data source only) ---
@@ -8510,6 +8708,41 @@ type SLAStatus struct {
 	// StartedOn is sla.start_on — nullable because ServiceNow leaves it unset
 	// on some real rows. No omitempty: absent must serialize as JSON null.
 	StartedOn *time.Time `json:"startedOn"`
+	// PausedOn is sla.paused_on — when the clock is CURRENTLY paused, the
+	// instant that pause began; nil otherwise. Only ever non-nil alongside
+	// IsPaused=true.
+	PausedOn *time.Time `json:"pausedOn"`
+	// PauseDurationSeconds is sla.pause_duration, the clock's total
+	// accumulated time spent paused across every completed pause/resume
+	// cycle so far (NOT including any currently-open pause — see PausedOn
+	// for that) — whole seconds, not an ISO-8601 duration: a plain integer
+	// needs no parsing. On a row this service's own SLA engine registered, this is
+	// written by SLAEngineRepository.SetPaused, accumulated on every
+	// resume; an externally-synced row carries whatever the sync writes. 0
+	// for a clock
+	// that has never been paused, not absent — this is what lets a caller
+	// tell "never paused" (0) apart from "paused right now"
+	// (IsPaused=true, PausedOn set) without a third state.
+	PauseDurationSeconds int64 `json:"pauseDurationSeconds"`
+	// DurationSeconds is the resolved policy's own duration in whole
+	// seconds (sla.duration) — added so csm-notification-service's SLA
+	// breach engine can schedule its own tier checkpoints directly from
+	// each clock's real, resolved policy at reconciliation time, with no
+	// static duration table of its own left to consult (GET
+	// /sla-duration-policy was removed — see entity-service's own
+	// CLAUDE.md). 0 when the row has no duration recorded.
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule is the bound policy's own sla_policy.schedule value verbatim
+	// (e.g. "WSO2 Business days", "24 x 7", or "" when the policy sets
+	// none) — added so csm-notification-service can schedule its own tier/
+	// breach wake-ups with the same business-day-aware due-instant
+	// calculation this service's own engine uses (internal/businessdays)
+	// instead of flat wall-clock Add(duration) math for a non-24x7 clock.
+	// Every value other than "WSO2 Business days" is treated as plain 24x7
+	// flat time by every reader of this field, same as this service's own
+	// businessDayElapsedSnapshot does -- see slaScheduleWSO2BusinessDays's
+	// own doc comment in internal/repository/sla_engine_repo.go.
+	Schedule string `json:"schedule"`
 	// The eight fields below are the same display-only shape SLAClock's
 	// retired display fields carried, still populated live off the case's
 	// current data (not a point-in-time snapshot, unlike the old design) —
@@ -8607,24 +8840,76 @@ type SLAClockState struct {
 	Stage       string     `json:"stage"`
 	HasBreached bool       `json:"hasBreached"`
 	StartedOn   *time.Time `json:"startedOn"`
+	// PausedOn/PauseDurationSeconds mirror SLAStatus's own fields of the
+	// same name — see that type's doc comments. Added so a caller that
+	// needs to rebuild its own notion of elapsed/remaining time from this
+	// one row (csm-notification-service's own Redis-down recovery path,
+	// Engine.Reconcile) has the accumulated pause total available without
+	// a second round trip to GET /sla-status.
+	PausedOn             *time.Time `json:"pausedOn"`
+	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
+	// IsPaused is Stage == "PAUSED", spelled out as its own bool (mirroring
+	// SLAStatus.IsPaused) so a caller doesn't have to string-compare Stage
+	// itself — added so csm-notification-service's own ApplyStateEffects can
+	// derive a clock's real pause status from here instead of guessing it
+	// from a hardcoded list of case states, which disagreed with the real,
+	// per-policy pause_condition the condition-driven SLA engine
+	// (internal/slacondition) now evaluates: not every policy pauses on the
+	// identical set of states.
+	IsPaused bool `json:"isPaused"`
+	// BusinessElapsedPercent mirrors SLAStatus.BusinessElapsedPercent (same
+	// name, same uncapped-past-100 convention, not capped/rounded). For a
+	// still-running (IN_PROGRESS/BREACHED) clock backed by a 'WSO2 Business
+	// days' policy, this is computed fresh, live, through
+	// internal/businessdays — not read off sla_live's own stored/view
+	// value, which has no business-day calendar of its own and would
+	// otherwise show flat wall-clock time (see
+	// repository.SLAStatusRepository.GetClockState's own doc comment).
+	// Every other case (24x7, or PAUSED/terminal regardless of schedule)
+	// reads sla_live's own live_elapsed_percentage directly, which is
+	// already correct for those.
+	BusinessElapsedPercent float64 `json:"businessElapsedPercent"`
+	// DurationSeconds is the resolved policy's own duration in whole
+	// seconds (sla.duration) — added so a caller can schedule its own tier
+	// checkpoints directly from this clock's real, resolved policy, per
+	// clock, rather than a flat severity-keyed table (see
+	// SLADurationPolicyItem's own doc comment for the bulk-fetch
+	// equivalent, SLAStatus.DurationSeconds). 0 when the row has no
+	// duration recorded.
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule mirrors SLAStatus.Schedule -- see that field's own doc
+	// comment for the full reasoning (business-day-aware wake-up
+	// scheduling on the consumer side).
+	Schedule string `json:"schedule"`
+	// BusinessPauseDurationSeconds is sla.business_pause_duration -- the
+	// clock's total business-hours-aware pause time accumulated across
+	// every completed pause/resume cycle so far, distinct from
+	// PauseDurationSeconds' own flat wall-clock total. A caller correcting
+	// a business-day clock's own wake-up schedule after a resume (see
+	// csm-notification-service's own Engine.resumeShift) needs THIS value,
+	// not PauseDurationSeconds, to recompute the real due instant via
+	// businessdays.AddBusinessDuration -- shifting by the flat pause
+	// duration instead produced wake times off by as much as the number of
+	// weekends/holidays the pause spanned. Always 0 for a 24x7-scheduled
+	// clock (nothing ever writes this column for one).
+	BusinessPauseDurationSeconds int64 `json:"businessPauseDurationSeconds"`
 }
 
-// SLADurationPolicyItem is one (severity, clockType) duration row from the
-// sla_duration_policy table (migration 0192) — a small, static reference
-// table seeded directly from WSO2's own published Enterprise Support Policy,
-// independent of the ServiceNow-synced "sla"/"sla_policy" tables SLAStatus
-// above reads. csm-notification-service fetches the full set once at
-// startup (GET /sla-duration-policy) to compute each case's own due dates
-// itself, rather than depending on a sync that has no plain severity column
-// to key a lookup on.
+// SLADurationPolicyItem is one (severity, clockType) duration row, computed
+// live from the real, decoded sla_policy table (see
+// service.SLADurationPolicyService's own doc comment for exactly how) —
+// not a static reference table any more (the one that used to back this,
+// sla_duration_policy, migration 0192, was dropped by migration 0261 once
+// this endpoint stopped reading it). integrations/csm-notification-service's
+// internal/paging rung-escalation email fetches the full set once at
+// startup to display each case's own "response SLA remaining time" — the
+// one remaining live consumer of this endpoint.
 //
 // Severity is the same uppercase English word every case.* event's own
 // Priority field already carries (e.g. "CATASTROPHIC") — not the raw
-// case_severity_enum label ("S0") the table stores it as — so a consumer
+// case_severity_enum label ("S0") sla_policy itself stores — so a consumer
 // can match this response directly against a case.created payload's
-// Priority with no translation of its own. See
-// ReferenceDataRepository.ListSLADurationPolicy's own doc comment for the
-// S0..S4 mapping.
+// Priority with no translation of its own.
 type SLADurationPolicyItem struct {
 	Severity string `json:"severity"`
 	// ClockType is "response" / "workaround" / "resolution" — matches
@@ -8632,17 +8917,18 @@ type SLADurationPolicyItem struct {
 	// above), so a consumer already matching on that string needs no second
 	// vocabulary for this endpoint.
 	ClockType string `json:"clockType"`
-	// DurationSeconds is the policy's duration in whole seconds — not a
-	// formatted string (contrast TaskSlaDefinitionDetail.Duration above) and
-	// not an ISO-8601 duration, since the one real consumer
+	// DurationSeconds is the resolved policy's duration in whole seconds —
+	// not a formatted string (contrast TaskSlaDefinitionDetail.Duration
+	// above) and not an ISO-8601 duration, since the one real consumer
 	// (csm-notification-service) only ever needs to feed this straight into
 	// a time.Duration, and a plain integer needs no parsing to get there.
 	DurationSeconds int64 `json:"durationSeconds"`
 }
 
 // SLADurationPolicyResponse is the response for GET /sla-duration-policy —
-// every row in sla_duration_policy, unpaginated (at most 15 rows today: 5
-// severities × up to 3 clock types each).
+// one row per (severity, clockType) pair a real sla_policy condition
+// currently resolves for a plain, brand-new case at that severity,
+// unpaginated (at most 15 rows: 5 severities × up to 3 clock types each).
 type SLADurationPolicyResponse struct {
 	Policies []SLADurationPolicyItem `json:"policies"`
 }
@@ -9482,9 +9768,19 @@ const (
 // is case-like) at read time, so this list can never show a stale title or
 // severity if the underlying record is later edited.
 type PendingVerification struct {
-	ID             string                             `json:"id"`
-	WorkItemID     string                             `json:"workItemId"`
-	RecordNumber   string                             `json:"recordNumber"`
+	ID           string `json:"id"`
+	WorkItemID   string `json:"workItemId"`
+	RecordNumber string `json:"recordNumber"`
+	// InternalID (work_item.wso2_id) is the record's own internal/WSO2 id
+	// (e.g. "CUPRSUB-1170", a per-project prefix + counter), distinct from
+	// RecordNumber (the record's human-readable number, e.g. "CS0441731") --
+	// the same pairing Case.InternalID/Number already carries. Unlike
+	// Case.InternalID (which stays a required, non-nullable string for
+	// cross-repo contract reasons -- see that field's own doc comment), this
+	// is a brand-new wire type with no existing contract to preserve, so it
+	// stays nil/omitted rather than "" when the joined work_item row has no
+	// wso2_id.
+	InternalID     *string                            `json:"internalId,omitempty"`
 	RecordTitle    string                             `json:"recordTitle"`
 	Severity       *string                            `json:"severity"`
 	RecordType     string                             `json:"recordType"`

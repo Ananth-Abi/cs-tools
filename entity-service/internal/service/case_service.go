@@ -104,19 +104,19 @@ type caseService struct {
 	// unless wired via WithCaseTypeTransfer, in which case a request carrying a
 	// type is refused as it was before the transfer existed.
 	typeTransfer repository.CaseTypeTransferRepository
-	// slaSearchDelegate, when non-nil, is a ServiceNow-backed CaseService
+	// slaSearchDelegate, when set, is a ServiceNow-backed CaseService
 	// SearchCases forwards an entire search to -- instead of running its own
 	// Postgres sla_live-backed query -- whenever the request carries an
 	// SLA-shaped filter (taskSLABusinessElapsedPercent/slaBreached) and the
 	// caller is internal. Wired via WithSLASearchDelegate only when
-	// config.SLADataSource is servicenow; nil otherwise, in which case
+	// config.SLADataSource is servicenow; unset otherwise, in which case
 	// SearchCases behaves exactly as before this field existed. Deliberately
 	// a separate field from snMirror above, not a reuse of it: snMirror
 	// carries dual-write's write-mirroring semantics (nil publisher/slaEngine
 	// to avoid side effects, asynchronous PATCH/comment mirroring) that must
 	// not apply here, and this is wanted under plain DATA_SOURCE=postgres too,
 	// where snMirror is never set at all.
-	slaSearchDelegate CaseService
+	slaSearchDelegate slaDelegate[CaseService]
 	// volumeTrendCache backs CaseVolumeTrend's per-day caching (see that
 	// method's own doc comment) -- wired via WithCaseVolumeTrendCache,
 	// which routes.go always calls with either a Redis-backed or an
@@ -145,23 +145,16 @@ func WithSRNotices(svc CaseService, n *SRNoticeService) CaseService {
 	return svc
 }
 
-// WithSLASearchDelegate attaches a ServiceNow-backed CaseService that
-// SearchCases forwards to for SLA-filtered searches -- see
-// caseService.slaSearchDelegate's own doc comment for the full reasoning.
-// There is no narrower ServiceNow endpoint that answers "which case ids
-// match this SLA condition alone" (only the full case-search endpoint
-// already forwards taskSLAFilter/slaBreached to ServiceNow's own CaseUtils),
-// so the whole search is delegated wholesale rather than merging partial
-// result sets; snDelegate's own SearchCases already converts every id back
-// to the same UUID shape the Postgres path returns (every sn_*.go response
-// does this), so the response is indistinguishable in shape from the
-// Postgres path's own. A no-op if svc is not a *caseService -- defensive;
-// every real construction path is.
-func WithSLASearchDelegate(svc CaseService, snDelegate CaseService) CaseService {
-	if cs, ok := svc.(*caseService); ok {
-		cs.slaSearchDelegate = snDelegate
-	}
-	return svc
+// setSLADelegate implements slaDelegateAcceptor[CaseService]; see
+// WithSLASearchDelegate (sla_filters.go) and slaSearchDelegate above for the
+// routing contract. There is no narrower ServiceNow endpoint that answers
+// "which case ids match this SLA condition alone" (only the full case-search
+// endpoint already forwards taskSLAFilter/slaBreached to ServiceNow's own
+// CaseUtils), so the whole search is delegated wholesale rather than merging
+// partial result sets; the delegate's own SearchCases already converts every
+// id back to the same UUID shape the Postgres path returns.
+func (s *caseService) setSLADelegate(delegate CaseService) {
+	s.slaSearchDelegate = slaDelegate[CaseService]{backend: delegate, set: delegate != nil}
 }
 
 // WithProductCategoryEnforcement attaches the optional project-type
@@ -197,6 +190,28 @@ func WithProductCategoryEnforcement(svc CaseService, referenceDataRepo repositor
 func WithCSEngineerRole(svc CaseService, csEngineerRole string) CaseService {
 	if cs, ok := svc.(*caseService); ok {
 		cs.csEngineerRole = csEngineerRole
+	}
+	return svc
+}
+
+// WithSLAEngine attaches the CSM-native SLA clock engine to an
+// already-constructed CaseService built via the plain NewCaseService (which
+// has no slaEngine parameter at all -- unlike NewCaseServiceWithSNWriteback,
+// which already takes one). Without this, s.slaEngine is always nil on this
+// path, so CreateCase never registers a case's SLA clocks and UpdateCase
+// never revises them on a severity change -- a real, reported gap: a case
+// created under plain DATA_SOURCE=postgres (no ServiceNow mirror at all) got
+// no SLA tracking whatsoever, from creation onward, regardless of its
+// severity. Same post-construction wiring shape as WithCSEngineerRole, for
+// the same reason -- optional, nil-safe to omit (every slaEngine call site in
+// this file already tolerates s.slaEngine == nil), and every existing
+// NewCaseService call site (60+, every test, every other DataSource branch
+// in routes.go) keeps working completely unchanged. slaEngine may itself be
+// nil (config.CSMSLAEngineEnabled == false, or no database configured at
+// all) -- that's the normal "engine turned off" case, not an error.
+func WithSLAEngine(svc CaseService, slaEngine SLAEngineService) CaseService {
+	if cs, ok := svc.(*caseService); ok {
+		cs.slaEngine = slaEngine
 	}
 	return svc
 }
@@ -745,6 +760,27 @@ func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseReque
 	if err != nil {
 		return domain.CreateCaseResponse{}, err
 	}
+	// SLA-clock registration is scoped to req.Type == "case" only -- the
+	// same restriction snCaseService.CreateCase applies (see its own
+	// comment): service_request/engagement/security_report_analysis/
+	// announcement have no sla_policy naming convention this engine's
+	// resolver understands. Best-effort and nil-safe: s.slaEngine is nil
+	// when WithSLAEngine was never wired in (e.g. CSM_SLA_ENGINE_ENABLED=
+	// false, or no database configured at all), and a missing/failed clock
+	// registration must never fail case creation, which has already
+	// succeeded by this point. req.Severity/req.ProjectID are used directly
+	// rather than a GetCaseByID re-fetch (unlike snCaseService's own
+	// registerCaseSLAClocksEvent, which needs one because ServiceNow's
+	// create response doesn't echo these back) -- this is a native Postgres
+	// insert, so the request just written already carries both. A real,
+	// reported gap this closes: a case created under plain
+	// DATA_SOURCE=postgres (no ServiceNow mirror at all) got no SLA
+	// tracking whatsoever from creation onward, regardless of severity,
+	// until/unless its severity happened to change later (which calls
+	// ReviseCaseClocks, registering clocks as a side effect).
+	if s.slaEngine != nil && req.Type == "case" {
+		s.slaEngine.RegisterCaseClocks(ctx, c.ID, &req.Severity, req.ProjectID)
+	}
 	if len(watcherIDs) > 0 {
 		// updated_by on the watcher write is the caller's email, taken from
 		// the token validateCreateWatchList already accepted.
@@ -912,29 +948,37 @@ func (s *caseService) createCaseSNFirst(ctx context.Context, req domain.CreateCa
 	// staying stuck on whoever held the role at creation time.
 	s.addRequestedWatchers(ctx, c.ID, c.CreatedBy, watcherIDs)
 
-	// Only now — Postgres has confirmed the row this mode's reads actually
-	// depend on — is it safe to publish. See publishCaseCreatedEvent's doc
-	// comment for why this can't just be snCaseService's own automatic
-	// publish (that fires right after the ServiceNow POST, before this
-	// Postgres insert was even attempted) — same reasoning
-	// incidentService.createIncidentSNFirst already established.
-	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req, c.ID)
-
-	// Same reasoning as the publish call above, for the exact same "not
-	// safe before this Postgres insert" reason: registerCaseSLAClocksEvent
-	// inserts into "sla", whose work_item_id has a hard foreign key against
-	// work_item(id) (migration 0048) — calling it any earlier (e.g. via
-	// snCaseMirrorSvc's own automatic registration right after the
-	// ServiceNow POST, which routes.go now disables by passing it a nil
-	// slaEngine) fails with a foreign-key violation every time, since this
-	// mode's own Postgres work_item row doesn't exist until the insert
-	// above succeeds. A real, live-observed bug this fixed: every dual-write
-	// case creation failed clock registration with SQLSTATE 23503, silently
-	// (best-effort, logged only) — see registerCaseSLAClocksEvent's own doc
-	// comment.
+	// SLA-clock registration runs BEFORE the publish below, not after --
+	// this order is load-bearing (see CreateCase's own doc comment on the
+	// snCaseService.CreateCase equivalent for the full race this avoids:
+	// csm-notification-service reacts to case.created by reading this
+	// clock straight back from entity-service, with only a short, bounded
+	// retry for "not found yet"). It still can't run any earlier than this
+	// point in THIS function, though: registerCaseSLAClocksEvent inserts
+	// into "sla", whose work_item_id has a hard foreign key against
+	// work_item(id) (migration 0048) -- calling it before the Postgres
+	// insert above succeeds (e.g. via snCaseMirrorSvc's own automatic
+	// registration right after the ServiceNow POST, which routes.go now
+	// disables by passing it a nil slaEngine) fails with a foreign-key
+	// violation every time, since this mode's own Postgres work_item row
+	// doesn't exist until that insert succeeds. A real, live-observed bug
+	// this fixed: every dual-write case creation failed clock registration
+	// with SQLSTATE 23503, silently (best-effort, logged only). Postgres
+	// has already committed by the time this runs, so the only remaining
+	// ordering constraint is "before the publish," which this now also
+	// satisfies -- see registerCaseSLAClocksEvent's own doc comment.
 	if req.Type == "case" {
 		registerCaseSLAClocksEvent(ctx, s.slaEngine, s.GetCaseByID, c.ID)
 	}
+
+	// Only now — Postgres has confirmed the row this mode's reads actually
+	// depend on, and the clocks above are already registered — is it safe
+	// to publish. See publishCaseCreatedEvent's doc comment for why this
+	// can't just be snCaseService's own automatic publish (that fires right
+	// after the ServiceNow POST, before this Postgres insert was even
+	// attempted) — same reasoning incidentService.createIncidentSNFirst
+	// already established.
+	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req, c.ID)
 
 	responseState := ""
 	if c.State != nil {
@@ -1966,7 +2010,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		if before.State == nil {
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "unable to verify the case's current state; try again"}
 		}
-		if *before.State != *req.State && !isValidCaseStateTransition(isInternalCaller, *before.State, *req.State) {
+		// The auto-closure workflow (see withAutoclosureActor) closes a ticket
+		// that has sat in Awaiting Info after its reminders; no staff table
+		// lists that move, so it is the one transition allowed past the table.
+		_, byAutoclosure := autoclosureActorFromContext(ctx)
+		autoclosureClose := byAutoclosure && *req.State == domain.CaseStateClosed &&
+			(*before.State == domain.CaseStateAwaitingInfo || *before.State == domain.CaseStateSolutionProposed)
+		if *before.State != *req.State && !autoclosureClose && !isValidCaseStateTransition(isInternalCaller, *before.State, *req.State) {
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{
 				Msg:  fmt.Sprintf("state cannot move from %q to %q", string(*before.State), string(*req.State)),
 				Code: "case_invalid_state_transition",
@@ -2126,6 +2176,12 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		if actor.ID != "" {
 			actorID = &actor.ID
 		}
+	} else if systemEmail, ok := autoclosureActorFromContext(ctx); ok {
+		// The auto-closure workflow has no user token; it acts as the system user.
+		actorEmail = systemEmail
+		if u, uErr := s.userRepo.GetUserByEmail(ctx, systemEmail); uErr == nil && u.ID != "" {
+			actorID = &u.ID
+		}
 	}
 
 	// oldSeverity is the case's severity immediately before this update —
@@ -2190,9 +2246,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		if cv, err := s.GetCaseByID(ctx, req.ID); err != nil {
 			slog.ErrorContext(ctx, "update case: enrich case for case.severity_changed publish failed", "caseId", req.ID)
 		} else {
-			cv.WatchList = s.filterActiveWatchListUsers(ctx, cv, cv.WatchList)
-			publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req.ID, string(derefSeverity(oldSeverity)), string(*c.Severity), cv)
-			// Deliberately independent of s.publisher -- see
+			// Clocks are revised BEFORE the publish below, not after -- same
+			// race this package's own createCasePostgres/createCaseSNFirst
+			// ordering avoids for case.created: csm-notification-service
+			// reacts to case.severity_changed by re-registering its own
+			// clocks from entity-service's current state, and a publish that
+			// goes out before ReviseCaseClocks commits can read the OLD
+			// clocks back. Deliberately independent of s.publisher -- see
 			// reviseCaseSLAClocks' own doc comment (sn_case_service.go) for
 			// why revising SLA clocks must not depend on Event Hub being
 			// configured. A real, live-observed gap this fixes: the
@@ -2222,6 +2282,8 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 					s.slaEngine.ApplyCaseStateEffects(ctx, req.ID, *cv.State)
 				}
 			}
+			cv.WatchList = s.filterActiveWatchListUsers(ctx, cv, cv.WatchList)
+			publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req.ID, string(derefSeverity(oldSeverity)), string(*c.Severity), cv)
 		}
 	}
 
@@ -3325,13 +3387,10 @@ func prepareCaseSearchFilters(ctx context.Context, req domain.SearchCasesRequest
 	// escalations lookup returned every case in the system). Fixed by wiring
 	// it into caseFieldPredicates like ProjectIDs' own identical shape;
 	// accountId+notIn stays rejected below rather than silently dropping the
-	// exclusion and widening the result set -- nothing has asked for it yet.
-	if len(parsed.ExcludeAccountIDs) > 0 {
-		return domain.SearchCasesRequest{}, &apierror.ValidationError{Msg: `field "accountId" (notIn) is not supported by this data source`}
-	}
-	if parsed.Unassigned {
-		return domain.SearchCasesRequest{}, &apierror.ValidationError{Msg: `field "assignedUserId" (isEmpty) is not supported by this data source`}
-	}
+	// exclusion and widening the result set -- until the SR list's Advanced
+	// "Customer is not one of" asked for it, and it was wired in too.
+	// accountId+notIn and assignedUserId+isEmpty are applied by
+	// caseRepo.SearchCases (top level only; both are refused inside anyOf).
 	if parsed.ResolutionNotesEmpty {
 		return domain.SearchCasesRequest{}, &apierror.ValidationError{Msg: `field "resolutionNotes" is not supported by this data source`}
 	}
@@ -3393,9 +3452,9 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	// callers only, so a customer-portal-scoped caller keeps this data
 	// source's own row-level security regardless of the SLA toggle. See
 	// WithSLASearchDelegate's own doc comment.
-	if s.slaSearchDelegate != nil && scope.Unrestricted &&
-		(req.Parsed.TaskSLAFilter != nil || req.Parsed.HasBreachedSLA != nil) {
-		return s.slaSearchDelegate.SearchCases(ctx, req)
+	if delegate, ok := s.slaSearchDelegate.route(scope.Unrestricted,
+		req.Parsed.TaskSLAFilter != nil || req.Parsed.HasBreachedSLA != nil); ok {
+		return delegate.SearchCases(ctx, req)
 	}
 
 	cases, total, err := s.repo.SearchCases(ctx, req, scope)

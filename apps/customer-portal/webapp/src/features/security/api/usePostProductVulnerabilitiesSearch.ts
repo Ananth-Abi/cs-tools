@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useAsgardeo } from "@asgardeo/react";
 import { useAuthApiClient } from "@/hooks/useAuthApiClient";
 import { useLogger } from "@hooks/useLogger";
@@ -24,15 +24,66 @@ import type { ProductVulnerabilitiesSearchResponse } from "@features/security/ty
 import { parseApiResponseMessage } from "@utils/ApiError";
 
 /**
+ * Posts one search request (POST /products/vulnerabilities/search). Shared by the
+ * search hook and the details page's per-CVE paging so both use the same request
+ * building and error parsing.
+ *
+ * @param {ReturnType<typeof useAuthApiClient>} authFetch - Authenticated fetch.
+ * @param {ReturnType<typeof useLogger>} logger - Logger.
+ * @param {ProductVulnerabilitiesSearchRequest} request - Search filters, pagination, and sort.
+ * @returns {Promise<ProductVulnerabilitiesSearchResponse>} The response page.
+ */
+export async function postProductVulnerabilitiesSearch(
+  authFetch: ReturnType<typeof useAuthApiClient>,
+  logger: ReturnType<typeof useLogger>,
+  request: ProductVulnerabilitiesSearchRequest,
+): Promise<ProductVulnerabilitiesSearchResponse> {
+  logger.debug(
+    "[usePostProductVulnerabilitiesSearch] Request payload:",
+    request,
+  );
+
+  const baseUrl = window.config?.CUSTOMER_PORTAL_BACKEND_BASE_URL;
+  if (!baseUrl) {
+    throw new Error("CUSTOMER_PORTAL_BACKEND_BASE_URL is not configured");
+  }
+
+  const requestUrl = `${baseUrl}/products/vulnerabilities/search`;
+  const response = await authFetch(requestUrl, {
+    method: "POST",
+
+    body: JSON.stringify(request),
+  });
+
+  logger.debug(
+    `[usePostProductVulnerabilitiesSearch] Response status: ${response.status}`,
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(parseApiResponseMessage(text, response.status, response.statusText));
+  }
+
+  const data: ProductVulnerabilitiesSearchResponse = await response.json();
+  logger.debug(
+    "[usePostProductVulnerabilitiesSearch] Data received:",
+    data,
+  );
+  return data;
+}
+
+/**
  * Searches product vulnerabilities (POST /products/vulnerabilities/search).
  *
  * @param {ProductVulnerabilitiesSearchRequest} request - Search filters, pagination, and sort.
- * @param {{ staleTime?: number }} [options] - Optional override of how long a cached result counts as fresh.
+ * @param {{ staleTime?: number, keepPreviousData?: boolean }} [options] - Optional override of how long a cached
+ *   result counts as fresh, and opt-in to keep showing the previous result while the next request loads
+ *   (paged tables); off by default.
  * @returns {UseQueryResult<ProductVulnerabilitiesSearchResponse, Error>} Query result.
  */
 export function usePostProductVulnerabilitiesSearch(
   request: ProductVulnerabilitiesSearchRequest,
-  options?: { staleTime?: number },
+  options?: { staleTime?: number; keepPreviousData?: boolean },
 ): UseQueryResult<ProductVulnerabilitiesSearchResponse, Error> {
   const logger = useLogger();
   const { isSignedIn, isLoading: isAuthLoading } = useAsgardeo();
@@ -40,41 +91,9 @@ export function usePostProductVulnerabilitiesSearch(
 
   return useQuery<ProductVulnerabilitiesSearchResponse, Error>({
     queryKey: [ApiQueryKeys.PRODUCT_VULNERABILITIES_SEARCH, request],
-    queryFn: async (): Promise<ProductVulnerabilitiesSearchResponse> => {
-      logger.debug(
-        "[usePostProductVulnerabilitiesSearch] Request payload:",
-        request,
-      );
-
-      const baseUrl = window.config?.CUSTOMER_PORTAL_BACKEND_BASE_URL;
-      if (!baseUrl) {
-        throw new Error("CUSTOMER_PORTAL_BACKEND_BASE_URL is not configured");
-      }
-
-      const requestUrl = `${baseUrl}/products/vulnerabilities/search`;
-      const response = await authFetch(requestUrl, {
-        method: "POST",
-
-        body: JSON.stringify(request),
-      });
-
-      logger.debug(
-        `[usePostProductVulnerabilitiesSearch] Response status: ${response.status}`,
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(parseApiResponseMessage(text, response.status, response.statusText));
-      }
-
-      const data: ProductVulnerabilitiesSearchResponse = await response.json();
-      logger.debug(
-        "[usePostProductVulnerabilitiesSearch] Data received:",
-        data,
-      );
-      return data;
-    },
+    queryFn: () => postProductVulnerabilitiesSearch(authFetch, logger, request),
     enabled: isSignedIn && !isAuthLoading,
     staleTime: options?.staleTime ?? 0,
+    placeholderData: options?.keepPreviousData ? keepPreviousData : undefined,
   });
 }

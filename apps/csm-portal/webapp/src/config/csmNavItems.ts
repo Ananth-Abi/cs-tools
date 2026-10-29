@@ -17,6 +17,7 @@
 import {
   AlertOctagon,
   AlertTriangle,
+  Award,
   BarChart3,
   Briefcase,
   BookOpen,
@@ -40,6 +41,7 @@ import {
   ScrollText,
   Settings,
   Shield,
+  UserCheck,
   UserCog,
   UserSearch,
   Users,
@@ -201,6 +203,12 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     icon: Briefcase,
   },
   {
+    id: "allocations",
+    label: "Allocations",
+    href: "/allocations",
+    icon: UserCheck,
+  },
+  {
     id: "announcements",
     label: "Announcements",
     href: "/announcements",
@@ -328,6 +336,17 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     icon: CalendarDays,
   },
   {
+    id: "skills",
+    label: "Skills",
+    href: "/skills",
+    // Everyone who can write keeps a skills profile (the backend puts the
+    // skills routes' changes under the write permission). Its tabs are not
+    // nav-tree children: the Skill Manager tab depends on a per-user probe
+    // (see CsmSkillsPage), not on a role.
+    requires: "canWrite",
+    icon: Award,
+  },
+  {
     id: "customer-health",
     label: "Customer Health",
     href: "/customer-health",
@@ -421,6 +440,15 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         id: "admin.dashboards",
         label: "Dashboards",
         href: "/admin/dashboards",
+      },
+      // Settings is also open to a CS engineer. This tab is admin only, so
+      // the sidebar and Quick-nav hide it the same way the Settings tabs do.
+      {
+        id: "admin.banners",
+        label: "Banners",
+        href: "/admin/banners",
+        icon: Megaphone,
+        requires: "isAdmin",
       },
     ],
   },

@@ -110,4 +110,26 @@ const (
 	// ("Escalate to Special Ops") on an incident nobody is assigned to: the
 	// assignee is the person responsible for the page to the SME on duty.
 	CodeIncidentHandoffNeedsAssignee = "incident_handoff_needs_assignee"
+
+	// CodeChangeRequestApprovedReadOnly is the 400 for a PATCH /change-requests/{id}
+	// that changes a field of a change request that has been approved (CAB approval
+	// received; a Standard change once scheduled): what was approved is what gets
+	// implemented, so its fields are read-only. Work notes can still be added and the
+	// lifecycle still moves. Nothing was written.
+	CodeChangeRequestApprovedReadOnly = "change_request_approved_read_only"
+)
+
+// The refusals of a portal membership write (PATCH / DELETE /
+// projects/{id}/contacts/{email} and the resend) while the contact's
+// Salesforce half is owed by a deferred write (see
+// service/project_membership_deferred_write.go). The portal tells them
+// apart from the generic missing-id refusal, which has no code.
+const (
+	// CodeSalesforceSyncPending: the deferred write is still PENDING; the
+	// write needs the Salesforce ids it will produce. Retrying later helps.
+	CodeSalesforceSyncPending = "salesforce_sync_pending"
+	// CodeSalesforceSyncFailed: the deferred write ended FAILED (or was
+	// never published). Role changes and resend are refused; removing the
+	// contact is allowed and runs locally.
+	CodeSalesforceSyncFailed = "salesforce_sync_failed"
 )

@@ -102,20 +102,16 @@ export const PRODUCT_VULNERABILITIES_ALL_PRODUCTS_LABEL = "All Products";
 
 export const PRODUCT_VULNERABILITIES_ALL_VERSIONS_LABEL = "All Versions";
 
-export const PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT = 5000;
+/** Largest page the search endpoint accepts; the Component Analysis table pages server-side within it. */
+export const PRODUCT_VULNERABILITIES_MAX_PAGE_SIZE = 50;
 
-/**
- * Shared "fetch everything" search request. The Component Analysis list and the
- * vulnerability details page both use this exact object so they resolve to the
- * same React Query cache entry and the ~1500 rows are downloaded once.
- */
-export const PRODUCT_VULNERABILITIES_FETCH_ALL_REQUEST = {
-  filters: {},
-  pagination: { offset: 0, limit: PRODUCT_VULNERABILITIES_ALL_FETCH_LIMIT },
-};
+export const PRODUCT_VULNERABILITIES_NO_VERSIONS_LABEL = "No versions available";
 
-/** How long the details page trusts the cached fetch-all result before refetching. */
-export const PRODUCT_VULNERABILITIES_AFFECTED_STALE_TIME_MS = 5 * 60 * 1000;
+/** Most pages the details page loads for one CVE (a CVE normally has far fewer rows than one page). */
+export const PRODUCT_VULNERABILITIES_AFFECTED_MAX_PAGES = 10;
+
+/** How long a CVE's cached affected-products result counts as fresh. */
+export const PRODUCT_VULNERABILITIES_AFFECTED_FRESH_MS = 5 * 60 * 1000;
 
 export const SECURITY_REPORT_ANALYSIS_PAGE_SIZE = 10;
 
@@ -205,6 +201,11 @@ export const VULNERABILITY_AFFECTED_PRODUCTS_EMPTY_MESSAGE =
 
 export const VULNERABILITY_AFFECTED_PRODUCTS_LOAD_ERROR_MESSAGE =
   "Could not load the affected products.";
+
+export const getVulnerabilityAffectedProductsTruncatedMessage = (
+  loaded: number,
+  total: number,
+): string => `Showing the first ${loaded} of ${total} affected records.`;
 
 export const VULNERABILITY_AFFECTED_PRODUCTS_CURRENT_LABEL = "Viewing";
 

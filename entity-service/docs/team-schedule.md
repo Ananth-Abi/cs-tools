@@ -584,6 +584,126 @@ such as `staging`), `CASE_ALERTS_RUNTIME_CLIENT_IDS` (narrows who may read the
 URLs), and `CASE_ALERTS_SECRET_KEY` / `_KEY_ID` (only to open a URL sealed
 before 0237).
 
+## Rota import (SRE)
+
+A whole SRE rota for a period, written from one JSON file:
+`POST /team-schedule/rotas/{code}/import` (and the same path on the CSM portal
+backend, `PermWrite`). `?dryRun=true` runs the import and rolls it back, so the
+answer is exactly what it would do. No schema change: every entry goes through
+the picker's own rules (`applyRangeTx` / `applyAbsenceTx`, the transaction-taking
+cores of `ApplyRange` / `ApplyAbsence`), all inside one transaction, so the file
+lands whole or not at all.
+
+In the CSM portal, the roster of an SRE rota offers **Import rota** (next to
+Generate month) to anyone who may edit one of its teams: choose the file, Preview
+(a dry run), then Import. The dialog checks the file is for the rota on screen and
+offers a template as a download, built from the catalogue for that rota: next month
+in `merge`, every window of the rota's zones (each tier separately where the window
+leaves it open) on the rota's own teams (never a team a move sends people to), no two
+entries on one tier of a zone on a day, and every kind of time away offered on its
+family. The emails are placeholders to replace with team members'. It lists exactly
+the codes the database it came from accepts, custom tags included.
+
+The standard structure, schema version 1:
+
+```json
+{
+  "schemaVersion": 1,
+  "family": "SRE",
+  "rotaCode": "SRE_SAAS",
+  "period": { "from": "2026-11-01", "to": "2026-11-30" },
+  "mode": "replace",
+  "assignments": [
+    { "email": "user1@example.com", "teamKey": "apollo",  "shiftCode": "SRE_TZ1_L1", "from": "2026-11-02", "to": "2026-11-06" },
+    { "email": "user2@example.com", "teamKey": "apollo",  "shiftCode": "SRE_TZ1", "tier": "L2", "from": "2026-11-02", "to": "2026-11-06" },
+    { "email": "user3@example.com", "teamKey": "artemis", "shiftCode": "SRE_TZ2_L1", "from": "2026-11-02", "to": "2026-11-06" },
+    { "email": "user4@example.com", "teamKey": "artemis", "shiftCode": "SRE_TZ2", "tier": "L3", "from": "2026-11-02", "to": "2026-11-06" },
+    { "email": "user5@example.com", "teamKey": "apollo",  "shiftCode": "SRE_TZ3", "tier": "L1", "from": "2026-11-02", "to": "2026-11-08" },
+    { "email": "user6@example.com", "teamKey": "apollo",  "shiftCode": "SRE_WE_TZ1", "tier": "L1", "from": "2026-11-07", "to": "2026-11-08" },
+    { "email": "user7@example.com", "teamKey": "artemis", "shiftCode": "SRE_TZ1_REGULAR", "from": "2026-11-02", "to": "2026-11-27" }
+  ],
+  "absences": [
+    { "email": "user2@example.com", "teamKey": "apollo",  "kindCode": "ANNUAL_LEAVE", "from": "2026-11-16", "to": "2026-11-20" },
+    { "email": "user5@example.com", "teamKey": "apollo",  "kindCode": "SRE_NIGHT_COVER", "from": "2026-11-01", "to": "2027-01-31" },
+    { "email": "user8@example.com", "teamKey": "artemis", "kindCode": "ALLO_EXT", "allocatedTo": "Example Customer", "from": "2026-11-09", "to": "2026-11-13" }
+  ]
+}
+```
+
+| Field | Rule |
+|---|---|
+| `schemaVersion` | `1` |
+| `family`, `rotaCode` | `SRE` and a rota of that family (`SRE_SAAS`, `SRE_IAAS`); `rotaCode` must equal the path's `{code}` |
+| `period` | `YYYY-MM-DD`, both ends inclusive, at most a year |
+| `mode` | `replace`: first remove every assignment of the rota's teams dated inside the period, except the shifts a move derives (`source` MOVE, e.g. the SaaS Night cover), and cut the time away of each person in the file on the days their entries are worked (`leaveWrittenOver`); a move is never cut. `merge`: keep them; each entry replaces only what the picker would |
+| `email` | resolved against the team schedule's members (case-insensitive); unknown, or shared by two users, is refused |
+| `teamKey` | a team on that rota (`apollo`, `artemis`, `saas-night-cover`; `iaas`) |
+| `shiftCode` | a window of one of the rota's zones; `SRE_WE_TZ2` is retired and refused |
+| `tier` | on an escalation window that does not fix one (`SRE_TZ1`, `SRE_TZ2`, `SRE_TZ3`, the weekend `SRE_WE_TZ1`, `SRE_IAAS_DAY`, `SRE_IAAS_NIGHT`), required; none on regular hours; `SRE_TZ1_L1` / `SRE_TZ2_L1` take only L1. TZ3 is one crew for the whole SaaS rota |
+| assignment `from`..`to` | inside the period; days the window is not worked are skipped and reported |
+| `kindCode` | a kind offered on the family (leave, `ALLO_INT`, `ALLO_EXT`, `ALLO_BR`, `RND`, `SRE_NIGHT_COVER`, `EXCLUDED`); retired kinds refused |
+| absence `from`..`to` | must overlap the period; may run past it (a Night cover move of three months) |
+
+**Who may.** Internal staff with a user token. Every entry needs a writer of its
+team (`requireRotaWriterOverSpan`, the picker's own rule, Night cover moves
+included), and a `replace` also needs a writer of every team of the rota, since it
+clears them all: an Apollo lead can merge Apollo's rows, only an SRE rota admin (or
+a lead of both teams) can replace the SaaS rota. The rule is asked once per team and
+once per person and team, not once per entry. It is checked before the transaction,
+as the picker checks it before its own: a lead changed in between is not seen.
+
+**Refusals.** The file's own problems are checked first and listed together (up to
+25), each named by its entry: `the rota file has problems: assignments[0]: nobody on
+the team schedule has the email ...; absences[2]: ...`. That includes two entries
+that would replace one another, by the picker's own rule: two turns for one person
+and team on a day both are worked, in the same zone or at overlapping hours, or
+regular hours twice (`assignments[3] overlaps assignments[1]: the same person on
+SRE_TZ1_L1 and SRE_TZ1 on 2026-11-04 ...`), and two absences for one person over the
+same days. Time away inside a move is allowed when the move comes first, which is how
+the roster cuts a move around leave. A rule only the database can check (a tier
+somebody else holds, a turn on another team at the same time) is not in that list:
+it refuses the whole file at the first entry that breaks it (`assignments[4]: ...`),
+status as the picker would give it, so a dry run can still be refused for one entry
+after another.
+
+**Concurrency and size.** The import takes the same advisory lock as "Generate
+month" (`RotaGeneratorOwner(rota)`), so the two never interleave on one rota. The
+lock is held for at most the request's own deadline (`REQUEST_TIMEOUT`, 60s by
+default): a cancelled request rolls the transaction back and releases it. A file is
+at most 1000 entries and 1 MiB (both entity-service and the CSM portal backend cap
+the body). Imported rows are ordinary picker rows (source as `ApplyRange` writes
+them, activity and audit recorded), so a later "Generate month" treats them as set by
+hand. Each assignment a replace clears leaves a `DELETED` activity row, noted
+"Cleared by a rota import (replace)", as a delete on the roster does.
+
+**Time away under a replace.** After clearing the period, a replace takes the days
+an assignment's window is worked out of that person's earlier time away filed on the
+rota's teams (removed, shortened or split as the picker would, one call per run of
+consecutive worked days), so a person the file puts on the rota is not also on leave.
+A move (the Night cover) is never cut; it is where they work, not time off. The file's
+own absences go in after every assignment, so none of them is cut, and they do not
+take turns off the days they cover (as marking leave on the roster does not). Each cut
+leaves a `TRIMMED` or `DELETED` absence activity row with the same note. A merge cuts
+nothing. The response lists every cut in `leaveCuts` (the `assignments[]` entry, the
+person, team, kind, the absence as it was, the days taken out and whether it was
+removed, shortened or split), and the dialog shows all of it under the preview, so a
+lead sees whose leave goes, and who is therefore on the rota on those days, before
+pressing Import.
+
+**Codes the roster legend shows** (SaaS; the catalogue of the database decides, so
+download the template from the environment you import into):
+
+| Legend | In the file |
+|---|---|
+| L1 | `SRE_TZ1_L1` / `SRE_TZ2_L1` (no tier), or `SRE_TZ1` / `SRE_TZ2` / `SRE_TZ3` with `"tier": "L1"` |
+| L2, L3 | `SRE_TZ1` / `SRE_TZ2` / `SRE_TZ3` with `"tier": "L2"` / `"L3"` |
+| TZ1 Weekend TZ1 | `SRE_WE_TZ1` with a tier (the weekend TZ1+2 crew) |
+| TZ3 escalation | `SRE_TZ3` with a tier |
+| SUP regular hours | `SRE_TZ1_REGULAR`, `SRE_TZ2_REGULAR`, `SRE_TZ3_REGULAR` (no tier) |
+| AL, HD-AM, HD-PM, LL, SAB | `ANNUAL_LEAVE`, `HALF_DAY_LEAVE_MORNING`, `HALF_DAY_LEAVE_EVENING`, `LIEU_LEAVE`, `SABBATICAL_LEAVE` |
+| RnD, ENG, NC | `RND`, `ENG`, `SRE_NIGHT_COVER` |
+| CUS-ON, CUS-OFF, Mig | `CUSTOMER_ONSITE`, `CUSTOMER_OFFSITE`, `MIGRATION` where a database has them active on SRE; the migrations retire the first two and offer the third on CRE only, and a tag added in the portal takes a code made from its label, so read them off that environment's template |
+
 ## 5. Known gaps
 
 - **Why 0152–0156.** 0141–0150 are claimed by the open RLS work in #2094, and
@@ -600,6 +720,8 @@ before 0237).
 
 ## Change log
 
+- **Rota import: replace cuts leave, template from the catalogue (no migration).** A `replace` also cuts the time away of each person in the file on the days their entries are worked (never a move); the response counts it as `leaveWrittenOver` and lists each cut in `leaveCuts`. `merge` is unchanged. The downloadable template is built from the catalogue for the rota on screen. `cutAbsencesTx` is the absence-cutting core `ApplyAbsence` and the import share.
+- **Rota import (no migration).** `POST /team-schedule/rotas/{code}/import` writes a whole SRE rota for a period from one JSON file (schema version 1, people by email), all or nothing, `?dryRun=true` to preview; see "Rota import (SRE)". `ApplyRange` / `ApplyAbsence` were split into a transaction-taking core and a begin/commit wrapper so the import reuses their rules unchanged.
 - **0238 Case Alerts: SME ladder values.** `paging_ladder_value` takes ladder
   `SME`. Additive and re-runnable; no row changes.
 - **0237 Case Alerts: SME team rooms, plain URLs.** `paging_chat_room` takes

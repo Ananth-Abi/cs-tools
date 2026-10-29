@@ -479,6 +479,11 @@ func main() {
 	// phone) -- needed when reassigning a team lead who has no phone on
 	// file yet (see the /teams/{id}/lead comment above).
 	route("PATCH /users/{id}", handler.PermWrite, usersHandler.UpdateUser)
+	// Admin-only, like POST /users' own grantRoles field (the same
+	// grantableRoles resolution and the same GET /roles/grantable vocabulary)
+	// -- grants a portal permission role to a user who already exists,
+	// instead of only at the moment a new one is created.
+	route("POST /users/{id}/roles", handler.PermAdmin, usersHandler.GrantUserRoles)
 	// Registered unconditionally, even when timecardApproverRoleIDs is empty:
 	// GetTimeCardApprovers itself returns 404 when disabled. Registering it
 	// only when configured would instead let the request fall through to the
@@ -578,6 +583,7 @@ func main() {
 	route("GET /kb-articles/{id}/history", handler.PermView, kbArticleHandler.ListKBArticleHistory)
 	route("POST /deployments/search", handler.PermView, deploymentHandler.SearchDeployments)
 	route("PATCH /deployments/{id}", handler.PermWrite, deploymentHandler.PatchDeployment)
+	route("PUT /deployments/{id}/air-gapped", handler.PermWrite, deploymentHandler.SetDeploymentAirGapped)
 	route("POST /deployments/{id}/products", handler.PermWrite, deploymentHandler.PostDeployedProduct)
 	route("POST /deployments/{id}/products/search", handler.PermView, deploymentHandler.SearchDeployedProducts)
 	route("PATCH /deployments/{deploymentId}/products/{productId}", handler.PermWrite, deploymentHandler.PatchDeployedProduct)
@@ -598,6 +604,16 @@ func main() {
 	// team id; internal staff only (entity-service refuses anyone else).
 	route("GET /groups/{id}", handler.PermView, groupHandler.GetGroup)
 
+	// Customer engagement allocations: the list, one allocation, and the status
+	// updates written against it. Pure pass-through; entity-service restricts all
+	// of it to internal staff and lets only the allocated engineer post an update,
+	// so posting is an ordinary write here with no ownership check of its own.
+	engagementAllocationHandler := handler.NewEngagementAllocationHandler(customerEntityClient)
+	route("POST /engagement-allocations/search", handler.PermView, engagementAllocationHandler.SearchEngagementAllocations)
+	route("GET /engagement-allocations/{id}", handler.PermView, engagementAllocationHandler.GetEngagementAllocation)
+	route("GET /engagement-allocations/{id}/updates", handler.PermView, engagementAllocationHandler.ListEngagementAllocationUpdates)
+	route("POST /engagement-allocations/{id}/updates", handler.PermWrite, engagementAllocationHandler.CreateEngagementAllocationUpdate)
+
 	// Team Schedule. Reads only for now, so everything sits under view: any
 	// role that can see the portal can see who is on the rota. Editing the
 	// rota is a lead's job and will need a permission of its own when the
@@ -615,6 +631,7 @@ func main() {
 	route("GET /team-schedule/catalogue", handler.PermView, scheduleHandler.GetScheduleCatalogue)
 	route("POST /team-schedule/assignments/search", handler.PermView, scheduleHandler.SearchScheduleAssignments)
 	route("POST /team-schedule/absences/search", handler.PermView, scheduleHandler.SearchScheduleAbsences)
+	route("POST /team-schedule/engagement-allocations/search", handler.PermView, scheduleHandler.SearchScheduleEngagementAllocations)
 	route("GET /team-schedule/on-duty", handler.PermView, scheduleHandler.GetScheduleOnDuty)
 
 	// Lead edit. PermWrite keeps the control away from a caller who could not
@@ -644,6 +661,7 @@ func main() {
 	// the availability marked on it. Who may is entity-service's decision.
 	route("POST /team-schedule/rotas/{code}/generate", handler.PermWrite, rotaGenerateHandler.GenerateRotaMonth)
 	route("GET /team-schedule/rotas/{code}/night-crew", handler.PermView, rotaGenerateHandler.GetRotaNightCrew)
+	route("POST /team-schedule/rotas/{code}/import", handler.PermWrite, rotaGenerateHandler.ImportRota)
 	// Rota access tab: rota admins (one family each) and each team's rota
 	// marker. Granting rota admin is for the portal's admins -- a CSM admin by
 	// sign-in role, or a portal admin by the global admin role in the
@@ -651,6 +669,25 @@ func main() {
 	// entity-service decides. A team's marker is named by an admin, the
 	// family's rota admin or the team's lead, likewise decided there.
 	rotaAccessHandler := handler.NewRotaAccessHandler(customerEntityClient)
+	// Skill management: My Skills, the All Skills catalogue, the Skill Manager
+	// and the admin's catalogue edits. The floor here only keeps the control
+	// away from a caller who could not use it at all (PermWrite for every
+	// change); who may add a skill to the catalogue or read everybody's skills
+	// is entity-service's decision, made from the forwarded user token.
+	skillHandler := handler.NewSkillHandler(customerEntityClient)
+	route("GET /skills/levels", handler.PermView, skillHandler.GetSkillLevels)
+	route("GET /skills/categories", handler.PermView, skillHandler.GetSkillCategories)
+	route("POST /skills/search", handler.PermView, skillHandler.SearchSkills)
+	route("GET /skills/me", handler.PermView, skillHandler.GetMySkills)
+	route("GET /skills/me/history", handler.PermView, skillHandler.GetMySkillHistory)
+	route("POST /skills/users/search", handler.PermView, skillHandler.SearchUserSkills)
+	route("GET /skills/{id}", handler.PermView, skillHandler.GetSkill)
+	route("POST /skills", handler.PermWrite, skillHandler.CreateSkill)
+	route("PATCH /skills/{id}", handler.PermWrite, skillHandler.UpdateSkill)
+	route("POST /skills/me", handler.PermWrite, skillHandler.AddMySkill)
+	route("PUT /skills/me/{skillId}", handler.PermWrite, skillHandler.SetMySkillLevel)
+	route("DELETE /skills/me/{skillId}", handler.PermWrite, skillHandler.RemoveMySkill)
+
 	route("GET /team-schedule/rota-access", handler.PermView, rotaAccessHandler.GetRotaAccess)
 	route("PUT /team-schedule/rota-access/admins/{family}/{userId}", handler.PermWrite, rotaAccessHandler.PutRotaAdmin)
 	route("DELETE /team-schedule/rota-access/admins/{family}/{userId}", handler.PermWrite, rotaAccessHandler.DeleteRotaAdmin)
@@ -660,6 +697,11 @@ func main() {
 	// (no portal admin), so PermWrite and entity-service decides.
 	route("PUT /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.PutTeamMember)
 	route("DELETE /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.DeleteTeamMember)
+	// A member's role and Case Alerts tier, and moving them to another team:
+	// CSM admin only, which entity-service enforces, so PermWrite like the
+	// add and remove above.
+	route("PATCH /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.PatchTeamMember)
+	route("POST /team-schedule/teams/{teamKey}/members/{userId}/move", handler.PermWrite, rotaAccessHandler.MoveTeamMember)
 	// Rota Reminders card on the Rota access tab: a family's rota reminder
 	// settings. Changed by a CSM admin or the family's rota admin, who is no
 	// portal admin, so PermWrite and entity-service decides.
@@ -693,6 +735,11 @@ func main() {
 	route("POST /runbooks/import", handler.PermWrite, runbookHandler.ImportRunbooks)
 	route("PUT /runbooks/{id}", handler.PermWrite, runbookHandler.UpdateRunbook)
 	route("DELETE /runbooks/{id}", handler.PermWrite, runbookHandler.DeleteRunbook)
+	bannerHandler := handler.NewBannerHandler(customerEntityClient)
+	route("GET /portal-banners", handler.PermView, bannerHandler.ListCSMBanners)
+	route("GET /portal-banners/manage", handler.PermAdmin, bannerHandler.ListManagedBanners)
+	route("POST /portal-banners", handler.PermAdmin, bannerHandler.CreateBanner)
+	route("PUT /portal-banners/{id}", handler.PermAdmin, bannerHandler.UpdateBanner)
 	route("POST /configuration-items/search", handler.PermView, configurationItemHandler.SearchConfigurationItems)
 	route("POST /time-cards/search", handler.PermTimeCardsAndUpdates, timeCardHandler.SearchTimeCards)
 	route("POST /time-cards", handler.PermTimeCardsAndUpdates, timeCardHandler.CreateTimeCard)

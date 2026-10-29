@@ -388,6 +388,14 @@ client-controlled, always derived from which of the 3 public wrapper methods was
 a 6th instance metric type from a future entity-service endpoint, follow this same shape rather
 than inventing a new fan-out mechanism.
 
+**The project-scoped routes check project access; the other two scopes do not.** `projectScope`
+alone sets `instanceIDFilters.accessProjectID`, and every shared `search*` method calls
+`h.requireProjectAccess` (one `entity.GetProject`, result discarded — the license route's pattern)
+right after the UUID check; a refusal from entity-service is mapped straight through as 403/404. The
+deployment-/deployed-product-scoped routes leave `accessProjectID` empty and are scoped by
+entity-service itself. When adding a 6th metric type, keep the check in the new shared method.
+(Covered by `instances_authz_test.go`.)
+
 **One deliberate asymmetry, by design, not "fixed":** `InstanceMetricsStatsRequest`'s `DataSource`
 field is never forwarded to entity-service in `searchInstanceMetricsStats` (all 3 scopes), even
 though the request type carries it, while the sibling `.../instances/stats/usages/search` family

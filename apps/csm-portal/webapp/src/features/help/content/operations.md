@@ -37,8 +37,56 @@ unrelated deployed products in the list.
 ## Change requests
 
 The Change requests tab lists change requests with server-side search,
-pagination, and filters for state, impact, and closed-date range, plus a
-CSV export of the filtered results. Each row links to a detail page.
+pagination, and filters for state, impact, and closed-date range. Each row
+links to a detail page.
+
+**Export** downloads every change request the current filters match (not
+just the page on screen), in the list's own order, as **CSV**, **Excel
+(.xlsx)**, **JSON** or **PDF**. A very large result stops at the export limit;
+the file is then named `-partial` and a notice says how many rows it holds.
+
+**Bulk actions**: tick the box at the start of a row (or the one in the header
+for the whole page) to select change requests. A closed, canceled or rolled-back
+change request can't be selected. The selection bar then offers:
+
+- **Edit (n)**: one change applied to every selected change request. It opens
+  every field of the change request form, and only the fields you change are
+  sent: short description, state, type, category, impact, priority, originating
+  service request, on hold (with a reason), service and service offering,
+  assignment group, assignee, requested by, planned start and end, rollback
+  duration, Customer Project and deployments, customer approval and review,
+  whether the Implementation Plan is visible to customers, the plans
+  (description, justification, risk and impact analysis, implementation,
+  rollback and test plans, affected services and components), service outage,
+  communication plan, a work note and an additional comment (visible to the
+  customer). A field left empty keeps each change request's own value.
+  - **State** offers only the moves every selected change request can make
+    right now (Request Approval, Start implementation, Close, Cancel change,
+    Roll back and so on, when each is legal for all of them); Re-schedule is not
+    offered, since each change needs its own window. Cancel change and Roll back
+    need a reason, which is added to each one as an internal work note.
+  - **Type** and **Customer Project** can be set only when every selected change
+    request is still New: they are fixed once approval has been requested. Until
+    CAB approval the **deployments** can still change, within the project, when
+    all the selected change requests share one.
+  - A planned date set on its own is checked against each change request's
+    other planned date; one it wouldn't fit is skipped.
+  - **Customer approval** and **Customer review** offer only what every selected
+    change request can take: after New a requirement can be added but not
+    removed, adding one needs a Customer Project, and an Emergency change has
+    neither (setting the type to Emergency turns both off).
+  - A change request on hold can't change state unless the same edit takes it
+    off hold.
+  - Once CAB approval has been received a change request's fields are
+    read-only, so it gets only the state, on hold, the work note and the
+    additional comment, and one left with nothing to change is skipped.
+- **Assign to me (n)**: makes you the assignee of each selected change request
+  that has not been approved yet.
+
+Each change request is updated on its own, so one refusal (on hold, nobody to
+ask for the customer's approval, no assignment group) never stops the others:
+the banner afterwards says how many were updated and lists each one that was
+not, with the reason.
 
 **Saved views**: save the current search/filter combination under a name for
 one-click reuse later, from the same "Saved views" button as the Support
@@ -228,8 +276,31 @@ From the detail page a CS engineer can:
 ## Incidents
 
 The Incidents tab lists incidents with server-side search, pagination, and
-filters for priority, SLA-violated status, created-date range, and product,
-plus a CSV export of the filtered results. Each row links to a detail page.
+filters for priority, SLA-violated status, created-date range, and product.
+Each row links to a detail page. **Export** downloads the filtered incidents as
+CSV, Excel (.xlsx), JSON or PDF, as on the Change requests tab.
+
+**Bulk actions**: select incidents with the box at the start of each row (a
+closed or cancelled incident can't be selected), then use **Edit (n)** or
+**Assign to me (n)**. Edit opens the whole incident form, and only the fields
+you set are applied: short description, state, channel, impact, urgency,
+environment, category and subcategory, service, service offering,
+configuration item, assignment group, assignee, watch list, a work note, an
+additional comment (visible to the customer), parent incident, change request,
+problem, caused by change, resolution code and notes, and the incident report.
+
+- State offers only what every selected incident can move to; Resolved and
+  Closed need a resolution code and notes, which apply to all of them.
+- Subcategory needs a category: the one you set, or the one every selected
+  incident already has. Changing the category needs a subcategory too.
+- Service offering needs a service: set the service first.
+- The incident report can't be set while resolving: resolving writes each
+  incident's report.
+- The watch list can have people **added** to or **removed** from each
+  incident's own list, or be **replaced**.
+
+An incident the backend refuses is listed with the reason, and the rest are
+still updated.
 
 Like Change requests, this tab has its own **Saved views** button for
 naming and reapplying a filter combination — scoped to this tab, on this

@@ -1806,6 +1806,20 @@ export interface BeGrantableRolesResponse {
   roles: BeGrantableRole[];
 }
 
+/** `POST /users/{id}/roles` request body — grant one or more portal role keys
+ * (see `GET /roles/grantable`) to an already-existing user via SCIM. */
+export interface BeGrantUserRolesPayload {
+  roles: string[];
+}
+
+/** `POST /users/{id}/roles` response. `granted` is always present (an empty
+ * array, never `null`, on total failure); `failed` is omitted entirely on
+ * full success rather than sent as an empty array. */
+export interface BeGrantUserRolesResponse {
+  granted: string[];
+  failed?: string[];
+}
+
 export interface BeUserSearchFilters {
   /** Case-insensitive match against username and email. */
   searchQuery?: string;
@@ -2110,6 +2124,26 @@ export interface BeDeployment {
   createdBy?: string;
   createdOn?: string;
   updatedOn?: string;
+  /**
+   * Whether the deployment's products cannot reach WSO2, so its licences tell
+   * them not to publish usage online. `null` when the entity service runs on
+   * ServiceNow, which has no such field (and no way to set it).
+   */
+  airGapped?: boolean | null;
+}
+
+/** Body of `PUT /deployments/{id}/air-gapped`. */
+export interface BeDeploymentAirGappedPayload {
+  airGapped: boolean;
+}
+
+/** Response of `PUT /deployments/{id}/air-gapped`. */
+export interface BeDeploymentAirGappedResponse {
+  id: string;
+  number?: string | null;
+  airGapped: boolean;
+  updatedOn: string;
+  updatedBy: string;
 }
 
 /**
@@ -2875,6 +2909,8 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
   customerProposal?: BeChangeRequestCustomerProposal | null;
   /** On hold: a change that is on hold cannot change state, Accept proposed time included. */
   onHold?: boolean | null;
+  /** Why it is on hold; `null` while it is not. */
+  onHoldReason?: string | null;
   /** `read_only` in the ServiceNow dictionary — inherently read-only. */
   labels?: string[];
   /**
@@ -3384,6 +3420,29 @@ export interface BeConfigurationItemSearchResponse {
  * UI starts sending it, after checking it against the published contract.
  */
 export interface BePatchChangeRequestPayload {
+  /** The subject. */
+  title?: string;
+  /** Rich-text description; `""` clears it. */
+  description?: string;
+  /** Rich-text justification; `""` clears it. */
+  justification?: string;
+  /** Rich-text "Risk and impact analysis" (read back as `impactDescription`); `""` clears it. */
+  impactDescription?: string;
+  impact?: BeChangeRequestImpact;
+  priority?: BeChangeRequestPriority;
+  /**
+   * The change type. It decides the approval flow, so the backend accepts a
+   * change only while the change request is New (a resend of the stored type is
+   * accepted in every state). Re-typing into `emergency` must turn both customer
+   * boxes off in the same request.
+   */
+  type?: BeChangeRequestType;
+  /**
+   * An internal work note, appended to the journal (never blank). The one thing
+   * that can still be added once the change request has been approved: every
+   * field is read-only then (400 `change_request_approved_read_only`).
+   */
+  workNote?: string;
   plannedStartOn?: string;
   plannedEndOn?: string;
   assignedTeamId?: string;
@@ -3424,7 +3483,8 @@ export interface BePatchChangeRequestPayload {
   //     for the 4 SN priority choices) — left for a follow-up.
   //   - `comment`/`workNote` append journal entries; the existing CR comments
   //     feature (`useCsmChangeRequestComments`, `/change-requests/{id}/comments`)
-  //     already covers that surface — the edit dialog does not duplicate it.
+  //     already covers that surface for one change request — the edit dialog
+  //     does not duplicate it (the list's bulk edit does send them).
   //   - `durationInput` only succeeds when it exactly matches the effective
   //     planned window in whole seconds (see `CHANGES-cr-field-parity.md`
   //     §"durationInput"); building that validation is deferred rather than
@@ -3455,6 +3515,26 @@ export interface BePatchChangeRequestPayload {
   /** Customer Review checkbox. The backend refuses (400) a change once the CR
    * has reached `customer_review`, `closed`, `rollback` or `canceled`. */
   customerReviewRequired?: boolean;
+  /** The IT service and its offering (portal UUIDs: the incident form's pickers). */
+  serviceId?: string;
+  serviceOfferingId?: string;
+  /** "Service outage / downtime" and "Communication plan" (plain text). */
+  serviceOutage?: string;
+  communicationPlan?: string;
+  /**
+   * Puts the change request on hold (`true`) or takes it off (`false`). While a
+   * change request is on hold its state can't change, unless the same request
+   * takes it off hold. `true` replaces the hold reason with `onHoldReason` (or
+   * clears it when that is not sent); `false` always clears it.
+   */
+  onHold?: boolean;
+  /** Why it is on hold; sent alone it edits the reason of an existing hold. */
+  onHoldReason?: string;
+  /**
+   * A customer-visible "Additional comments" journal entry (never blank). Like
+   * `workNote` it can still be added once the change request has been approved.
+   */
+  comment?: string;
   /**
    * ACCEPT the customer's proposed time (WSO2's answer, the previous system's "Agree"):
    * the proposal is applied to the planned window (the planned length kept) and the
@@ -3494,12 +3574,21 @@ export interface BePatchChangeRequestResponse {
 export type BeChangeRequestFieldFilterField =
   | "createdOn"
   | "assignmentGroupId"
-  | "approval";
+  | "approval"
+  | "assignedUserId"
+  /** Tag names, `in` (carries any) or `notIn` (carries none); staff only. */
+  | "tag"
+  /** PostgreSQL only, `gte`/`lte`. */
+  | "updatedOn"
+  | "plannedStartOn"
+  | "plannedEndOn"
+  /** PostgreSQL only, `in`: change types (standard, normal, ...). */
+  | "type";
 
 /** `op` enum accepted by a change-request search's generic `filters` array
  * — mirrors `changeRequestFilterOpSet` in `change_request_filters.go`.
  * Field/op compatibility is enforced only on the backend. */
-export type BeChangeRequestFieldFilterOp = "gte" | "lte" | "in" | "eq";
+export type BeChangeRequestFieldFilterOp = "gte" | "lte" | "in" | "eq" | "notIn";
 
 /** One entry in a change-request search's generic `filters` array. */
 export interface BeChangeRequestFieldFilter {
@@ -3529,9 +3618,12 @@ export interface BeChangeRequestSearchPayload {
      * populates this today.
      */
     filters?: BeChangeRequestFieldFilter[];
+    /** OR groups (PostgreSQL only): each branch's filters ANDed, branches OR'd. */
+    anyOf?: Array<{ filters: Array<{ field: string; op: "in"; values: string[] }> }>;
   };
   sortBy?: {
-    field?: "createdOn" | "updatedOn";
+    /** `plannedStartOn` / `plannedEndOn`: PostgreSQL only. */
+    field?: "createdOn" | "updatedOn" | "plannedStartOn" | "plannedEndOn";
     order?: "asc" | "desc";
   };
   pagination?: BePagination;
@@ -3806,6 +3898,8 @@ export interface BeUpdateIncidentPayload {
   problemId?: string | null;
   causedById?: string | null;
   environment?: string | null;
+  /** The incident report (HTML); replaces what is stored. Write-only: the detail does not read it back. */
+  incidentReport?: string;
 }
 
 /** `PATCH /incidents/{id}` response — the full updated incident. */
@@ -3817,10 +3911,8 @@ export interface BePatchIncidentResponse {
 /**
  * `field` enum accepted by an incident search's generic `filters` array —
  * mirrors the entity-service's `incidentFilterFieldSet` (see
- * `incident_filters.go`) exactly. This portal currently builds controls for
- * `assignmentGroupId` (SRE Team), `slaViolated`, `createdOn`, and
- * `productName` — the remaining values (`state`, `businessServiceId`,
- * `madeSla`) are included for completeness/future controls, not dead code.
+ * `incident_filters.go`) exactly. The Incidents filter bar builds controls for
+ * all of them except `madeSla`.
  */
 export type BeIncidentFieldFilterField =
   | "state"
@@ -3829,7 +3921,12 @@ export type BeIncidentFieldFilterField =
   | "createdOn"
   | "slaViolated"
   | "madeSla"
-  | "productName";
+  | "productName"
+  | "assignedUserId"
+  /** PostgreSQL only: incident category labels, `in`. */
+  | "category"
+  /** PostgreSQL only: last update, `gte`/`lte`. */
+  | "updatedOn";
 
 /**
  * `op` enum accepted by an incident search's generic `filters` array,
@@ -3871,6 +3968,8 @@ export interface BeIncidentSearchPayload {
      * above remain flat — only those four.
      */
     filters?: BeIncidentFieldFilter[];
+    /** OR groups (PostgreSQL only): each branch's filters ANDed, branches OR'd. */
+    anyOf?: Array<{ filters: Array<{ field: string; op: "in"; values: string[] }> }>;
   };
   sortBy?: {
     field?: "createdOn" | "updatedOn" | "openedOn";
@@ -3957,21 +4056,15 @@ export interface BeProblemFieldFilter {
 export interface BeProblemSearchFilters {
   searchQuery?: string;
   /**
-   * Filter by state. Not confirmed live against the backend at the time this
-   * was written, so if the backend rejects or silently ignores this filter,
-   * drop it here and from `ProblemsTab`'s payload, and remove the state
-   * control from `ProblemsFilterBar`.
-   */
-  states?: BeProblemState[];
-  /**
    * A single problem number (e.g. "PRB0040192"); matches exactly. Routed as
    * a first-class filter rather than through the free-text searchQuery scan.
    */
   number?: string;
   /**
-   * The generic field/op/values filter array (see {@link BeProblemFieldFilter}) —
-   * additive alongside `states` above. Only the SRE Team control
-   * (`assignmentGroupId`/`"in"`) populates this today.
+   * The generic field/op/values filter array (see {@link BeProblemFieldFilter}).
+   * The only way to filter by state (`state`/`"in"`) or SRE team
+   * (`assignmentGroupId`/`"in"`); the search body has no named `states`
+   * field and the backend rejects unknown fields.
    */
   filters?: BeProblemFieldFilter[];
 }
@@ -4259,6 +4352,15 @@ export interface BeChoiceListItem {
 /** Response of `GET /products/vulnerabilities/meta`. */
 export interface BeVulnerabilityMetaResponse {
   severities: BeChoiceListItem[];
+  /** Distinct products with their distinct versions; names and versions are
+   *  the exact stored strings, sorted, so they match the search's exact
+   *  `productName` / `productVersion` filters. `versions` may be empty. */
+  products?: BeVulnerabilityMetaProduct[];
+}
+
+export interface BeVulnerabilityMetaProduct {
+  name: string;
+  versions: string[];
 }
 
 export type BeTimeCardState =

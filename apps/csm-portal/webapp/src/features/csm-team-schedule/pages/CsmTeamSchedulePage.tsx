@@ -47,6 +47,8 @@ import NextRotation from "../components/NextRotation";
 import RecentChanges from "../components/RecentChanges";
 import UndoToast, { type UndoOffer } from "../components/UndoToast";
 import { UndoIncomplete, applyRevertRuns, awayIsRevertible, rotaRevertRuns } from "../utils/undo";
+import { useEngagementAllocations } from "../api/useEngagementAllocations";
+import { distinctUserIds } from "../utils/engagementAllocations";
 import { weekClear } from "../utils/weekEdit";
 import WeekTable, { type WeekEditControls, type WeekPerson, type WeekTurn } from "../components/WeekTable";
 import CasePagingTab, { type PagingRotaTarget } from "../components/CasePagingTab";
@@ -56,6 +58,8 @@ import { canManageRotaAccess, mayEditWeekOf, useRotaAccess } from "../api/useRot
 import { canViewCaseAlertSettings, useCaseAlertSettings } from "../api/useCaseAlertSettings";
 import { useGetPagingChain } from "../api/usePagingChain";
 import GenerateRotaDialog from "../components/GenerateRotaDialog";
+import ImportRotaDialog from "../components/ImportRotaDialog";
+import { rotaImportOffered } from "../utils/rotaImport";
 import { GENERATED_ROTA } from "../api/useGenerateRota";
 import type {
   PagingChainCode,
@@ -665,6 +669,11 @@ export default function CsmTeamSchedulePage(): JSX.Element {
     (catalogue.data?.teams ?? []).some(
       (t) => t.rotaCode === GENERATED_ROTA && fullTeams.includes(t.key),
     );
+  // An SRE rota's "Import rota", on its roster, to a reader who may edit one of its teams; the server checks every entry again.
+  const [importOpen, setImportOpen] = useState(false);
+  const canImportRota =
+    view === "roster" &&
+    rotaImportOffered(scopeRota, catalogue.data?.rotas ?? [], catalogue.data?.teams ?? [], leadTeams.data ?? []);
   // A family running more than one rota reads only the scoped rota's teams;
   // otherwise the family alone, as before.
   // A reader whose team runs no rota yet (PaaS) reads their own team alone,
@@ -1427,6 +1436,43 @@ export default function CsmTeamSchedulePage(): JSX.Element {
     [catalogue.data?.teams, shownTeamKey, noRotaOfTheirs, user?.team?.teamKey, rotaScoped, scopeRota, family],
   );
 
+  /** The people the week is drawing, by user id: the engineers on the rota
+   *  read, those on leave, and every member of the teams in view -- the same
+   *  three sources the roster seats its rows from, so an engineer with no
+   *  rota entry this week is still asked after. Each carries the user id the
+   *  schedule reads already return. */
+  const engagementPeople = useMemo(() => {
+    const m = new Map<string, { name: string; teamKey?: string }>();
+    for (const a of rows) if (!m.has(a.engineer.userId)) m.set(a.engineer.userId, { name: a.engineer.name, teamKey: a.teamKey });
+    for (const ab of absences.data?.absences ?? []) {
+      if (!m.has(ab.engineer.userId)) m.set(ab.engineer.userId, { name: ab.engineer.name, teamKey: ab.teamKey });
+    }
+    for (const [key, members] of Object.entries(teamMembers)) {
+      for (const mem of members) if (!m.has(mem.userId)) m.set(mem.userId, { name: mem.name, teamKey: key });
+    }
+    return m;
+  }, [rows, absences.data?.absences, teamMembers]);
+  const engagementUserIds = useMemo(
+    () => distinctUserIds([...engagementPeople.keys()].map((userId) => ({ userId }))),
+    [engagementPeople],
+  );
+  // Week and roster views, over the days on screen: the week, or the roster's
+  // own window (the exact days its grid draws, padding days included). A
+  // window the hook has to cut (three and six months run past 70 days) is cut
+  // there. Each piece is cached under its ids and dates, so a week and a
+  // roster window that coincide share their read. A failure or an empty answer
+  // leaves the schedule exactly as it was; the view says so quietly.
+  const engagementWindow =
+    view === "roster"
+      ? { from: toIsoDate(rosterStart), to: toIsoDate(rosterEnd) }
+      : { from: toIsoDate(weekStart), to: toIsoDate(addDays(weekStart, 6)) };
+  const engagements = useEngagementAllocations(
+    engagementUserIds,
+    engagementWindow.from,
+    engagementWindow.to,
+    (view === "week" || view === "roster") && engagementUserIds.length > 0,
+  );
+
   /** This week is editable by a rota admin of the family on screen and by a
    *  CSM or portal admin; a lead keeps the roster. The server checks every
    *  write. */
@@ -1660,6 +1706,12 @@ export default function CsmTeamSchedulePage(): JSX.Element {
                 <span>Generate month</span>
               </button>
             ) : null}
+
+            {canImportRota ? (
+              <button className="btn sm" onClick={() => setImportOpen(true)}>
+                <span>Import rota</span>
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1790,6 +1842,9 @@ export default function CsmTeamSchedulePage(): JSX.Element {
               shifts={shifts}
               absences={absences.data?.absences ?? []}
               absenceKinds={catalogue.data?.absenceKinds ?? []}
+              engagementAllocations={engagements.allocations}
+              engagementPeople={engagementPeople}
+              engagementsFailed={engagements.isError}
               edit={
                 weekEditable && editing
                   ? ({
@@ -1837,6 +1892,8 @@ export default function CsmTeamSchedulePage(): JSX.Element {
               to={rosterEnd}
               span={rosterSpan}
               onSpanChange={setRosterSpan}
+              engagementAllocations={engagements.allocations}
+              engagementsFailed={engagements.isError}
               assignments={rows}
               absences={absences.data?.absences ?? []}
               shifts={shifts}
@@ -1921,6 +1978,14 @@ export default function CsmTeamSchedulePage(): JSX.Element {
           );
         }}
       />
+      {canImportRota && scopeRota ? (
+        <ImportRotaDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          rotaCode={scopeRota}
+          catalogue={catalogue.data}
+        />
+      ) : null}
       {canGenerateRota ? (
         <GenerateRotaDialog
           open={generateOpen}

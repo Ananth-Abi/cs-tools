@@ -40,6 +40,7 @@ import (
 
 	"github.com/adhocore/gronx"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/announcementpublish"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/autoclosure"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/availability"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/cloudstatus"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/engine"
@@ -60,6 +61,8 @@ import (
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/schedule"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/stalecases"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/teamschedule"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/unresolvedproducts"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/usagerollup"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/worklogreport"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/worklogsreport"
 )
@@ -100,6 +103,20 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("failed to construct entity-service client", "err", err)
+		os.Exit(1)
+	}
+
+	// The unresolved products digest's own client: the same deployment and
+	// credentials, one internal-only listing endpoint.
+	unresolvedProductsClient, err := unresolvedproducts.NewClient(unresolvedproducts.Config{
+		BaseURL:      entityServiceBaseURL,
+		TokenURL:     oauthTokenURL,
+		ClientID:     oauthClientID,
+		ClientSecret: oauthClientSecret,
+		Scopes:       entityServiceScopes,
+	})
+	if err != nil {
+		slog.Error("failed to construct entity-service unresolved products client", "err", err)
 		os.Exit(1)
 	}
 
@@ -205,6 +222,25 @@ func main() {
 		})
 		if err != nil {
 			slog.Error("failed to construct entity-service availability client", "err", err)
+			os.Exit(1)
+		}
+	}
+
+	// The usage rollups' own client: the same deployment and credentials, two
+	// internal-only endpoints. Off by default for the reason documented on the
+	// task registration below.
+	usageRollupEnabled := envBool("USAGE_ROLLUP_ENABLED", false)
+	var usageRollupClient *usagerollup.Client
+	if usageRollupEnabled {
+		usageRollupClient, err = usagerollup.NewClient(usagerollup.Config{
+			BaseURL:      entityServiceBaseURL,
+			TokenURL:     oauthTokenURL,
+			ClientID:     oauthClientID,
+			ClientSecret: oauthClientSecret,
+			Scopes:       entityServiceScopes,
+		})
+		if err != nil {
+			slog.Error("failed to construct entity-service usage rollup client", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -320,6 +356,29 @@ func main() {
 		slog.Info("rota reminders are not registered: EMAIL_BASE_URL is not set, so no reminder could be sent")
 	}
 
+	// Case auto-closure: reminders and automatic closure of tickets that sit in
+	// Awaiting Info or Solution Proposed with no activity -- see
+	// internal/autoclosure's package doc and entity-service's CLAUDE.md, "Case
+	// auto-closure". OFF unless AUTOCLOSURE_ENABLED=true: it comments on and
+	// closes customers' tickets, so it is never on by accident. this component's client id must be in
+	// entity-service's M2M_CLIENT_IDS. entity-service's AUTOCLOSURE_SYSTEM_USER_EMAIL
+	// is optional: empty acts as "System user".
+	autoclosureEnabled := envBool("AUTOCLOSURE_ENABLED", false)
+	var autoclosureClient *autoclosure.Client
+	if autoclosureEnabled {
+		autoclosureClient, err = autoclosure.NewClient(autoclosure.ClientConfig{
+			BaseURL:      entityServiceBaseURL,
+			TokenURL:     oauthTokenURL,
+			ClientID:     oauthClientID,
+			ClientSecret: oauthClientSecret,
+			Scopes:       entityServiceScopes,
+		})
+		if err != nil {
+			slog.Error("failed to construct entity-service auto-closure client", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	// Global kill switch for every failure alert email — see
 	// engine.Engine.AlertsEnabled's own doc comment. Defaults to true (the
 	// current always-alert behavior); set to false to go quiet without
@@ -373,6 +432,14 @@ func main() {
 	const availabilityTaskName = "availability_recalculation"
 	availabilityTo, availabilityCc := recipientsFor(recipientOverrides, availabilityTaskName)
 
+	const usageRollupDailyTaskName = "usage_rollup_daily"
+	usageRollupDailyTo, usageRollupDailyCc := recipientsFor(recipientOverrides, usageRollupDailyTaskName)
+	const usageRollupMonthlyTaskName = "usage_rollup_monthly"
+	usageRollupMonthlyTo, usageRollupMonthlyCc := recipientsFor(recipientOverrides, usageRollupMonthlyTaskName)
+	const unresolvedProductsTaskName = "unresolved_products_digest"
+	unresolvedProductsTo, unresolvedProductsCc := recipientsFor(recipientOverrides, unresolvedProductsTaskName)
+	unresolvedProductsEmail := notify.ForReport(emailClient, debugFor(recipientOverrides, unresolvedProductsTaskName))
+
 	const staleCasesTaskName = "stale_cases_report"
 	staleCasesTo, staleCasesCc := recipientsFor(recipientOverrides, staleCasesTaskName)
 	staleCasesEmail := notify.ForReport(emailClient, debugFor(recipientOverrides, staleCasesTaskName))
@@ -418,6 +485,8 @@ func main() {
 		}
 	}
 
+	const queryHoursWeeklyTaskName = "query_hours_weekly_report"
+	const queryHoursNoticeTaskName = "query_hours_usage_notifications"
 	const worklogsDailyTaskName = "cs_worklogs_daily_report"
 	const worklogsWeeklyTaskName = "cs_worklogs_weekly_report"
 	openCasesTo, openCasesCc := recipientsFor(recipientOverrides, openCasesTaskName)
@@ -431,8 +500,6 @@ func main() {
 
 	const migrationCaseReportTaskName = "migration_case_report"
 	migrationCaseTo, migrationCaseCc := recipientsFor(recipientOverrides, migrationCaseReportTaskName)
-	const queryHoursWeeklyTaskName = "query_hours_weekly_report"
-	const queryHoursNoticeTaskName = "query_hours_usage_notifications"
 	migrationCaseEmail := notify.ForReport(emailClient, debugFor(recipientOverrides, migrationCaseReportTaskName))
 	queryHoursWeeklyEmail := notify.ForReport(emailClient, debugFor(recipientOverrides, queryHoursWeeklyTaskName))
 	queryHoursNoticeEmail := notify.ForReport(emailClient, debugFor(recipientOverrides, queryHoursNoticeTaskName))
@@ -530,6 +597,9 @@ func main() {
 	const publishScheduledAnnouncementsTaskName = "publish_scheduled_announcements"
 	publishScheduledAnnouncementsTo, publishScheduledAnnouncementsCc := recipientsFor(recipientOverrides, publishScheduledAnnouncementsTaskName)
 
+	const autoclosureTaskName = "case_autoclosure"
+	autoclosureTo, autoclosureCc := recipientsFor(recipientOverrides, autoclosureTaskName)
+
 	const cloudStatusTaskName = "cloud_status_webhooks"
 	cloudStatusTo, cloudStatusCc := recipientsFor(recipientOverrides, cloudStatusTaskName)
 
@@ -572,6 +642,19 @@ func main() {
 				staleCaseThreshold, staleCasesTo, staleCasesCc, alertsEnabled),
 			To: staleCasesTo,
 			Cc: staleCasesCc,
+		},
+		// Products that deployment nodes report but the product catalogue does not
+		// know -- ServiceNow emailed one fixed address on every such miss. Daily, to
+		// this task's SUB_CRON_RECIPIENTS entry; a no-op until recipients are set, and
+		// silent on a day with nothing to report. The window matches the daily
+		// schedule, so change both together.
+		{
+			Name:     unresolvedProductsTaskName,
+			Schedule: scheduleFor(scheduleOverrides, unresolvedProductsTaskName, "0 6 * * *"),
+			Handler: unresolvedproducts.SendDigest(unresolvedProductsClient, unresolvedProductsEmail,
+				24*time.Hour, unresolvedProductsTo, unresolvedProductsCc, alertsEnabled, time.Now),
+			To: unresolvedProductsTo,
+			Cc: unresolvedProductsCc,
 		},
 		// Emails openCasesTo/Cc a report of every case created before
 		// yesterday that's still in "open" state (nobody has moved it out of
@@ -744,6 +827,45 @@ func main() {
 		})
 	}
 
+	// Rebuilds the daily and monthly usage rows from the hourly and daily ones --
+	// the Go replacement for ServiceNow's UsageAggregator. The arithmetic is
+	// set-based SQL in entity-service (migration 0245); these tasks only trigger it.
+	//
+	// *** OFF UNLESS USAGE_ROLLUP_ENABLED=true. *** ServiceNow's aggregation jobs
+	// keep writing u_daily_usage_summary and u_monthly_usage_count, which
+	// csm-sync-service mirrors into the same Postgres tables, so two writers would
+	// fight over those rows (and csm-sync's delete_sync would remove rows
+	// ServiceNow does not have). Turn it on in the same change that switches the
+	// ServiceNow jobs and those csm-sync jobs off.
+	//
+	// Daily at 00:30 UTC rebuilds the last USAGE_ROLLUP_DAILY_LOOKBACK_DAYS days
+	// (default 2) before today; ingestion keeps today's rows current by itself.
+	// Monthly at 01:30 UTC rebuilds last month and the current one. Both are
+	// idempotent, so a repeated or missed run is safe. Each handler's clock is its
+	// scheduled period's start, not the wall clock: a failed run retried after
+	// midnight (or a month boundary) still rebuilds the days (or months) it was for.
+	if usageRollupEnabled {
+		usageRollupLookbackDays := int(envDays("USAGE_ROLLUP_DAILY_LOOKBACK_DAYS", 2).Hours() / 24)
+		usageRollupDailySchedule := scheduleFor(scheduleOverrides, usageRollupDailyTaskName, "30 0 * * *")
+		usageRollupMonthlySchedule := scheduleFor(scheduleOverrides, usageRollupMonthlyTaskName, "30 1 * * *")
+		tasks = append(tasks,
+			registry.Task{
+				Name:     usageRollupDailyTaskName,
+				Schedule: usageRollupDailySchedule,
+				Handler:  usagerollup.DailyRollup(usageRollupClient, usageRollupLookbackDays, periodStart(usageRollupDailySchedule)),
+				To:       usageRollupDailyTo,
+				Cc:       usageRollupDailyCc,
+			},
+			registry.Task{
+				Name:     usageRollupMonthlyTaskName,
+				Schedule: usageRollupMonthlySchedule,
+				Handler:  usagerollup.MonthlyRollup(usageRollupClient, periodStart(usageRollupMonthlySchedule)),
+				To:       usageRollupMonthlyTo,
+				Cc:       usageRollupMonthlyCc,
+			},
+		)
+	}
+
 	// The three rota reminder tasks, on the days and times the rota's owners
 	// asked for (Colombo has no DST; TZ=UTC-dependent like every schedule
 	// here, see internal/schedule.PeriodKey):
@@ -861,6 +983,46 @@ func main() {
 		)
 	}
 
+	// Daily at 08:00 (TZ=UTC-dependent, like every schedule here), the time the
+	// ServiceNow flow this replaces ran. The limit is per UTC day and enforced by
+	// entity-service from its audit table, so the engine retrying a failed run
+	// the same day cannot exceed it. A partial failure is retried the next tick:
+	// tickets already advanced are no longer due, so only what is left is done.
+	if autoclosureEnabled {
+		autoclosureCfg := autoclosure.RunConfig{
+			IntervalDays: envInt("AUTOCLOSURE_INTERVAL_DAYS", 7),
+			DailyLimit:   envInt("AUTOCLOSURE_DAILY_LIMIT", 500),
+			// Solution Proposed on its own first, then Awaiting Info: set
+			// AUTOCLOSURE_STATES=solution_proposed until the first has been watched.
+			States:    splitComma(os.Getenv("AUTOCLOSURE_STATES")),
+			Templates: autoclosureTemplates(),
+			// AUTOCLOSURE_DRY_RUN=true: decide and log, change nothing. Use it to see
+			// what the first real run would do to a large backlog.
+			DryRun: envBool("AUTOCLOSURE_DRY_RUN", false),
+		}
+		// A value entity-service would reject on every call must stop startup, not
+		// fail and alert every day while no ticket is processed.
+		if err := autoclosureCfg.Validate(); err != nil {
+			slog.Error("invalid AUTOCLOSURE_* configuration; refusing to start", "err", err)
+			os.Exit(1)
+		}
+		// A tryout runs the handler once, outside the ledger, against the real
+		// entity-service: here that would comment on and close real tickets. Only the
+		// debug recipients are protected from the alert email, not the tickets, so a
+		// tryout of this task is always a dry run.
+		if strings.TrimSpace(os.Getenv("TRYOUT_TASK")) == autoclosureTaskName && !autoclosureCfg.DryRun {
+			slog.Warn("TRYOUT_TASK is case_autoclosure: running as a dry run, nothing will be changed; set AUTOCLOSURE_DRY_RUN=true explicitly to silence this")
+			autoclosureCfg.DryRun = true
+		}
+		tasks = append(tasks, registry.Task{
+			Name:     autoclosureTaskName,
+			Schedule: scheduleFor(scheduleOverrides, autoclosureTaskName, "0 8 * * *"),
+			Handler:  autoclosure.Run(autoclosureClient, autoclosureCfg),
+			To:       autoclosureTo,
+			Cc:       autoclosureCc,
+		})
+	}
+
 	var tasksWithRecipients []string
 	for _, t := range tasks {
 		if !gronx.IsValid(t.Schedule) {
@@ -937,6 +1099,22 @@ func parseStringMap(name, raw string) map[string]string {
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		slog.Error("ignoring malformed configuration value; treating it as unset", "key", name, "err", err)
 		return nil
+	}
+	return out
+}
+
+// autoclosureTemplates reads AUTOCLOSURE_TEMPLATES. Unlike the other maps here,
+// a malformed value stops startup: treating it as unset would silently post the
+// built-in wording to customers instead of the wording the operator meant.
+func autoclosureTemplates() map[string]string {
+	raw := os.Getenv("AUTOCLOSURE_TEMPLATES")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		slog.Error("AUTOCLOSURE_TEMPLATES is not a JSON object of strings; refusing to start", "err", err)
+		os.Exit(1)
 	}
 	return out
 }
@@ -1209,6 +1387,22 @@ func envDays(key string, defDays int) time.Duration {
 		return def
 	}
 	return time.Duration(n) * 24 * time.Hour
+}
+
+// envInt returns the given environment variable parsed as a non-negative
+// integer, or def if unset or malformed (logged, not fatal: a typo in a tuning
+// knob must not stop every other task in this component from running).
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		slog.Warn("environment variable is not a valid non-negative integer; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return n
 }
 
 func splitComma(s string) []string {

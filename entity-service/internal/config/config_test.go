@@ -620,6 +620,21 @@ func TestLoad_CSMMigrationPortalWritesEnabled(t *testing.T) {
 	}
 }
 
+// TestLoad_CSMSLAEngineEnabled pins envFlagOn's own semantics for the
+// CSM-native SLA engine's toggle: default true (unset, or anything but a
+// case/whitespace-insensitive "false"), so the engine runs on every data
+// source unless a deployment explicitly opts out.
+func TestLoad_CSMSLAEngineEnabled(t *testing.T) {
+	for value, want := range map[string]bool{
+		"true": true, "TRUE": true, "1": true, "": true, "false": false, "FALSE": false, " false ": false,
+	} {
+		t.Setenv("CSM_SLA_ENGINE_ENABLED", value)
+		if got := Load().CSMSLAEngineEnabled; got != want {
+			t.Errorf("CSM_SLA_ENGINE_ENABLED=%q -> %v, want %v", value, got, want)
+		}
+	}
+}
+
 // TestLoad_CSMMigrationMembershipRegistrationEnabled pins the same parse for
 // the registration kill switch. It gates POST /users/me/memberships/register,
 // which clears a contact's Salesforce lockout and flips the membership to
@@ -950,7 +965,11 @@ func TestLoad_Redis(t *testing.T) {
 	t.Setenv("REDIS_URL", "")
 	t.Setenv("REDIS_ADDR", "")
 	t.Setenv("USER_CACHE_TTL", "")
+	t.Setenv("PRODUCT_VULNERABILITY_META_CACHE_TTL", "")
 	c := Load()
+	if c.VulnerabilityMetaCacheTTL != 24*time.Hour {
+		t.Errorf("VulnerabilityMetaCacheTTL = %v, want the 24h default", c.VulnerabilityMetaCacheTTL)
+	}
 	if c.HasRedis() {
 		t.Error("HasRedis() = true with neither REDIS_URL nor REDIS_ADDR set")
 	}
@@ -960,7 +979,11 @@ func TestLoad_Redis(t *testing.T) {
 
 	t.Setenv("REDIS_ADDR", " localhost:6379 ")
 	t.Setenv("USER_CACHE_TTL", "90s")
+	t.Setenv("PRODUCT_VULNERABILITY_META_CACHE_TTL", "2h")
 	c = Load()
+	if c.VulnerabilityMetaCacheTTL != 2*time.Hour {
+		t.Errorf("VulnerabilityMetaCacheTTL = %v, want 2h", c.VulnerabilityMetaCacheTTL)
+	}
 	if !c.HasRedis() || c.RedisAddr != "localhost:6379" {
 		t.Errorf("HasRedis() = %v, RedisAddr = %q; want true, %q", c.HasRedis(), c.RedisAddr, "localhost:6379")
 	}

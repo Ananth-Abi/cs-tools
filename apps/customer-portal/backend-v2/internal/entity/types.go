@@ -264,7 +264,7 @@ type ProjectFeatures struct {
 // accepts a closureState field -- a direct, admin-only override of a
 // project's overall closure status (see entity-service's own CLAUDE.md) --
 // and this route's RBAC entry (middleware.ModuleProjects/ActionUpdate) grants
-// RoleCustomerAdmin, an external role, specifically because this struct is
+// only RoleCustomerAdmin, an external role, specifically because this struct is
 // narrowly scoped to these two fields. Adding closureState here would hand
 // that override to a customer admin.
 type UpdateProjectRequest struct {
@@ -1700,6 +1700,9 @@ type SearchProductVulnerabilitiesFilters struct {
 	Priority       *string `json:"priority,omitempty"`
 	ProductName    string  `json:"productName,omitempty"`
 	ProductVersion string  `json:"productVersion,omitempty"`
+	// CveID is an exact (case-insensitive, whitespace-trimmed) CVE match,
+	// ANDed with the other filters. Blank means not provided.
+	CveID string `json:"cveId,omitempty"`
 }
 
 // SearchProductVulnerabilitiesRequest is the input for POST /products/vulnerabilities/search.
@@ -2411,7 +2414,15 @@ type GlobalSearchResponse struct {
 
 // VulnerabilityMetaResponse is entity-service's response for GET /products/vulnerabilities/meta.
 type VulnerabilityMetaResponse struct {
-	Severities []ChoiceListItem `json:"severities"`
+	Severities []ChoiceListItem             `json:"severities"`
+	Products   []VulnerabilityProductOption `json:"products"`
+}
+
+// VulnerabilityProductOption is one product name with the distinct versions the
+// vulnerability data carries for it.
+type VulnerabilityProductOption struct {
+	Name     string   `json:"name"`
+	Versions []string `json:"versions"`
 }
 
 // --- conversations CRUD ---
@@ -2963,6 +2974,7 @@ type PendingVerification struct {
 	ID             string     `json:"id"`
 	WorkItemID     string     `json:"workItemId"`
 	RecordNumber   string     `json:"recordNumber"`
+	InternalID     *string    `json:"internalId,omitempty"`
 	RecordTitle    string     `json:"recordTitle"`
 	Severity       *string    `json:"severity"`
 	RecordType     string     `json:"recordType"`

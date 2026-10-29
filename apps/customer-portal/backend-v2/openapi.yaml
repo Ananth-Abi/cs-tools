@@ -27,6 +27,40 @@ paths:
         "200":
           description: Ok
 
+  /banners:
+    get:
+      summary: Banners for the customer portal.
+      description: >
+        Published banners flagged for the customer portal, in sort order. The
+        shell hides a banner outside its start and end, and a banner this
+        browser has dismissed. Responses are Cache-Control no-store.
+      operationId: listCustomerPortalBanners
+      responses:
+        "200":
+          description: The banners the customer portal may show.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortalBannerViewList'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /users/me:
     get:
       summary: Get the logged-in user's profile.
@@ -171,6 +205,8 @@ paths:
       summary: Update a project's AI chat assistant settings.
       description: |
         Patches the AI chat assistant (Novera) settings for a project.
+        Requires `projects:update`, which only a customer's own admin
+        (`customer_admin`) holds; WSO2-side roles are refused with 403.
         Exactly one field may be supplied per request; sending both or
         neither is rejected with 400.
       operationId: patchProjectsId
@@ -3405,7 +3441,7 @@ paths:
 
   /products/vulnerabilities/meta:
     get:
-      summary: Get product vulnerability metadata (severity reference options).
+      summary: Get product vulnerability metadata (severity, product and version options).
       operationId: getProductsVulnerabilitiesMeta
       responses:
         "200":
@@ -4423,9 +4459,10 @@ paths:
     post:
       summary: Search instances belonging to a project.
       description: >
-        filters.projectIds is always forced to [id] server-side. One of 3
-        scope variants (project/deployment/deployed-product) fanned out from
-        entity-service's single POST /instances/search — see
+        filters.projectIds is always forced to [id] server-side, and the
+        caller's access to that project is verified first (403/404 otherwise).
+        One of 3 scope variants (project/deployment/deployed-product) fanned out
+        from entity-service's single POST /instances/search — see
         InstanceSearchRequest.
       operationId: postProjectsIdInstancesSearch
       parameters:
@@ -4489,7 +4526,8 @@ paths:
     post:
       summary: Get core-count metric time series for instances belonging to a project.
       description: >
-        filters.projectIds is always forced to [id] server-side. One of 3
+        filters.projectIds is always forced to [id] server-side. The caller's
+        access to that project is verified first (403/404 otherwise). One of 3
         scope variants fanned out from entity-service's single
         POST /instances/metrics/search.
       operationId: postProjectsIdInstancesMetricsSearch
@@ -4554,7 +4592,8 @@ paths:
     post:
       summary: Get usage-count time series for instances belonging to a project.
       description: >
-        filters.projectIds is always forced to [id] server-side. One of 3
+        filters.projectIds is always forced to [id] server-side. The caller's
+        access to that project is verified first (403/404 otherwise). One of 3
         scope variants fanned out from entity-service's single
         POST /instances/usages/search.
       operationId: postProjectsIdInstancesUsagesSearch
@@ -4619,9 +4658,10 @@ paths:
     post:
       summary: Get core-count metric statistics for instances belonging to a project.
       description: >
-        filters.projectIds is always forced to [id] server-side. Note:
-        dataSource is NOT forwarded to entity-service for this project-scoped
-        metrics-stats variant — a deliberate asymmetry versus the
+        filters.projectIds is always forced to [id] server-side, and the
+        caller's access to that project is verified first (403/404 otherwise).
+        Note: dataSource is NOT forwarded to entity-service for this
+        project-scoped metrics-stats variant — a deliberate asymmetry versus the
         stats/usages/search family (see InstanceStatsRequest's doc comment).
         One of 3 scope variants fanned out from entity-service's single
         POST /instances/stats/metrics/search.
@@ -4687,7 +4727,8 @@ paths:
     post:
       summary: Get usage-count statistics for instances belonging to a project.
       description: >
-        filters.projectIds is always forced to [id] server-side. One of 3
+        filters.projectIds is always forced to [id] server-side. The caller's
+        access to that project is verified first (403/404 otherwise). One of 3
         scope variants fanned out from entity-service's single
         POST /instances/stats/usages/search.
       operationId: postProjectsIdInstancesStatsUsagesSearch
@@ -6291,6 +6332,12 @@ components:
           format: uuid
         caseId:
           type: string
+        internalId:
+          type: string
+          description: >-
+            The record's own internal/WSO2 id (e.g. "CUPRSUB-1170"), distinct
+            from caseId (the record's human-readable number, e.g.
+            "CS0441731"). Omitted when the underlying record has none.
         caseTitle:
           type: string
         severity:
@@ -7744,6 +7791,17 @@ components:
               type: string
             productVersion:
               type: string
+            cveId:
+              type: string
+              maxLength: 100
+              description: >-
+                Exact CVE identifier match (not a substring match, no
+                wildcards). Case-insensitive and ignores surrounding
+                whitespace. A blank value is treated as not provided.
+                Combined with any other filter using AND. Not supported by
+                every backing data source: where it is not supported the
+                request is rejected with a validation error instead of being
+                silently ignored.
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -9579,6 +9637,39 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReferenceItem'
+        products:
+          type: array
+          description: >-
+            Distinct product names with the distinct versions found for each,
+            sorted ascending. Every option matches rows when passed back as the
+            exact-match productName/productVersion search filter. versions can
+            be empty.
+          items:
+            $ref: '#/components/schemas/VulnerabilityProductOption'
+      example:
+        severities:
+          - id: "4"
+            label: Critical
+          - id: "3"
+            label: High
+        products:
+          - name: wso2am
+            versions: ["4.10.0", "4.7.0"]
+          - name: wso2update_tool
+            versions: []
+
+    VulnerabilityProductOption:
+      type: object
+      required: [name, versions]
+      properties:
+        name:
+          type: string
+          description: Distinct product name.
+        versions:
+          type: array
+          description: Distinct versions found for this product, sorted ascending.
+          items:
+            type: string
 
     # ---- conversations (GET/PATCH by id, create) ----
 
@@ -10668,3 +10759,31 @@ components:
           type: string
         contactDetails:
           $ref: '#/components/schemas/Contact'
+
+    PortalBannerView:
+      type: object
+      required: [id, sortOrder, html, startsAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sortOrder:
+          type: integer
+        html:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    PortalBannerViewList:
+      type: object
+      required: [banners]
+      properties:
+        banners:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortalBannerView'

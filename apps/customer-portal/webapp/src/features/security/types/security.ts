@@ -141,6 +141,8 @@ export type VulnerabilityDetailsContentProps = {
   affectedProducts?: ProductVulnerability[];
   isAffectedProductsLoading?: boolean;
   isAffectedProductsError?: boolean;
+  /** Set when only part of the CVE's records could be loaded (safety cap). */
+  affectedProductsTruncation?: AffectedProductsTruncation;
   onAffectedProductClick?: (vulnerability: ProductVulnerability) => void;
 };
 
@@ -156,11 +158,18 @@ export type AffectedProductGroup = {
   records: ProductVulnerability[];
 };
 
+/** How many of a CVE's records were loaded versus how many exist. */
+export type AffectedProductsTruncation = {
+  loaded: number;
+  total: number;
+};
+
 export type VulnerabilityAffectedProductsProps = {
   affectedProducts: ProductVulnerability[];
   currentId?: string;
   isLoading?: boolean;
   isError?: boolean;
+  truncation?: AffectedProductsTruncation;
   onRowClick?: (vulnerability: ProductVulnerability) => void;
   /**
    * The user's expand/collapse choices by group key. Pass it together with
@@ -173,8 +182,15 @@ export type VulnerabilityAffectedProductsProps = {
 };
 
 // Response type for product vulnerabilities metadata.
+// One product with the versions it has vulnerability records for (exact stored strings).
+export type VulnerabilitiesMetaProduct = {
+  name: string;
+  versions: string[];
+};
+
 export type VulnerabilitiesMetaResponse = {
   severities: IdLabelRef[];
+  products: VulnerabilitiesMetaProduct[];
 };
 
 // Response type for product vulnerabilities search results.
@@ -189,6 +205,8 @@ export type ProductVulnerabilitiesSearchFilters = {
   statusId?: number;
   productName?: string;
   productVersion?: string;
+  /** Exact CVE id (case-insensitive); only that CVE's records are returned. */
+  cveId?: string;
 };
 
 // Request type for searching product vulnerabilities.
