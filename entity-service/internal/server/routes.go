@@ -542,6 +542,26 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 			}
 			return svc
 		}
+		// The ACP reopen check runs after Project__c and Invoice__c events,
+		// independent of the ingest flags (it reads Salesforce itself). Off
+		// unless CSM_ACP_REOPEN_ENABLED=true; dry run unless
+		// CSM_ACP_REOPEN_DRY_RUN=false. Its "Back to Open state" email goes
+		// out as project.reactivated on the project topic.
+		withACPReopen := func(svc service.SalesforceEventService) service.SalesforceEventService {
+			if !cfg.ACPReopenEnabled {
+				return svc
+			}
+			slog.Info("acp reopen check enabled",
+				"dryRun", cfg.ACPReopenDryRun, "testProjectOnly", cfg.ACPReopenTestProjectSfID != "",
+				"publishes", projectEventPublisher != nil)
+			return service.WithACPReopen(svc, service.ACPReopen{
+				Projects:        repository.NewACPReopenRepository(repository.NewScoped(db)),
+				SalesEntity:     salesEntityClient,
+				Publisher:       projectEventPublisher,
+				DryRun:          cfg.ACPReopenDryRun,
+				TestProjectSfID: cfg.ACPReopenTestProjectSfID,
+			})
+		}
 		if cfg.CSMMigrationSalesforceMembershipIngestEnabled {
 			// The membership branch (Project_Contact__c / Contact envelopes)
 			// writes user/account_contact/project_contact rows and the
@@ -559,7 +579,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 					Publisher:   projectEventPublisher,
 					UserCache:   userCacheInvalidator,
 				})
-			membershipIngestSvc = withPartnerIngest(withOpportunityIngest(membershipIngestSvc))
+			membershipIngestSvc = withACPReopen(withPartnerIngest(withOpportunityIngest(membershipIngestSvc)))
 			salesforceEventHandler = handler.NewSalesforceEventHandler(membershipIngestSvc)
 
 			// The delayed-retry job re-runs memberships whose project or
@@ -605,7 +625,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 				log.Printf("salesforce ingest retry worker enabled (every %s)", cfg.SalesforceIngestRetryInterval)
 			}
 		} else {
-			salesforceEventHandler = handler.NewSalesforceEventHandler(withPartnerIngest(withOpportunityIngest(service.NewSalesforceEventService(accountIngestRepo, salesEntityClient, ingestSupport))))
+			salesforceEventHandler = handler.NewSalesforceEventHandler(withACPReopen(withPartnerIngest(withOpportunityIngest(service.NewSalesforceEventService(accountIngestRepo, salesEntityClient, ingestSupport)))))
 		}
 	}
 

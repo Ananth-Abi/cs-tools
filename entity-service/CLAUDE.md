@@ -72,6 +72,9 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `CSM_MIGRATION_SALESFORCE_PROJECT_INGEST_ENABLED` | no | `false` | Must be `"true"` for `POST /salesforce/events` to act on `Project__c` envelopes (see "Salesforce Project ingest" below); off, they are acknowledged and ignored. Update-only unless the insert switch is on too |
 | `CSM_MIGRATION_SALESFORCE_PROJECT_INSERT_ENABLED` | no | `false` | With the project flag on, lets the Project ingest and `EnsureProject` insert projects CSM does not have. Keep it off while csm-sync-service still inserts `project` rows (different id schemes and a UNIQUE `key`: its insert would fail forever); turn it on at cutover |
 | `CSM_MIGRATION_SALESFORCE_PARTNER_INGEST_ENABLED` | no | `false` | Must be `"true"` for the partner-link refresh (`account_relationship` "Is Partner Of" / "Is Customer Of") to run after Account events and partner-contact membership events, and for `POST /salesforce/accounts/{sfId}/refresh-partners` to be registered (see "Salesforce partner relationships" below). Keep it off while csm-sync-service still copies `account_relationship` from ServiceNow |
+| `CSM_ACP_REOPEN_ENABLED` | no | `false` | Must be `"true"` for the ACP reopen check to run after `Project__c` / `Invoice__c` events (see "ACP reopen" below). Also needs a pool and the `SALES_ENTITY_*` client. Independent of the ingest flags |
+| `CSM_ACP_REOPEN_DRY_RUN` | no | `true` | The reopen check decides and logs `acp reopen: dry run, would reopen`, and writes nothing. Only an explicit `false` turns it off; an unparseable value keeps it on |
+| `CSM_ACP_REOPEN_TEST_PROJECT_SF_ID` | no | — | When set, the reopen check acts on this one Salesforce project only (15- or 18-character id). For staging tests |
 | `SALESFORCE_INGEST_RETRY_INTERVAL` | no | `5m` | How often the Salesforce ingest retry worker re-runs memberships whose DATABASE step FAILED because their project or account was not in CSM yet, and how old such a failure must be before it is re-run (see "Salesforce ingest ledger and the delayed-retry job" below). `0` disables the job, and so does an unparseable or negative value (logged as a warning; it fails closed rather than falling back to `5m`). Only runs when `CSM_MIGRATION_SALESFORCE_MEMBERSHIP_INGEST_ENABLED=true` |
 | `CSM_MIGRATION_PORTAL_WRITES_ENABLED` | no | `false` | Must be `"true"` to register the four portal-driven membership write routes under `/projects/{id}/contacts` (see "Portal-driven membership writes" below). Also needs `DATA_SOURCE=postgres`, a pool, and the full `SALES_ENTITY_*` set (`Config.HasPortalMembershipWrites`). Off means the routes are **not registered at all**, not 403 |
 | `SALESFORCE_DEFERRED_WRITES_ENABLED` | no | `false` | Must be `"true"` to let a portal invitation survive a sales-entity-service outage: the rows commit with NULL `sf_id`, a `salesforce_write_request` row is recorded, and `salesforce.membership_write.requested` is published for this service's own consumer to finish (see "Deferred Salesforce writes" under "Portal-driven membership writes"). Also needs `HasPortalMembershipWrites` and `EVENT_HUB_BROKER` + `EVENT_PUBLISHING_ENABLED=true`; without them it is logged and stays off. Off = an outage fails the invitation with 503 as before |
@@ -967,6 +970,68 @@ the linked-opportunity, invoice and line-item families).
 ## Allocation events (`POST /customer-engagements/allocation-events`)
 
 Ports ServiceNow `processAllocationEvent` for allocation-app events, in one transaction, exactly as ServiceNow does: allocation types 76/83 find or create the Firefighting engagement by engagement id; every other type finds by line item only, or skips. Internal clients only. A skip answers 200 with a `reason`; only 5xx is retryable. Migration 0187's unique indexes back the `ON CONFLICT` upserts that make repeats safe. Stages and tasks are not ported. Stop csm-sync's `u_customer_engagement*` jobs before turning the flag on: their `delete_sync` removes rows written here.
+
+## ACP reopen (back to Open state)
+
+The Account Closure Process (`integrations/acp-closure-service`) suspends a project when its end
+date passes (end-date track: `end_date_closure_state = CLOSED`) or an invoice stays unpaid past its
+suspend date (invoice track: `invoice_due_date_closure_state = SUSPENDED`). It never reopens one.
+The ServiceNow process reopened automatically on a renewal or a payment ("Back to Open state"
+email); this ports that, event driven: after a `Project__c` or `Invoice__c` envelope on
+`POST /salesforce/events`, the reopen check sets a track back to Open once its reason is gone.
+Code: `internal/service/acp_reopen.go` (flow), `acp_reopen_rules.go` (the ACP rules),
+`internal/repository/acp_reopen_repo.go`, `internal/salesentity/acp_reopen.go`. Off unless
+`CSM_ACP_REOPEN_ENABLED=true`, and dry run unless `CSM_ACP_REOPEN_DRY_RUN=false`.
+
+- **When it runs.** `handleProjectEvent` / `handleInvoiceEvent` run the ingest, then the check,
+  only if the ingest returned no error, for CREATED / UPDATED / RESTORED (never DELETED). It runs
+  whether or not the Project / Opportunity ingest flags are on: it reads Salesforce itself and
+  needs nothing the ingest writes. A `Project__c` event checks that project; an `Invoice__c` event
+  reads the invoice, its opportunity's `Linked_Opportunity__c` rows and checks every linked project.
+- **Only what ACP suspended.** A track is a candidate only when its closure state is suspended AND
+  its `suspension_process_state` section (`based_on_subscription_end_date` /
+  `based_on_due_invoices`) has `event_type: "suspend"`, which ACP (and ServiceNow before it) writes
+  when it suspends. A project suspended by hand has no such record and is never touched. A project
+  with neither track suspended by ACP costs one database read and no Salesforce call.
+- **The decision is ACP's own**, read live from Salesforce as acp-closure-service reads it. The rules
+  are copied in `acp_reopen_rules.go` (keep them in step with that service, see the file header):
+  - end-date track: the Salesforce project end date is set and in the future (`acpDaysBetween > 0`;
+    ACP suspends at 0 or less);
+  - invoice track: no counted invoice is past its suspend date. Counted = opportunity stage
+    "50 - Closed Won" with a EULA that is set and not "Customer contract"; invoice unpaid, has a due
+    date, not PP/CO/TAM, not "Auto Created PS", not due before the project start. The earliest due
+    one decides; its suspend date is the due date, or with the grace period (primary partner, or
+    EULA 3.3 or older) the invoice date + 60 days unless the due date is later. A Partner account
+    with no primary partner has no invoice track, so it is clear. A date that cannot be read keeps
+    the track suspended.
+- **Writes, in one transaction** (`ACPReopenRepository.Reopen`): lock the project row, re-check under
+  the lock that the track is still ACP-suspended (a person or ACP may have changed it), set the
+  track to `OPEN`, set its section to `{"event_type":"open"}` (every other section kept byte for
+  byte) so ACP's reminders start over, `updated_by = acp-reopen`, recompute `wso2_closure_state`
+  with `wso2ClosureStateRule`. Then, still inside the transaction, **only when the overall state is
+  now OPEN** (every track, compliance included), `PATCH /projects/{sfId} {"status":"Open"}` on
+  sales-entity-service (Salesforce removes "[S]" from the name). A refusal there rolls the database
+  back and the event is retried; a commit failure after Salesforce accepted is retried too and sets
+  Open again, which is harmless. The Salesforce call holds the row lock for its duration (at most
+  the client's 15 s timeout).
+- **Email.** After the commit, when the project is Open, `project.reactivated`
+  (`events.ProjectReactivatedPayload`) goes to `PROJECT_EVENT_HUB_TOPIC`, keyed by the project id:
+  project id / Salesforce id / name without "[S]" / key, start and end date, account owner name and
+  email, `reasons` (`renewal`, `invoice_paid`), `recipients` (account owner, renewal account
+  manager, technical owner, each once) and `reactivatedOn`. csm-notification-service sends the
+  "Back to Open state" email and adds its own CC list. Best effort: a publish failure is logged and
+  recorded by the publisher, never returned. The account's people are read before anything is
+  written, so a failure there is retried with nothing changed. **Deploy csm-notification-service
+  with `project.reactivated` first**: it rejects an unknown event type, retries and drops it.
+- **Errors.** Salesforce or database failures are returned, so Service Bus redelivers the event
+  (safe: a reopened project has nothing left to do, and no second email is sent). Bad data (a
+  corrupt `suspension_process_state`, a date that is not a date) is logged and acknowledged.
+- **Not covered here.** A lost event is not caught: the daily safety-net check belongs to ACP's own
+  run. The Salesforce end date can move on a renewal; an invoice due before the new start no longer
+  counts, exactly as in ACP.
+
+Tests: `acp_reopen_test.go` / `acp_reopen_rules_test.go` (service), `internal/salesentity/acp_reopen_test.go`,
+`acp_reopen_repo_integration_test.go` (real Postgres; skipped without `ENTITY_TEST_DATABASE_URL`).
 
 ## Salesforce partner relationships
 

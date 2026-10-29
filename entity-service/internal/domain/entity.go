@@ -10192,3 +10192,37 @@ type GetRiskActionItemsResponse struct {
 type GetActionItemCommentsResponse struct {
 	Comments []ActionItemComment `json:"comments"`
 }
+
+// ACPReopenActor is updated_by on a project the ACP reopen check sets back to
+// Open (internal/service/acp_reopen.go).
+const ACPReopenActor = "acp-reopen"
+
+// ACPReopenProject is what the ACP reopen check reads of a CSM project. The
+// three closure sub-states and ClosureState are the raw enum labels
+// ("CLOSED", "SUSPENDED", "OPEN"), nil when unset.
+type ACPReopenProject struct {
+	ID                              string
+	SfID                            string
+	Name                            string
+	Key                             string
+	EndDateClosureState             *string
+	InvoiceDueDateClosureState      *string
+	ComplianceViolationClosureState *string
+	ClosureState                    *string
+	SuspensionProcessState          json.RawMessage
+}
+
+// ACPReopenWrite is one reopen of an ACP-suspended project: which tracks go
+// back to OPEN and the suspensionProcessState to store with them.
+type ACPReopenWrite struct {
+	ReopenEndDate          bool
+	ReopenInvoice          bool
+	SuspensionProcessState json.RawMessage
+}
+
+// ACPReopenOutcome is the project after an ACPReopenWrite: Open reports that
+// the overall closure state (recomputed from the three sub-states) is OPEN.
+type ACPReopenOutcome struct {
+	ClosureState *string
+	Open         bool
+}
