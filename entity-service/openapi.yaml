@@ -14421,7 +14421,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "409":
-          description: State transition rejected by the data source.
+          description: State transition rejected by the data source. Not returned when the secondary data source refuses a move that the primary has already applied, since that refusal is logged and the update succeeds.
           content:
             application/json:
               schema:
@@ -23916,9 +23916,7 @@ components:
           description: Populated for ServiceNow data source only.
         account:
           $ref: '#/components/schemas/AccountRef'
-          description: >-
-            The case's account, including support tier (type). Populated for
-            the ServiceNow data source only; null otherwise.
+          description: "The case's account, including support tier (type) and its CRE/SRE teams where known. Populated on both data sources; null when the case has no account."
         bestCaseFixEta:
           type: string
           format: date
@@ -27231,6 +27229,20 @@ components:
           type: string
           example: SRE_SAAS
           description: The rota the team's type belongs to; absent for a team on no named rota.
+        heads:
+          type: array
+          description: >-
+            The team's americas_team_lead holders (userId, name, email, isLead,
+            role). They head the team from above and hold no rota, so members
+            leaves them out; absent when the team has none.
+          items:
+            type: object
+            properties:
+              userId: { type: string, format: uuid }
+              name: { type: string }
+              email: { type: string }
+              isLead: { type: boolean }
+              role: { type: string }
         isAbt:
           type: boolean
           description: >-
@@ -28286,17 +28298,26 @@ components:
             $ref: '#/components/schemas/RotaMarkerGrant'
     RotaAccessRights:
       type: object
-      required: [rotaAdmins, markerFamilies]
+      required: [rotaAdmins, markerFamilies, markerTeams]
       properties:
         rotaAdmins:
           type: boolean
-          description: True for a CSM admin, who alone grants and removes rota admin.
+          description: >
+            True for a CSM admin (an AUTH_ADMIN_ROLES role on the token) or a portal admin (the
+            global admin role, internal staff), who alone grant and remove rota admin.
         markerFamilies:
           type: array
           description: The families whose teams' rota managers the caller may change.
           items:
             type: string
             enum: [CRE, SRE, SME]
+        markerTeams:
+          type: array
+          description: >
+            The teams whose rota managers the caller may change as their lead (lead or Americas
+            team lead), in addition to markerFamilies. Empty for an admin, who has every family.
+          items:
+            type: string
         memberFamilies:
           type: array
           description: >
@@ -28688,12 +28709,12 @@ components:
         updatedOn: { type: string, format: date-time }
     SaveCaseAlertRoomRequest:
       type: object
-      required: [ladder, label]
+      required: [ladder]
       properties:
         ladder: { type: string, enum: [CRE, SRE, SME] }
         teamKey: { type: string, description: "An SRE or SME team of the Team Schedule (required for SME); omit for the ladder's shared room." }
         groupId: { type: string, format: uuid, description: "SRE only, instead of teamKey: an assignment group from routeOptions.assignmentGroups, whose incident card and paging replies go to this room (who is called does not change). No teamless flag or channel. 400 when it is not one." }
-        label: { type: string, maxLength: 100, description: "May be left out with groupId: the group's own name is used." }
+        label: { type: string, maxLength: 100, description: "Required for a ladder's shared room and a team room (400 when blank). May be left out with groupId: the group's own name is used." }
         enabled: { type: boolean, default: true }
         teamless: { type: boolean, default: false, description: "SRE team rooms only." }
         channel: { type: string, enum: ["", log, chat, call, both], description: "An SRE team room only: chat, call, both or log; an empty string goes back to the ladder's. Refused on a ladder's shared room and on an SME room." }

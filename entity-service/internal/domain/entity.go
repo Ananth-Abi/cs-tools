@@ -3515,7 +3515,8 @@ type SearchCaseView struct {
 	RelatedCase      *EntityRef     `json:"relatedCase"`
 	Conversation     *EntityRef     `json:"conversation"`
 	// AccountDetails is the case's account reference, including support tier
-	// (Type). Populated for the ServiceNow data source only; null otherwise.
+	// (Type) and the account's CRE/SRE teams where known. Populated on both
+	// data sources; null when the case has no account.
 	AccountDetails *AccountRef `json:"account"`
 	// BestCaseFixEta is the internal-only best-case fix-commitment date, as a
 	// date-only "YYYY-MM-DD" string. Populated on both data sources -- on
@@ -3696,6 +3697,21 @@ type UpdateCaseRequest struct {
 	// other field in the same request (Postgres data source only; the mirrored
 	// ServiceNow write happens asynchronously through the dual-write mechanism).
 	MarkFixIssued *bool `json:"markFixIssued"`
+	// ActorEmail is set only by an M2M caller that has no x-user-id-token to
+	// resolve an acting user from (e.g. a third-party consumer calling
+	// through csm-integration-service's PatchCase). The handler checks the
+	// caller's own x-jwt-assertion client id against the trusted M2M client
+	// set (config.Config.M2MClientIDs) before honoring it -- an arbitrary
+	// caller-supplied value is never trusted as-is, since that would let any
+	// caller claim to be any user. Mutually exclusive with a real
+	// x-user-id-token on the same request, and only meaningful alongside
+	// MarkFixIssued today -- the only UpdateCase branch an M2M-only caller
+	// (no forwarded end-user identity) can reach on the Postgres data source.
+	// Stored verbatim (trimmed, not lowercased) as work_item_activity's
+	// created_by/user_email -- despite the field's name, it is not required
+	// to be a real email address; a configured display label (e.g. a team or
+	// system name) is an intended use, not a misuse.
+	ActorEmail *string `json:"actorEmail,omitempty"`
 }
 
 // UpdateCaseResponse is the response for PATCH /cases/{id}.
@@ -5393,6 +5409,16 @@ type SearchTimeCardsResponse struct {
 	Limit     int            `json:"limit"`
 	Offset    int            `json:"offset"`
 }
+
+// MaxTimeCardMinutes is the most minutes one time card may carry in total
+// (the sum of its five duration fields): 8 hours. The limit is per card, not
+// a cumulative daily total -- a submitter may log several cards against the
+// same case on the same day, each judged on its own.
+const MaxTimeCardMinutes = 480
+
+// MaxTimeCardMinutesMessage is the validation message returned when a single
+// time card's total exceeds MaxTimeCardMinutes.
+const MaxTimeCardMinutesMessage = "Total logged time cannot exceed 8 hours (480 minutes) per time card."
 
 // CreateTimeCardRequest is the request body for POST /time-cards. The submitter
 // is taken from the authenticated session, never from the payload; the card is

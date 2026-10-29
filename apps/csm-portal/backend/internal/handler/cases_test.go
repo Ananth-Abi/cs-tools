@@ -1938,11 +1938,11 @@ func TestPatchCase(t *testing.T) {
 		}
 	})
 
-	// Close-ownership guard (digiops-cs#3321): closing a case is restricted
-	// to its own assigned engineer, unless the caller is admin. Mirrors the
-	// public-comment ownership guard's own test shape (see "rejects public
-	// comment when requester is not the assigned engineer" above).
-	t.Run("close-ownership guard", func(t *testing.T) {
+	// Closing a case is open to every caller holding PermWrite (cs_engineer
+	// and admin), whether or not they are the assigned engineer. The route
+	// itself is registered under PermWrite, so there is no in-handler
+	// ownership check left to test for denial.
+	t.Run("closing a case", func(t *testing.T) {
 		const closePayload = `{"state":"closed"}`
 
 		t.Run("succeeds when caller is the assignee", func(t *testing.T) {
@@ -1962,25 +1962,13 @@ func TestPatchCase(t *testing.T) {
 			assertStatus(t, w, http.StatusOK)
 		})
 
-		t.Run("rejects when caller is a different cs_engineer", func(t *testing.T) {
+		t.Run("succeeds when caller is a different cs_engineer", func(t *testing.T) {
 			client := &mockEntityCaseClient{
 				getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
 					return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress","assignedEngineer":{"id":"someone-else"}}`), nil
 				},
-			}
-			h := NewCaseHandler(client).WithAccessGuard(viewerAccessGuard)
-			r := withCsEngineerUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(closePayload)))
-			r.SetPathValue("id", testCaseID)
-			w := httptest.NewRecorder()
-			h.PatchCase(w, r)
-			assertStatus(t, w, http.StatusForbidden)
-			assertErrorMessage(t, w, ErrMsgCaseCloseNotOwnCase)
-		})
-
-		t.Run("rejects closing an unassigned case as cs_engineer", func(t *testing.T) {
-			client := &mockEntityCaseClient{
-				getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
-					return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress"}`), nil
+				patchCaseFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+					return []byte(`{"id":"` + testCaseID + `","state":"closed"}`), nil
 				},
 			}
 			h := NewCaseHandler(client).WithAccessGuard(viewerAccessGuard)
@@ -1988,8 +1976,24 @@ func TestPatchCase(t *testing.T) {
 			r.SetPathValue("id", testCaseID)
 			w := httptest.NewRecorder()
 			h.PatchCase(w, r)
-			assertStatus(t, w, http.StatusForbidden)
-			assertErrorMessage(t, w, ErrMsgCaseCloseNotOwnCase)
+			assertStatus(t, w, http.StatusOK)
+		})
+
+		t.Run("succeeds closing an unassigned case as cs_engineer", func(t *testing.T) {
+			client := &mockEntityCaseClient{
+				getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+					return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress"}`), nil
+				},
+				patchCaseFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+					return []byte(`{"id":"` + testCaseID + `","state":"closed"}`), nil
+				},
+			}
+			h := NewCaseHandler(client).WithAccessGuard(viewerAccessGuard)
+			r := withCsEngineerUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(closePayload)))
+			r.SetPathValue("id", testCaseID)
+			w := httptest.NewRecorder()
+			h.PatchCase(w, r)
+			assertStatus(t, w, http.StatusOK)
 		})
 
 		t.Run("admin may close regardless of assignee", func(t *testing.T) {
@@ -2008,36 +2012,6 @@ func TestPatchCase(t *testing.T) {
 			w := httptest.NewRecorder()
 			h.PatchCase(w, r)
 			assertStatus(t, w, http.StatusOK)
-		})
-
-		// Regression guard: a non-state PATCH (e.g. workState alone) must
-		// never trigger the close-ownership fetch/check — only pin this
-		// behavior for the transition/workState code path already covered
-		// above; the GetCase call here is the existing transition-validation
-		// fetch (patch.State == nil, so no GetUserMe call follows it).
-		t.Run("a non-state PATCH is unaffected", func(t *testing.T) {
-			var getUserMeCalls int
-			client := &mockEntityCaseClient{
-				getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
-					return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress"}`), nil
-				},
-				getUserMeFn: func(ctx context.Context) ([]byte, error) {
-					getUserMeCalls++
-					return []byte(`{"id":"` + testPlatformUserID + `"}`), nil
-				},
-				patchCaseFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-					return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress","workState":"paused"}`), nil
-				},
-			}
-			h := NewCaseHandler(client).WithAccessGuard(viewerAccessGuard)
-			r := withCsEngineerUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"workState":"paused"}`)))
-			r.SetPathValue("id", testCaseID)
-			w := httptest.NewRecorder()
-			h.PatchCase(w, r)
-			assertStatus(t, w, http.StatusOK)
-			if getUserMeCalls != 0 {
-				t.Errorf("GetUserMe calls = %d, want 0: a non-state PATCH must never trigger the close-ownership check", getUserMeCalls)
-			}
 		})
 	})
 }
