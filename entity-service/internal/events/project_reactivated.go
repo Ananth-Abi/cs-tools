@@ -41,8 +41,8 @@ type ProjectReactivatedPayload struct {
 	// ProjectID is the CSM project id; ProjectSfID the Salesforce one.
 	ProjectID   string `json:"projectId"`
 	ProjectSfID string `json:"projectSfId"`
-	// ProjectName is the name without the "[S]" Salesforce adds to a
-	// suspended project.
+	// ProjectName is the project name as Salesforce had it before the
+	// reopen, "[S]" included, as the ServiceNow email showed it.
 	ProjectName string `json:"projectName"`
 	ProjectKey  string `json:"projectKey"`
 	// AccountOwnerName greets the email ("Dear <first name>,"); empty when

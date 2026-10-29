@@ -195,17 +195,3 @@ func TestACPInvoiceTrackClear(t *testing.T) {
 		t.Error("primary partner grace period: still within it, should be clear")
 	}
 }
-
-func TestACPNameWithoutSuspendedMarker(t *testing.T) {
-	cases := map[string]string{
-		"Umbria Digitale - IS and APIM -[S] - Subscription": "Umbria Digitale - IS and APIM - Subscription",
-		"[S] ACP Test Project":                              "ACP Test Project",
-		"ACP Test Project [S]":                              "ACP Test Project",
-		"ACP Test Project":                                  "ACP Test Project",
-	}
-	for in, want := range cases {
-		if got := acpNameWithoutSuspendedMarker(in); got != want {
-			t.Errorf("%q = %q, want %q", in, got, want)
-		}
-	}
-}

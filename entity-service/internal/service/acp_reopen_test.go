@@ -257,7 +257,7 @@ func TestACPReopen_RenewalReopensTheProject(t *testing.T) {
 	}
 	got := pub.payloads[0]
 	want := events.ProjectReactivatedPayload{
-		ProjectID: acpTestProjectID, ProjectSfID: acpTestSfID, ProjectName: "ACP Test Project", ProjectKey: "APPSUB",
+		ProjectID: acpTestProjectID, ProjectSfID: acpTestSfID, ProjectName: "[S] ACP Test Project", ProjectKey: "APPSUB",
 		AccountOwnerName: "Alex Owner", AccountOwnerEmail: "owner@example.com",
 		StartDate: "2026-10-28", EndDate: "2027-10-27",
 		Reasons:       []string{events.ProjectReactivatedReasonRenewal},
@@ -524,7 +524,7 @@ func TestBuildProjectReactivatedPayload_FallsBackToCSM(t *testing.T) {
 	p := domain.ACPReopenProject{ID: "pid", SfID: "sfid", Name: "CSM Name -[S]", Key: "KEY"}
 	got := buildProjectReactivatedPayload(p, salesentity.Project{}, nil,
 		domain.ACPReopenWrite{ReopenEndDate: true, ReopenInvoice: true}, acpTestNow)
-	if got.ProjectName != "CSM Name" || got.ProjectKey != "KEY" || got.ProjectSfID != "sfid" {
+	if got.ProjectName != "CSM Name -[S]" || got.ProjectKey != "KEY" || got.ProjectSfID != "sfid" {
 		t.Errorf("payload = %+v", got)
 	}
 	if !reflect.DeepEqual(got.Reasons, []string{events.ProjectReactivatedReasonRenewal, events.ProjectReactivatedReasonInvoicePaid}) {

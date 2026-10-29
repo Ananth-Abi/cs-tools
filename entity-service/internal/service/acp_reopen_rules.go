@@ -259,17 +259,3 @@ func acpInvoiceTrackClear(now time.Time, invoices []acpInvoice, projectStart *ti
 	suspendOn := acpInvoiceSuspendDate(invoiceDate, *first.DueDate, first.EULAVersion, hasPrimaryPartner)
 	return acpDaysBetween(now, suspendOn) > 0
 }
-
-// acpSuspendedNamePattern matches the "[S]" Salesforce puts in a suspended
-// project's name, with the dash it is usually joined by ("... -[S] - ...").
-var acpSuspendedNamePattern = regexp.MustCompile(`\s*-?\s*\[S\]`)
-
-// acpSpaces collapses the runs of spaces removing "[S]" can leave.
-var acpSpaces = regexp.MustCompile(`\s{2,}`)
-
-// acpNameWithoutSuspendedMarker removes "[S]" from a project name:
-// "Umbria Digitale - IS and APIM -[S] - Subscription" reads
-// "Umbria Digitale - IS and APIM - Subscription".
-func acpNameWithoutSuspendedMarker(name string) string {
-	return strings.TrimSpace(acpSpaces.ReplaceAllString(acpSuspendedNamePattern.ReplaceAllString(name, ""), " "))
-}

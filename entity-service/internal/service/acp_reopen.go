@@ -435,7 +435,9 @@ func (a *ACPReopen) publishReactivated(ctx context.Context, p domain.ACPReopenPr
 }
 
 // buildProjectReactivatedPayload assembles the notice from the Salesforce
-// project and account as they are now; the name falls back to CSM's.
+// project and account as they were read before the reopen; the name falls
+// back to CSM's. The name is kept as it is, "[S]" included, as the
+// ServiceNow email showed it: Salesforce removes the marker after the reopen.
 func buildProjectReactivatedPayload(p domain.ACPReopenProject, sp salesentity.Project, c *salesentity.Customer, w domain.ACPReopenWrite, now time.Time) events.ProjectReactivatedPayload {
 	name := strings.TrimSpace(derefString(sp.Name))
 	if name == "" {
@@ -448,7 +450,7 @@ func buildProjectReactivatedPayload(p domain.ACPReopenProject, sp salesentity.Pr
 	payload := events.ProjectReactivatedPayload{
 		ProjectID:     p.ID,
 		ProjectSfID:   sp.ID,
-		ProjectName:   acpNameWithoutSuspendedMarker(name),
+		ProjectName:   name,
 		ProjectKey:    key,
 		StartDate:     acpDateOnly(sp.StartDate),
 		EndDate:       acpDateOnly(sp.EndDate),

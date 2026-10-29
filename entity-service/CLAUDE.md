@@ -1016,7 +1016,8 @@ Code: `internal/service/acp_reopen.go` (flow), `acp_reopen_rules.go` (the ACP ru
   the client's 15 s timeout).
 - **Email.** After the commit, when the project is Open, `project.reactivated`
   (`events.ProjectReactivatedPayload`) goes to `PROJECT_EVENT_HUB_TOPIC`, keyed by the project id:
-  project id / Salesforce id / name without "[S]" / key, start and end date, account owner name and
+  project id / Salesforce id / name (as Salesforce had it before the reopen, "[S]" included, as the
+  ServiceNow email showed it) / key, start and end date, account owner name and
   email, `reasons` (`renewal`, `invoice_paid`), `recipients` (account owner, renewal account
   manager, technical owner, each once) and `reactivatedOn`. csm-notification-service sends the
   "Back to Open state" email and adds its own CC list. Best effort: a publish failure is logged and
