@@ -44,7 +44,7 @@ func isBudget(subject, message string) bool {
 }
 
 // fromBudget maps an AWS Budgets alert: one incident per budget and account, whichever threshold or forecast fired.
-// A budget alert is always critical; the budget's own tags stand in for the AlarmDescription overrides budgets lack.
+// A budget alert defaults to critical; the budget's own tags stand in for the AlarmDescription overrides budgets lack.
 func fromBudget(subject, message string, base Alert, tagger BudgetTagFetcher) Alert {
 	name := ""
 	if m := budgetNameLine.FindStringSubmatch(message); m != nil {
@@ -74,6 +74,8 @@ func fromBudget(subject, message string, base Alert, tagger BudgetTagFetcher) Al
 		if tags, err := tagger.Tags(ctx, base.SourceAccount, name); err == nil {
 			base.Service = utils.FirstNonEmpty(tagValue(tags, "service"), base.Service)
 			base.Environment = utils.FirstNonEmpty(tagValue(tags, "environment"), base.Environment)
+			base.Severity = utils.FirstNonEmpty(tagValue(tags, "severity"), base.Severity)
+			base.Category = utils.FirstNonEmpty(tagValue(tags, "category"), base.Category)
 			base.AssignmentGroup = tagValue(tags, "assignment_group")
 		}
 	}

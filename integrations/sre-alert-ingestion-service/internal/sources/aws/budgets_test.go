@@ -61,7 +61,7 @@ func (s *stubTagger) Tags(_ context.Context, accountID, budgetName string) (map[
 	return nil, errors.New("budget not found")
 }
 
-// A budget alert is critical and a service interruption whatever the operator config says.
+// Without tags a budget alert is critical and a service interruption whatever the operator config says.
 func TestTransform_BudgetAlert(t *testing.T) {
 	a, err := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{"severity": "major", "category": "performance"}, nil)
 	if err != nil {
@@ -109,16 +109,16 @@ func TestTransform_NonBudgetTextUnchanged(t *testing.T) {
 	}
 }
 
-// The budget's tags fill service, environment and assignment group, as AlarmDescription does for alarms.
+// The budget's tags fill service, environment, severity, category and assignment group, as AlarmDescription does for alarms.
 func TestTransform_BudgetTags(t *testing.T) {
 	tagger := &stubTagger{tags: map[string]map[string]string{
-		"123456789012/monthly-cost": {"Service": "choreo", "environment": "production", "assignment_group": " SRE - Apollo "},
+		"123456789012/monthly-cost": {"Service": "choreo", "environment": "production", "assignment_group": " SRE - Apollo ", "severity": "major", "category": "performance"},
 	}}
 	a, err := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{"service": "fallback"}, tagger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Service != "choreo" || a.Environment != "production" || a.AssignmentGroup != "SRE - Apollo" {
+	if a.Service != "choreo" || a.Environment != "production" || a.AssignmentGroup != "SRE - Apollo" || a.Severity != "major" || a.Category != "performance" {
 		t.Errorf("alert = %+v", a)
 	}
 }
@@ -131,7 +131,7 @@ func TestTransform_BudgetTagsFallBack(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a.Service != "fallback" || a.Environment != "Unknown" || a.AssignmentGroup != "" {
+		if a.Service != "fallback" || a.Environment != "Unknown" || a.AssignmentGroup != "" || a.Severity != "critical" || a.Category != "service_interruption" {
 			t.Errorf("alert = %+v", a)
 		}
 	}

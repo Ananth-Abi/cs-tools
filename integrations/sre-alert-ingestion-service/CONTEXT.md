@@ -12,11 +12,11 @@ _Avoid_: metric alert
 Field values (service, environment, severity, category, assignment group) an alarm owner writes into the alarm's description to steer how its alerts are classified and routed.
 
 **Budget alert**:
-An AWS alert raised when spend crosses a threshold set on an AWS Budget. Always critical and a service interruption; it has no recovery.
+An AWS alert raised when spend crosses a threshold set on an AWS Budget. Critical and a service interruption unless its **Budget tags** say otherwise; it has no recovery.
 _Avoid_: billing alarm, cost alarm
 
 **Budget tags**:
-The tags on an AWS Budget that supply a **Budget alert**'s service and environment, standing in for **Alarm overrides**, which budgets do not have.
+The tags on an AWS Budget that supply a **Budget alert**'s service, environment, severity, category and assignment group, standing in for **Alarm overrides**, which budgets do not have.
 
 ## Relationships
 

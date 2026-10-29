@@ -30,10 +30,10 @@ service never creates incidents and never touches alert-core's own tables.
   except `Notification` is rejected with `400`.
 - **AWS alert types.** The AWS webhook maps CloudWatch alarms (metric or composite) and AWS
   Budgets alerts. A Budgets alert is named `AWS Budgets: <budget name>` and identified by
-  `<account>/<budget name>`, so its actual and forecast alerts share one incident. It is always
-  `critical` and `service_interruption`. Budgets have no `AlarmDescription`, so the budget's own
-  tags `service`, `environment` and `assignment_group` (keys matched ignoring case) fill those
-  fields instead, read with `budgets:ListTagsForResource` on the default AWS credential chain. A
+  `<account>/<budget name>`, so its actual and forecast alerts share one incident. Budgets have no
+  `AlarmDescription`, so the budget's own tags `service`, `environment`, `severity`, `category`
+  and `assignment_group` (keys matched ignoring case) fill those fields instead; without a tag,
+  severity is `critical` and category `service_interruption`, whatever `AWS_ALERT_CONFIG` says. Tags are read with `budgets:ListTagsForResource` on the default AWS credential chain. A
   failed lookup keeps the configured service and environment, and the credentials can only read budgets in their
   own account. Any other plain-text SNS message is stored as `SNS Message Parse Error`.
 - **Backpressure.** Accepted-but-unfinished work is capped by both a queue size and a memory
