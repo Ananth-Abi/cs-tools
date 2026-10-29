@@ -45,6 +45,19 @@ func (alwaysUnrestrictedAccess) ResolveScope(context.Context) (AccessScope, erro
 	return AccessScope{Unrestricted: true}, nil
 }
 
+// stubAccessServiceWithScope is an AccessService stub that always resolves to
+// a fixed, caller-supplied scope -- used where a test needs to simulate one
+// of ResolveScope's specific branches (e.g. the CSMPortalBackendClientID
+// shape) rather than alwaysUnrestrictedAccess's generic "everything is
+// visible" stand-in.
+type stubAccessServiceWithScope struct {
+	scope AccessScope
+}
+
+func (s stubAccessServiceWithScope) ResolveScope(context.Context) (AccessScope, error) {
+	return s.scope, nil
+}
+
 // stubCaseRepo is a minimal repository.CaseRepository whose SearchCases
 // panics if called: tests using it prove ParseCaseFieldFilters' rejection of
 // an unsupported field happens before the Postgres backend ever reaches the

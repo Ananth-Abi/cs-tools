@@ -10331,6 +10331,21 @@ The acting caller is resolved from `x-user-id-token` (`emailFromJWT`, the same h
 and stamped as `created_by`/`updated_by` — this service still has no notion of "admin" itself;
 restricting who may call this is `apps/csm-portal/backend`'s job (see that repo's own `CLAUDE.md`).
 
+**`req.SystemProvisioned` overrides that actor to `domain.SystemActor` ("SYSTEM").** Found live:
+`apps/csm-portal/backend`'s `ensureUserProvisioned` (its own `CLAUDE.md`, "Provisioning a `user` row
+on demand") auto-creates a `"user"` row for a first-time worknote/escalation author by calling this
+same `POST /users` with that caller's own forwarded `x-user-id-token` — so the row ended up
+self-attributed, `created_by`/`updated_by` equal to the very email being provisioned, which reads as
+though the brand-new user created their own account record. `userService.CreateUser` honors the flag
+only when `AccessService.ResolveScope` resolves the caller to the one combination its
+`CSMPortalBackendClientID` branch alone produces — `Unrestricted && HasInternalAccess` together with a
+non-empty `ViewerEmail` (every other branch leaves at least one of the three unset or empty, see
+`AccessService`'s own doc comment) — i.e. a verified call from `apps/csm-portal/backend` forwarding a
+real `CSMPortalUserDomain` user token, never a caller-supplied actor override. Any other caller setting
+the flag has it silently ignored and keeps the ordinary token-derived actor. The admin-facing Add User
+flow (`UsersHandler.CreateUser` in that backend) never sets it, so an admin-created row still carries
+the admin's own email as usual.
+
 **`userService.CreateUser` also rejects granting an internal-resolving role to a non-`@wso2.com`
 email.** `internalUserTypeRoles` (`user_service.go`, next to `emailRE`) is `["admin", "internal"]` —
 the same two names `recompute_user_type`'s trigger maps to `user_type = INTERNAL` — and

@@ -309,6 +309,19 @@ work-note creation and escalation are internal-staff-only actions by constructio
 `"internal"` is never a guess the way `CreateUser`'s admin-facing "User type" selector
 has to make.
 
+**The create body also sends `systemProvisioned: true`.** Before this, the request
+forwarded the caller's own `x-user-id-token` as-is (the same one `Auth` attached for
+the rest of the request), so entity-service's own actor resolution
+(`emailFromJWT(x-user-id-token)`) stamped `created_by`/`updated_by` on the new row as
+the very email being provisioned — a brand-new work-note/escalation author's row read
+as though they had created their own platform user record. `systemProvisioned` tells
+entity-service's `userService.CreateUser` to stamp `created_by`/`updated_by` as
+`domain.SystemActor` ("SYSTEM") instead — see that repo's own `CLAUDE.md`, "POST
+/users creates a new `user` row", for the trust gate that keeps this from being a
+caller-supplied actor override. The admin-facing Add User flow
+(`UsersHandler.CreateUser`, below) never sends this field, so an admin-created row
+still carries the admin's own email as usual.
+
 **`CreateCaseComment` skips calling this entirely for a caller who already holds full
 `PermWrite`** (`cs_engineer` or `admin`, via the same `hasFullWrite` the
 `PermCreateWorkNote`-narrowing check above already computes) — assumed already
