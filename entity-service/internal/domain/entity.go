@@ -773,10 +773,13 @@ const (
 	// DELETED, and this value makes a portal-originated write visible in the
 	// ledger for what it is.
 	PortalMembershipWriteEventType = "PORTAL_WRITE"
-	// SLAEngineActor is created_by/updated_by for every "sla" row the
-	// CSM-native SLA engine writes (source='CSM', migration 0134) --
-	// distinguishes its own rows in the audit columns from the ServiceNow
-	// sync's, which share the same table but never carry this value. See
+	// SLAEngineActor is created_by/updated_by for every "sla" row this
+	// service's own in-process SLA engine writes (tagged source='CSM',
+	// migration 0134's own original intent -- see
+	// repository.SLAEngineRepository's own doc comment for why this must
+	// never be 'SERVICENOW', the tag a real, independent external sync job
+	// uses for its own rows) -- distinguishes its own rows in the audit
+	// columns regardless of source value. See
 	// internal/service/sla_policy_resolver.go.
 	SLAEngineActor = "sla-engine"
 	// ProductVulnerabilitySyncActor is created_by/updated_by for every
@@ -8686,15 +8689,34 @@ type SLAStatus struct {
 	// PauseDurationSeconds is sla.pause_duration, the clock's total
 	// accumulated time spent paused across every completed pause/resume
 	// cycle so far (NOT including any currently-open pause — see PausedOn
-	// for that) — whole seconds, not an ISO-8601 duration, same convention
-	// as SLADurationPolicyItem.DurationSeconds (a plain integer needs no
-	// parsing). On a source='CSM' row this is written by
-	// SLAEngineRepository.SetPaused, accumulated on every resume; a
-	// ServiceNow-synced row carries whatever the sync writes. 0 for a clock
+	// for that) — whole seconds, not an ISO-8601 duration: a plain integer
+	// needs no parsing. On a row this service's own SLA engine registered, this is
+	// written by SLAEngineRepository.SetPaused, accumulated on every
+	// resume; an externally-synced row carries whatever the sync writes. 0
+	// for a clock
 	// that has never been paused, not absent — this is what lets a caller
 	// tell "never paused" (0) apart from "paused right now"
 	// (IsPaused=true, PausedOn set) without a third state.
 	PauseDurationSeconds int64 `json:"pauseDurationSeconds"`
+	// DurationSeconds is the resolved policy's own duration in whole
+	// seconds (sla.duration) — added so csm-notification-service's SLA
+	// breach engine can schedule its own tier checkpoints directly from
+	// each clock's real, resolved policy at reconciliation time, with no
+	// static duration table of its own left to consult (GET
+	// /sla-duration-policy was removed — see entity-service's own
+	// CLAUDE.md). 0 when the row has no duration recorded.
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule is the bound policy's own sla_policy.schedule value verbatim
+	// (e.g. "WSO2 Business days", "24 x 7", or "" when the policy sets
+	// none) — added so csm-notification-service can schedule its own tier/
+	// breach wake-ups with the same business-day-aware due-instant
+	// calculation this service's own engine uses (internal/businessdays)
+	// instead of flat wall-clock Add(duration) math for a non-24x7 clock.
+	// Every value other than "WSO2 Business days" is treated as plain 24x7
+	// flat time by every reader of this field, same as this service's own
+	// businessDayElapsedSnapshot does -- see slaScheduleWSO2BusinessDays's
+	// own doc comment in internal/repository/sla_engine_repo.go.
+	Schedule string `json:"schedule"`
 	// The eight fields below are the same display-only shape SLAClock's
 	// retired display fields carried, still populated live off the case's
 	// current data (not a point-in-time snapshot, unlike the old design) —
@@ -8800,24 +8822,68 @@ type SLAClockState struct {
 	// a second round trip to GET /sla-status.
 	PausedOn             *time.Time `json:"pausedOn"`
 	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
+	// IsPaused is Stage == "PAUSED", spelled out as its own bool (mirroring
+	// SLAStatus.IsPaused) so a caller doesn't have to string-compare Stage
+	// itself — added so csm-notification-service's own ApplyStateEffects can
+	// derive a clock's real pause status from here instead of guessing it
+	// from a hardcoded list of case states, which disagreed with the real,
+	// per-policy pause_condition the condition-driven SLA engine
+	// (internal/slacondition) now evaluates: not every policy pauses on the
+	// identical set of states.
+	IsPaused bool `json:"isPaused"`
+	// BusinessElapsedPercent mirrors SLAStatus.BusinessElapsedPercent (same
+	// name, same uncapped-past-100 convention, not capped/rounded). For a
+	// still-running (IN_PROGRESS/BREACHED) clock backed by a 'WSO2 Business
+	// days' policy, this is computed fresh, live, through
+	// internal/businessdays — not read off sla_live's own stored/view
+	// value, which has no business-day calendar of its own and would
+	// otherwise show flat wall-clock time (see
+	// repository.SLAStatusRepository.GetClockState's own doc comment).
+	// Every other case (24x7, or PAUSED/terminal regardless of schedule)
+	// reads sla_live's own live_elapsed_percentage directly, which is
+	// already correct for those.
+	BusinessElapsedPercent float64 `json:"businessElapsedPercent"`
+	// DurationSeconds is the resolved policy's own duration in whole
+	// seconds (sla.duration) — added so a caller can schedule its own tier
+	// checkpoints directly from this clock's real, resolved policy, per
+	// clock, rather than a flat severity-keyed table (see
+	// SLADurationPolicyItem's own doc comment for the bulk-fetch
+	// equivalent, SLAStatus.DurationSeconds). 0 when the row has no
+	// duration recorded.
+	DurationSeconds int64 `json:"durationSeconds"`
+	// Schedule mirrors SLAStatus.Schedule -- see that field's own doc
+	// comment for the full reasoning (business-day-aware wake-up
+	// scheduling on the consumer side).
+	Schedule string `json:"schedule"`
+	// BusinessPauseDurationSeconds is sla.business_pause_duration -- the
+	// clock's total business-hours-aware pause time accumulated across
+	// every completed pause/resume cycle so far, distinct from
+	// PauseDurationSeconds' own flat wall-clock total. A caller correcting
+	// a business-day clock's own wake-up schedule after a resume (see
+	// csm-notification-service's own Engine.resumeShift) needs THIS value,
+	// not PauseDurationSeconds, to recompute the real due instant via
+	// businessdays.AddBusinessDuration -- shifting by the flat pause
+	// duration instead produced wake times off by as much as the number of
+	// weekends/holidays the pause spanned. Always 0 for a 24x7-scheduled
+	// clock (nothing ever writes this column for one).
+	BusinessPauseDurationSeconds int64 `json:"businessPauseDurationSeconds"`
 }
 
-// SLADurationPolicyItem is one (severity, clockType) duration row from the
-// sla_duration_policy table (migration 0192) — a small, static reference
-// table seeded directly from WSO2's own published Enterprise Support Policy,
-// independent of the ServiceNow-synced "sla"/"sla_policy" tables SLAStatus
-// above reads. csm-notification-service fetches the full set once at
-// startup (GET /sla-duration-policy) to compute each case's own due dates
-// itself, rather than depending on a sync that has no plain severity column
-// to key a lookup on.
+// SLADurationPolicyItem is one (severity, clockType) duration row, computed
+// live from the real, decoded sla_policy table (see
+// service.SLADurationPolicyService's own doc comment for exactly how) —
+// not a static reference table any more (the one that used to back this,
+// sla_duration_policy, migration 0192, was dropped by migration 0261 once
+// this endpoint stopped reading it). integrations/csm-notification-service's
+// internal/paging rung-escalation email fetches the full set once at
+// startup to display each case's own "response SLA remaining time" — the
+// one remaining live consumer of this endpoint.
 //
 // Severity is the same uppercase English word every case.* event's own
 // Priority field already carries (e.g. "CATASTROPHIC") — not the raw
-// case_severity_enum label ("S0") the table stores it as — so a consumer
+// case_severity_enum label ("S0") sla_policy itself stores — so a consumer
 // can match this response directly against a case.created payload's
-// Priority with no translation of its own. See
-// ReferenceDataRepository.ListSLADurationPolicy's own doc comment for the
-// S0..S4 mapping.
+// Priority with no translation of its own.
 type SLADurationPolicyItem struct {
 	Severity string `json:"severity"`
 	// ClockType is "response" / "workaround" / "resolution" — matches
@@ -8825,17 +8891,18 @@ type SLADurationPolicyItem struct {
 	// above), so a consumer already matching on that string needs no second
 	// vocabulary for this endpoint.
 	ClockType string `json:"clockType"`
-	// DurationSeconds is the policy's duration in whole seconds — not a
-	// formatted string (contrast TaskSlaDefinitionDetail.Duration above) and
-	// not an ISO-8601 duration, since the one real consumer
+	// DurationSeconds is the resolved policy's duration in whole seconds —
+	// not a formatted string (contrast TaskSlaDefinitionDetail.Duration
+	// above) and not an ISO-8601 duration, since the one real consumer
 	// (csm-notification-service) only ever needs to feed this straight into
 	// a time.Duration, and a plain integer needs no parsing to get there.
 	DurationSeconds int64 `json:"durationSeconds"`
 }
 
 // SLADurationPolicyResponse is the response for GET /sla-duration-policy —
-// every row in sla_duration_policy, unpaginated (at most 15 rows today: 5
-// severities × up to 3 clock types each).
+// one row per (severity, clockType) pair a real sla_policy condition
+// currently resolves for a plain, brand-new case at that severity,
+// unpaginated (at most 15 rows: 5 severities × up to 3 clock types each).
 type SLADurationPolicyResponse struct {
 	Policies []SLADurationPolicyItem `json:"policies"`
 }

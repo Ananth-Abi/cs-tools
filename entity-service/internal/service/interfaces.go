@@ -289,8 +289,8 @@ type SLAStatusService interface {
 // SLADurationPolicyService backs GET /sla-duration-policy — see
 // domain.SLADurationPolicyItem's own doc comment for what it's for.
 type SLADurationPolicyService interface {
-	// ListSLADurationPolicy returns every row of sla_duration_policy,
-	// unpaginated.
+	// ListSLADurationPolicy returns the computed (severity, clockType)
+	// duration list, unpaginated.
 	ListSLADurationPolicy(ctx context.Context) (domain.SLADurationPolicyResponse, error)
 }
 

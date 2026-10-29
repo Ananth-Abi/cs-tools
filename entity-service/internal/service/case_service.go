@@ -948,29 +948,37 @@ func (s *caseService) createCaseSNFirst(ctx context.Context, req domain.CreateCa
 	// staying stuck on whoever held the role at creation time.
 	s.addRequestedWatchers(ctx, c.ID, c.CreatedBy, watcherIDs)
 
-	// Only now — Postgres has confirmed the row this mode's reads actually
-	// depend on — is it safe to publish. See publishCaseCreatedEvent's doc
-	// comment for why this can't just be snCaseService's own automatic
-	// publish (that fires right after the ServiceNow POST, before this
-	// Postgres insert was even attempted) — same reasoning
-	// incidentService.createIncidentSNFirst already established.
-	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req, c.ID)
-
-	// Same reasoning as the publish call above, for the exact same "not
-	// safe before this Postgres insert" reason: registerCaseSLAClocksEvent
-	// inserts into "sla", whose work_item_id has a hard foreign key against
-	// work_item(id) (migration 0048) — calling it any earlier (e.g. via
-	// snCaseMirrorSvc's own automatic registration right after the
-	// ServiceNow POST, which routes.go now disables by passing it a nil
-	// slaEngine) fails with a foreign-key violation every time, since this
-	// mode's own Postgres work_item row doesn't exist until the insert
-	// above succeeds. A real, live-observed bug this fixed: every dual-write
-	// case creation failed clock registration with SQLSTATE 23503, silently
-	// (best-effort, logged only) — see registerCaseSLAClocksEvent's own doc
-	// comment.
+	// SLA-clock registration runs BEFORE the publish below, not after --
+	// this order is load-bearing (see CreateCase's own doc comment on the
+	// snCaseService.CreateCase equivalent for the full race this avoids:
+	// csm-notification-service reacts to case.created by reading this
+	// clock straight back from entity-service, with only a short, bounded
+	// retry for "not found yet"). It still can't run any earlier than this
+	// point in THIS function, though: registerCaseSLAClocksEvent inserts
+	// into "sla", whose work_item_id has a hard foreign key against
+	// work_item(id) (migration 0048) -- calling it before the Postgres
+	// insert above succeeds (e.g. via snCaseMirrorSvc's own automatic
+	// registration right after the ServiceNow POST, which routes.go now
+	// disables by passing it a nil slaEngine) fails with a foreign-key
+	// violation every time, since this mode's own Postgres work_item row
+	// doesn't exist until that insert succeeds. A real, live-observed bug
+	// this fixed: every dual-write case creation failed clock registration
+	// with SQLSTATE 23503, silently (best-effort, logged only). Postgres
+	// has already committed by the time this runs, so the only remaining
+	// ordering constraint is "before the publish," which this now also
+	// satisfies -- see registerCaseSLAClocksEvent's own doc comment.
 	if req.Type == "case" {
 		registerCaseSLAClocksEvent(ctx, s.slaEngine, s.GetCaseByID, c.ID)
 	}
+
+	// Only now — Postgres has confirmed the row this mode's reads actually
+	// depend on, and the clocks above are already registered — is it safe
+	// to publish. See publishCaseCreatedEvent's doc comment for why this
+	// can't just be snCaseService's own automatic publish (that fires right
+	// after the ServiceNow POST, before this Postgres insert was even
+	// attempted) — same reasoning incidentService.createIncidentSNFirst
+	// already established.
+	publishCaseCreatedEvent(ctx, s.publisher, s.GetCaseByID, s.ProjectContactEmailsByRole, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req, c.ID)
 
 	responseState := ""
 	if c.State != nil {
@@ -2204,9 +2212,13 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 		if cv, err := s.GetCaseByID(ctx, req.ID); err != nil {
 			slog.ErrorContext(ctx, "update case: enrich case for case.severity_changed publish failed", "caseId", req.ID)
 		} else {
-			cv.WatchList = s.filterActiveWatchListUsers(ctx, cv, cv.WatchList)
-			publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req.ID, string(derefSeverity(oldSeverity)), string(*c.Severity), cv)
-			// Deliberately independent of s.publisher -- see
+			// Clocks are revised BEFORE the publish below, not after -- same
+			// race this package's own createCasePostgres/createCaseSNFirst
+			// ordering avoids for case.created: csm-notification-service
+			// reacts to case.severity_changed by re-registering its own
+			// clocks from entity-service's current state, and a publish that
+			// goes out before ReviseCaseClocks commits can read the OLD
+			// clocks back. Deliberately independent of s.publisher -- see
 			// reviseCaseSLAClocks' own doc comment (sn_case_service.go) for
 			// why revising SLA clocks must not depend on Event Hub being
 			// configured. A real, live-observed gap this fixes: the
@@ -2236,6 +2248,8 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 					s.slaEngine.ApplyCaseStateEffects(ctx, req.ID, *cv.State)
 				}
 			}
+			cv.WatchList = s.filterActiveWatchListUsers(ctx, cv, cv.WatchList)
+			publishSeverityChangedEvent(ctx, s.publisher, s.AccountDefaultWatcherEmails, s.AccountSRETeam, req.ID, string(derefSeverity(oldSeverity)), string(*c.Severity), cv)
 		}
 	}
 
