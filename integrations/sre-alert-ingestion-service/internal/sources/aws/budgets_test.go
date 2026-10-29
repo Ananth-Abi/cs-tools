@@ -17,7 +17,9 @@
 package aws
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -44,13 +46,29 @@ func budgetEnvelope(subject, message string) []byte {
 	return raw
 }
 
+// stubTagger serves budget tags keyed "<account>/<budget name>" and records the lookups.
+type stubTagger struct {
+	tags  map[string]map[string]string
+	calls []string
+}
+
+func (s *stubTagger) Tags(_ context.Context, accountID, budgetName string) (map[string]string, error) {
+	key := accountID + "/" + budgetName
+	s.calls = append(s.calls, key)
+	if tags, ok := s.tags[key]; ok {
+		return tags, nil
+	}
+	return nil, errors.New("budget not found")
+}
+
+// A budget alert is critical and a service interruption whatever the operator config says.
 func TestTransform_BudgetAlert(t *testing.T) {
-	a, err := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{"severity": "major"})
+	a, err := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{"severity": "major", "category": "performance"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Alert{
-		Service: "", MetricName: "AWS Budgets: monthly-cost", Severity: "major", Category: "service_interruption", Environment: "Unknown", Source: "AWS",
+		Service: "", MetricName: "AWS Budgets: monthly-cost", Severity: "critical", Category: "service_interruption", Environment: "Unknown", Source: "AWS",
 		UniqueIdentifier: "123456789012/monthly-cost",
 		Description:      "You requested that we alert you when the ACTUAL Cost associated with your monthly-cost budget is greater than $80.00 for the current month. The ACTUAL Cost associated with this budget is $85.12. You can find additional details below and by accessing the AWS Budgets dashboard [1].",
 		SourceTopic:      "arn:aws:sns:us-east-1:999988887777:budgets", SourceAccount: "123456789012",
@@ -62,8 +80,8 @@ func TestTransform_BudgetAlert(t *testing.T) {
 
 // The actual and the forecast alert of one budget are one incident.
 func TestTransform_BudgetForecastSharesTheIncident(t *testing.T) {
-	actual, _ := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{})
-	forecast, _ := Transform(budgetEnvelope("AWS Budgets: monthly-cost is forecasted to exceed your alert threshold", budgetMessage), Config{})
+	actual, _ := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{}, nil)
+	forecast, _ := Transform(budgetEnvelope("AWS Budgets: monthly-cost is forecasted to exceed your alert threshold", budgetMessage), Config{}, nil)
 	if actual.MetricName != forecast.MetricName || actual.UniqueIdentifier != forecast.UniqueIdentifier {
 		t.Errorf("actual %q/%q, forecast %q/%q; want the same", actual.MetricName, actual.UniqueIdentifier, forecast.MetricName, forecast.UniqueIdentifier)
 	}
@@ -71,7 +89,7 @@ func TestTransform_BudgetForecastSharesTheIncident(t *testing.T) {
 
 // Without the Budget Name line the budget comes from the Subject and the account from the topic.
 func TestTransform_BudgetNameFromSubject(t *testing.T) {
-	a, err := Transform(budgetEnvelope("AWS Budgets: team-ec2 is forecasted to exceed your alert threshold", "Your budget is forecasted to exceed."), Config{})
+	a, err := Transform(budgetEnvelope("AWS Budgets: team-ec2 is forecasted to exceed your alert threshold", "Your budget is forecasted to exceed."), Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +100,50 @@ func TestTransform_BudgetNameFromSubject(t *testing.T) {
 
 // Other plain-text messages keep the parse-error fallback.
 func TestTransform_NonBudgetTextUnchanged(t *testing.T) {
-	a, err := Transform(budgetEnvelope("Something else", "disk almost full"), Config{})
+	a, err := Transform(budgetEnvelope("Something else", "disk almost full"), Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.MetricName != "SNS Message Parse Error" || a.Description != "disk almost full" || a.UniqueIdentifier != "" {
 		t.Errorf("alert = %+v", a)
+	}
+}
+
+// The budget's tags fill service, environment and assignment group, as AlarmDescription does for alarms.
+func TestTransform_BudgetTags(t *testing.T) {
+	tagger := &stubTagger{tags: map[string]map[string]string{
+		"123456789012/monthly-cost": {"Service": "choreo", "environment": "production", "assignment_group": " SRE - Apollo "},
+	}}
+	a, err := Transform(budgetEnvelope("AWS Budgets: monthly-cost has exceeded your alert threshold", budgetMessage), Config{"service": "fallback"}, tagger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Service != "choreo" || a.Environment != "production" || a.AssignmentGroup != "SRE - Apollo" {
+		t.Errorf("alert = %+v", a)
+	}
+}
+
+// A failed lookup, or a budget with no matching tags, keeps the configured values.
+func TestTransform_BudgetTagsFallBack(t *testing.T) {
+	tagger := &stubTagger{tags: map[string]map[string]string{"123456789012/monthly-cost": {"owner": "finance"}}}
+	for _, msg := range []string{budgetMessage, "Budget Name: other-budget\nAWS Account 123456789012"} {
+		a, err := Transform(budgetEnvelope("AWS Budgets: x has exceeded your alert threshold", msg), Config{"service": "fallback"}, tagger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.Service != "fallback" || a.Environment != "Unknown" || a.AssignmentGroup != "" {
+			t.Errorf("alert = %+v", a)
+		}
+	}
+}
+
+// The lookup uses the topic's account when the message names none, and never runs for other alerts.
+func TestTransform_BudgetTagLookupKey(t *testing.T) {
+	tagger := &stubTagger{}
+	Transform(budgetEnvelope("AWS Budgets: team-ec2 is forecasted to exceed your alert threshold", "Your budget is forecasted to exceed."), Config{}, tagger)
+	Transform(budgetEnvelope("Something else", "disk almost full"), Config{}, tagger)
+	Transform(snsEnvelope(sampleAlarm(nil)), Config{}, tagger)
+	if len(tagger.calls) != 1 || tagger.calls[0] != "999988887777/team-ec2" {
+		t.Errorf("lookups = %v, want [999988887777/team-ec2]", tagger.calls)
 	}
 }
