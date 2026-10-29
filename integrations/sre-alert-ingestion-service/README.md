@@ -34,7 +34,7 @@ service never creates incidents and never touches alert-core's own tables.
   `critical` and `service_interruption`. Budgets have no `AlarmDescription`, so the budget's own
   tags `service`, `environment` and `assignment_group` (keys matched ignoring case) fill those
   fields instead, read with `budgets:ListTagsForResource` on the default AWS credential chain. A
-  failed lookup keeps the configured values, and the credentials can only read budgets in their
+  failed lookup keeps the configured service and environment, and the credentials can only read budgets in their
   own account. Any other plain-text SNS message is stored as `SNS Message Parse Error`.
 - **Backpressure.** Accepted-but-unfinished work is capped by both a queue size and a memory
   budget; past either limit, new webhooks get `503` immediately rather than queuing indefinitely.

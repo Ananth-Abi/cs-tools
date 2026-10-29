@@ -80,14 +80,18 @@ func fromBudget(subject, message string, base Alert, tagger BudgetTagFetcher) Al
 	return base
 }
 
-// tagValue reads a budget tag by key, ignoring case since AWS tag keys are often capitalised ("Service").
+// tagValue reads a budget tag by key: the exact key wins, else the lexically first case-insensitive match ("Service").
 func tagValue(tags map[string]string, key string) string {
-	for k, v := range tags {
-		if strings.EqualFold(k, key) {
-			return strings.TrimSpace(v)
+	if v, ok := tags[key]; ok {
+		return strings.TrimSpace(v)
+	}
+	match := ""
+	for k := range tags {
+		if strings.EqualFold(k, key) && (match == "" || k < match) {
+			match = k
 		}
 	}
-	return ""
+	return strings.TrimSpace(tags[match])
 }
 
 // budgetSummary is the "You requested that we alert you ..." sentence, or the whole message when it has none.

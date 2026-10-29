@@ -147,3 +147,18 @@ func TestTransform_BudgetTagLookupKey(t *testing.T) {
 		t.Errorf("lookups = %v, want [999988887777/team-ec2]", tagger.calls)
 	}
 }
+
+// AWS tag keys are case-sensitive, so a budget can carry both "service" and "Service"; the pick never varies.
+func TestTagValue_Deterministic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		if got := tagValue(map[string]string{"SERVICE": "c", "Service": "b", "service": "a"}, "service"); got != "a" {
+			t.Fatalf("exact key: got %q, want a", got)
+		}
+		if got := tagValue(map[string]string{"SERVICE": "c", "Service": "b"}, "service"); got != "c" {
+			t.Fatalf("case-insensitive: got %q, want c", got)
+		}
+	}
+	if got := tagValue(map[string]string{"owner": "x"}, "service"); got != "" {
+		t.Errorf("missing key: got %q", got)
+	}
+}
