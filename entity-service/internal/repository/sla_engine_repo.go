@@ -948,7 +948,22 @@ func slaPolicyRefColumnsPrefixed(alias string) string {
 // (sla_engine_repo_integration_test.go) are skipped unless
 // CASE_STATS_TEST_DSN is set, so this shipped with the engine registering
 // nothing at all. Fixed by dropping the unused argument and renumbering.
+// registration_lock serializes this exact (work_item_id, sla_policy_id) pair
+// before the NOT EXISTS checks below ever run -- without it, two concurrent
+// calls (RegisterClock has no transaction/row lock of its own; ReviseClocks
+// registers from inside a transaction, but a separate RegisterClock call
+// racing it is still possible) could both see no existing row and both
+// insert, leaving two active IN_PROGRESS clocks for one policy. pg_advisory_xact_lock
+// is released at the end of the current transaction -- for RegisterClock's
+// own un-transacted Exec call, Postgres' implicit per-statement transaction
+// is that scope, so the lock is held for exactly this INSERT's duration;
+// inside ReviseClocks' explicit transaction it's held until that commits.
+// Keyed on both ids (not just work_item_id) so two different policies for
+// the same work item never serialize against each other needlessly.
 const slaEngineRegisterClockQuery = `
+	WITH registration_lock AS (
+		SELECT pg_advisory_xact_lock(hashtextextended($1::text || '|' || $2::text, 0))
+	)
 	INSERT INTO sla (
 		id, created_on, updated_on, created_by, updated_by,
 		work_item_id, sla_policy_id, schedule, is_active, stage, start_on,
@@ -958,6 +973,7 @@ const slaEngineRegisterClockQuery = `
 	SELECT gen_random_uuid(), NOW(), NOW(), $3, $3,
 	       $1::uuid, $2::uuid, $6, TRUE, 'IN_PROGRESS'::sla_stage_enum, $7::timestamptz,
 	       $4::interval, 0, INTERVAL '0', $4::interval, FALSE, 'CSM'::sla_source_enum
+	FROM registration_lock
 	WHERE NOT EXISTS (
 		SELECT 1 FROM sla s
 		WHERE s.work_item_id = $1::uuid
