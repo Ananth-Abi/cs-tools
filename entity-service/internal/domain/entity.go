@@ -140,6 +140,18 @@ type CreateUserRequest struct {
 	LastName  string     `json:"lastName"`
 	Email     string     `json:"email"`
 	Roles     []UserRole `json:"roles"`
+	// SystemProvisioned, when true, attributes this create to the fixed
+	// SystemActor instead of the caller's own forwarded x-user-id-token
+	// email. Honored only when the caller is verified, through
+	// AccessService.ResolveScope, as apps/csm-portal/backend forwarding a
+	// real WSO2-domain user token (see UserService.CreateUser) -- this is
+	// what ensureUserProvisioned (that backend's own on-demand "user" row
+	// provisioning for a first-time worknote/escalation author) sets, so the
+	// row it creates is not self-attributed to the very person it is
+	// provisioning. Ignored, with the usual token-derived actor used
+	// instead, for any other caller -- it is never a caller-supplied actor
+	// override.
+	SystemProvisioned bool `json:"systemProvisioned,omitempty"`
 }
 
 // SearchUsersRequest is the input for a user search operation.
@@ -762,6 +774,10 @@ const (
 	SalesforceEntityOpportunity       = "Opportunity"
 	SalesforceEntityProject           = "Project__c"
 	SalesforceSyncActor               = "salesforce-sync"
+	// SystemActor is created_by/updated_by for a "user" row created on a
+	// caller's own behalf by the system rather than by a deliberate actor --
+	// see CreateUserRequest.SystemProvisioned.
+	SystemActor = "SYSTEM"
 	// PortalMembershipWriteActor is created_by/updated_by for a membership
 	// written by a portal rather than by the Salesforce ingest, so the two
 	// origins stay distinguishable in the audit columns even though they
