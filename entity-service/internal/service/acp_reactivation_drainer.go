@@ -48,8 +48,16 @@ type ProjectReactivationDrainer struct {
 	maxAttempts int
 }
 
-// NewProjectReactivationDrainer constructs the drainer.
+// projectReactivationDefaultInterval is the poll interval used when the one
+// given is not positive (time.NewTicker panics on it).
+const projectReactivationDefaultInterval = 5 * time.Second
+
+// NewProjectReactivationDrainer constructs the drainer. A non-positive
+// interval is replaced by projectReactivationDefaultInterval.
 func NewProjectReactivationDrainer(outbox repository.ACPReactivationOutbox, publisher EventPublisherService, interval time.Duration, maxAttempts int) *ProjectReactivationDrainer {
+	if interval <= 0 {
+		interval = projectReactivationDefaultInterval
+	}
 	return &ProjectReactivationDrainer{outbox: outbox, publisher: publisher, interval: interval, maxAttempts: maxAttempts}
 }
 
@@ -85,6 +93,11 @@ func (d *ProjectReactivationDrainer) DrainOnce(ctx context.Context) {
 		})
 		if err == nil {
 			continue
+		}
+		if ctx.Err() != nil {
+			// Shutting down: the notice stays queued, untouched, for the
+			// next run; recording a failure here would only fail too.
+			return
 		}
 		parked, recErr := d.outbox.RecordFailure(ctx, id, err.Error(), d.maxAttempts)
 		switch {

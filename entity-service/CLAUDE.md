@@ -989,12 +989,13 @@ stays off), and dry run unless `CSM_ACP_REOPEN_DRY_RUN=false`.
   Project / Opportunity ingest flags are on (it reads Salesforce itself). (2) **The daily check**,
   `POST /acp/reopen-check` (internal only; csm-scheduled-tasks' `acp_reopen_check` sub-cron calls it
   page by page): every project whose `suspension_process_state` still records an ACP suspension is
-  checked the same way. It catches what an event missed (lost, dead-lettered, or sent while the check
+  checked the same way (the caller calls again from `nextCursor` while `more` is true). It catches what an event missed (lost, dead-lettered, or sent while the check
   was off or in a dry run: switching the dry run off is followed by the next daily check reopening
   every "would reopen"), a reopen that failed, a project ACP suspended on data read just before a
   renewal arrived, and a project a person set back to Open (below). Body `{cursor?, limit?}` (limit
-  default 10, max 50); answer `{checked, reopened, finished, failed, failedProjectIds, nextCursor}`;
-  a page short of time stops early and returns where to resume.
+  default 10, max 50); answer `{checked, reopened, finished, failed, failedProjectIds, nextCursor,
+  more}`. A page short of time stops early, but only after its first project, so every call makes
+  progress whatever `REQUEST_TIMEOUT` is; `more` says whether to call again.
 - **A failure never fails the Salesforce event.** The ingest has already succeeded, so a reopen
   failure (Salesforce or the database) is logged at ERROR and left to the daily check; the event is
   acknowledged. An `Invoice__c` event first asks the database whether any project's invoice track is

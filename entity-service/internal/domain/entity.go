@@ -10243,7 +10243,8 @@ type ACPReopenCheckRequest struct {
 // every project looked at; Reopened those with a track set back to Open;
 // Finished those a person had already set back to Open, now finished
 // (Salesforce Open, the email queued); FailedProjectIDs those whose check
-// failed (the error is logged). NextCursor is "" once every project is done.
+// failed (the error is logged). More is true while projects are left: call
+// again with NextCursor as the cursor. More false means every project is done.
 type ACPReopenCheckResponse struct {
 	Checked          int      `json:"checked"`
 	Reopened         int      `json:"reopened"`
@@ -10251,4 +10252,5 @@ type ACPReopenCheckResponse struct {
 	Failed           int      `json:"failed"`
 	FailedProjectIDs []string `json:"failedProjectIds"`
 	NextCursor       string   `json:"nextCursor"`
+	More             bool     `json:"more"`
 }

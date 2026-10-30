@@ -556,7 +556,9 @@ func (a *ACPReopen) internalDomain() string {
 
 // acpCheckDefaultLimit and acpCheckMaxLimit bound one page of the daily
 // check; acpCheckTimeReserve is how much of the request's deadline is kept
-// back, so a page stops before a project's check would be cut off.
+// back, so a page stops before a project's check would be cut off. The first
+// project of a page is always checked, whatever the time left, so every call
+// makes progress even under a short REQUEST_TIMEOUT.
 const (
 	acpCheckDefaultLimit = 10
 	acpCheckMaxLimit     = 50
@@ -568,7 +570,8 @@ const (
 // would check it. It catches a reopen an event missed (lost, or sent while
 // the check was off or in a dry run), a reopen that failed, a project ACP
 // suspended on stale data, and a project a person set back to Open, which it
-// finishes. One page per call; the caller follows NextCursor.
+// finishes. One page per call; the caller calls again from NextCursor while
+// More is true.
 func (a *ACPReopen) CheckSuspendedProjects(ctx context.Context, req domain.ACPReopenCheckRequest) (domain.ACPReopenCheckResponse, error) {
 	resp := domain.ACPReopenCheckResponse{FailedProjectIDs: []string{}}
 	limit := req.Limit
@@ -588,13 +591,9 @@ func (a *ACPReopen) CheckSuspendedProjects(ctx context.Context, req domain.ACPRe
 		return resp, err
 	}
 	for i, p := range projects {
-		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < acpCheckTimeReserve {
+		if deadline, ok := ctx.Deadline(); ok && i > 0 && time.Until(deadline) < acpCheckTimeReserve {
 			// Out of time: the next call starts at the first project not done.
-			if i > 0 {
-				resp.NextCursor = projects[i-1].ID
-			} else {
-				resp.NextCursor = req.Cursor
-			}
+			resp.NextCursor, resp.More = projects[i-1].ID, true
 			return resp, nil
 		}
 		resp.Checked++
@@ -615,7 +614,7 @@ func (a *ACPReopen) CheckSuspendedProjects(ctx context.Context, req domain.ACPRe
 		}
 	}
 	if len(projects) == limit {
-		resp.NextCursor = projects[len(projects)-1].ID
+		resp.NextCursor, resp.More = projects[len(projects)-1].ID, true
 	}
 	return resp, nil
 }

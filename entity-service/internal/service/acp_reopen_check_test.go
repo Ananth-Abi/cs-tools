@@ -242,7 +242,7 @@ func TestACPReopenCheck_ReopensAndFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Checked != 2 || resp.Reopened != 1 || resp.Finished != 1 || resp.Failed != 0 || resp.NextCursor != "" {
+	if resp.Checked != 2 || resp.Reopened != 1 || resp.Finished != 1 || resp.Failed != 0 || resp.More {
 		t.Errorf("response = %+v", resp)
 	}
 	if acpLabel(missed.ClosureState) != "OPEN" {
@@ -336,7 +336,7 @@ func TestACPReopenCheck_Pages(t *testing.T) {
 			t.Fatal(err)
 		}
 		seen += resp.Checked
-		if resp.NextCursor == "" {
+		if !resp.More {
 			break
 		}
 		cursor = resp.NextCursor
@@ -349,18 +349,32 @@ func TestACPReopenCheck_Pages(t *testing.T) {
 	}
 }
 
-// A page that runs short of time stops before the next project and hands
-// back a cursor that resumes there.
-func TestACPReopenCheck_StopsBeforeTheDeadline(t *testing.T) {
-	repo := &acpFakeRepo{projects: map[string]*domain.ACPReopenProject{acpTestSfID: acpSuspendedProject()}}
+// A page that runs short of time still checks its first project (so every
+// call makes progress), then stops and says there is more, with a cursor
+// that resumes at the next project. A stopped page is never reported as the
+// end.
+func TestACPReopenCheck_StopsBeforeTheDeadlineButAlwaysMakesProgress(t *testing.T) {
+	first := acpSuspendedProject()
+	second := acpSuspendedProject()
+	second.ID, second.SfID = "e3e87599-1bc7-6650-182c-0dc5604bcb69", acpOtherSfID
+	repo := &acpFakeRepo{projects: map[string]*domain.ACPReopenProject{acpTestSfID: first, acpOtherSfID: second}}
+	checker := newACPChecker(repo, acpRenewedSF(), func(r *ACPReopen) { r.DryRun = true })
+
 	ctx, cancel := context.WithTimeout(context.Background(), acpCheckTimeReserve/2)
 	defer cancel()
-	resp, err := newACPChecker(repo, acpRenewedSF(), nil).CheckSuspendedProjects(ctx, domain.ACPReopenCheckRequest{})
+	resp, err := checker.CheckSuspendedProjects(ctx, domain.ACPReopenCheckRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Checked != 0 || resp.NextCursor != "" {
-		t.Errorf("response = %+v, want nothing checked and a resume from the start", resp)
+	if resp.Checked != 1 || !resp.More || resp.NextCursor != first.ID {
+		t.Fatalf("response = %+v, want one checked, more, resume after %s", resp, first.ID)
+	}
+	resp, err = checker.CheckSuspendedProjects(ctx, domain.ACPReopenCheckRequest{Cursor: resp.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Checked != 1 || resp.More {
+		t.Errorf("second call = %+v, want the last project and no more", resp)
 	}
 }
 
@@ -415,6 +429,30 @@ func (p *acpFlakyPublisher) Publish(_ context.Context, t events.Type, id string,
 	return nil
 }
 func (p *acpFlakyPublisher) Close() {}
+
+// A shutdown during a publish leaves the notice queued, with no failure
+// recorded; a non-positive interval falls back to the default.
+func TestProjectReactivationDrainer_ShutdownRecordsNoFailure(t *testing.T) {
+	outbox := &acpFakeOutbox{pending: []int64{1}, payloads: map[int64]json.RawMessage{1: json.RawMessage(`{}`)},
+		failures: map[int64]int{}, done: map[int64]bool{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	pub := &acpCancellingPublisher{cancel: cancel}
+	NewProjectReactivationDrainer(outbox, pub, time.Second, 3).DrainOnce(ctx)
+	if outbox.failures[1] != 0 || outbox.done[1] {
+		t.Errorf("failures=%d done=%v, want the notice left queued as it was", outbox.failures[1], outbox.done[1])
+	}
+	if d := NewProjectReactivationDrainer(outbox, pub, 0, 3); d.interval != projectReactivationDefaultInterval {
+		t.Errorf("a zero interval was kept: %s", d.interval)
+	}
+}
+
+type acpCancellingPublisher struct{ cancel context.CancelFunc }
+
+func (p *acpCancellingPublisher) Publish(ctx context.Context, _ events.Type, _ string, _ json.RawMessage) error {
+	p.cancel()
+	return ctx.Err()
+}
+func (p *acpCancellingPublisher) Close() {}
 
 // A queued notice is published once Event Hub takes it; until then it is
 // retried, and parked after maxAttempts.
