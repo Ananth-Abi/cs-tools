@@ -58,7 +58,9 @@ type Clients struct {
 // Config is the ACP_* configuration, read in cmd/server/main.go.
 type Config struct {
 	// DryRun decides, sends and logs, but writes nothing to CSM or
-	// Salesforce. ACP_DRY_RUN, default true.
+	// Salesforce. ACP_DRY_RUN, default true. It does not stop emails: with
+	// EmailEnabled the notices are sent, and because no notice is recorded
+	// they are sent again on every run.
 	DryRun bool
 	// EmailEnabled sends notices for real; when false they are only logged.
 	// ACP_EMAIL_SEND_ENABLED (default false) and ALERTS_ENABLED together.

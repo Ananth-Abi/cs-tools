@@ -252,7 +252,7 @@ treated as unset, except where noted. All example values are placeholders.
 | `USAGE_ROLLUP_ENABLED` | No | `false` | Registers `usage_rollup_daily` and `usage_rollup_monthly`. Enable only once ServiceNow's usage aggregation jobs and csm-sync-service's mirroring of the same tables are off, otherwise the rows are fought over. | `true` |
 | `USAGE_ROLLUP_DAILY_LOOKBACK_DAYS` | No | `2` | How many days before today the daily rollup rebuilds each night. | `3` |
 | `ACP_ENABLED` | No | `false` | Registers `acp_closure`. No other `ACP_*` setting is read while false. This component's client id must be in entity-service's `M2M_CLIENT_IDS`. | `true` |
-| `ACP_DRY_RUN` | No | `true` | Decide and log, write nothing to CSM or Salesforce. A malformed value is true. A `TRYOUT_TASK=acp_closure` without `ACP_TEST_PROJECT_ID` is always a dry run. | `false` |
+| `ACP_DRY_RUN` | No | `true` | Decide and log, write nothing to CSM or Salesforce. A malformed value is true. It does not stop emails: with `ACP_EMAIL_SEND_ENABLED=true` the notices are sent, and since nothing is recorded they are sent again on every run. A `TRYOUT_TASK=acp_closure` without `ACP_TEST_PROJECT_ID` is always a dry run. | `false` |
 | `ACP_EMAIL_SEND_ENABLED` | No | `false` | Sends the notices for real (also needs `ALERTS_ENABLED` and `EMAIL_BASE_URL`); false logs them. A `debug` list for `acp_closure` in `SUB_CRON_RECIPIENTS` redirects every notice. | `true` |
 | `ACP_ALLOW_NON_WSO2_RECIPIENTS` | No | `false` | Lets notices reach addresses outside `@wso2.com`. Production only. | `true` |
 | `ACP_STANDING_CC_RECIPIENTS` | No | empty | Comma-separated distribution lists added to every notice. Leave empty outside production. | `lifecycle@example.com,billing@example.com` |

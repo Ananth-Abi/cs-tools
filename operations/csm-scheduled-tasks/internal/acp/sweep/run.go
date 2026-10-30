@@ -52,10 +52,16 @@ const (
 // (NewSalesforceDetails reads it live from Salesforce). A details failure is
 // a failure of that project, like any other. A single project's processProject
 // failure is logged and recorded in Result.Failures, and the sweep
-// continues — one project's problem must never block the rest. A failure
-// fetching a page itself is fatal for the whole run (there is no way to
-// know what projects exist beyond it) and is returned as a non-nil error;
-// Result still reflects whatever was evaluated before that point.
+// continues — one project's problem must never block the rest.
+//
+// The open projects are all listed first (listOpenProjects) and only then
+// evaluated. Evaluating page by page would skip projects: a suspension moves
+// a project out of the Open list the pages are cut from, so the next offset
+// would pass over as many projects as the previous page suspended (they would
+// be evaluated a weekday late), and the shrinking total could end the paging
+// early. A failure fetching a page is fatal for the whole run (there is no way
+// to know what projects exist beyond it) and is returned as a non-nil error
+// before any project is evaluated, so nothing is sent or written by that run.
 //
 // If projectID is non-empty, Run is scoped to exactly that one project — it
 // fetches it directly via GetProject and never calls SearchProjects at all.
@@ -100,6 +106,32 @@ func Run(ctx context.Context, reader sweepReader, details DetailSource, updater 
 		return result, nil
 	}
 
+	projects, err := listOpenProjects(ctx, reader)
+	if err != nil {
+		return result, err
+	}
+
+	for _, proj := range projects {
+		if skipExcluded(ctx, proj.ID, excludedProjectIDs, &result) {
+			continue
+		}
+
+		result.ProjectsEvaluated++
+		evaluate(ctx, details, updater, ntf, now, proj, &result)
+	}
+
+	return result, nil
+}
+
+// listOpenProjects pages through /projects/search for every Open project,
+// writing nothing while it does, so the list is not moved by the run's own
+// suspensions (see Run). A project returned on two pages (the upstream's
+// order changing under a concurrent write) is kept once. It stops on an empty
+// page, hasMore: false, or reaching the reported total, and errors when the
+// page cap is reached.
+func listOpenProjects(ctx context.Context, reader sweepReader) ([]project, error) {
+	var projects []project
+	seen := map[string]bool{}
 	offset, pages := 0, 0
 	for {
 		reqBody, err := json.Marshal(searchProjectsRequest{
@@ -109,26 +141,27 @@ func Run(ctx context.Context, reader sweepReader, details DetailSource, updater 
 			SortOrder:     "asc",
 		})
 		if err != nil {
-			return result, fmt.Errorf("sweep: build search request: %w", err)
+			return nil, fmt.Errorf("sweep: build search request: %w", err)
 		}
 
 		raw, err := reader.SearchProjects(ctx, reqBody)
 		if err != nil {
-			return result, fmt.Errorf("sweep: search projects at offset %d: %w", offset, err)
+			return nil, fmt.Errorf("sweep: search projects at offset %d: %w", offset, err)
 		}
 
 		var page searchProjectsResponse
 		if err := json.Unmarshal(raw, &page); err != nil {
-			return result, fmt.Errorf("sweep: parse search response at offset %d: %w", offset, err)
+			return nil, fmt.Errorf("sweep: parse search response at offset %d: %w", offset, err)
 		}
 
+		listed := 0
 		for _, proj := range page.Projects {
-			if skipExcluded(ctx, proj.ID, excludedProjectIDs, &result) {
+			listed++
+			if proj.ID != "" && seen[proj.ID] {
 				continue
 			}
-
-			result.ProjectsEvaluated++
-			evaluate(ctx, details, updater, ntf, now, proj, &result)
+			seen[proj.ID] = true
+			projects = append(projects, proj)
 		}
 
 		if len(page.Projects) == 0 {
@@ -139,20 +172,19 @@ func Run(ctx context.Context, reader sweepReader, details DetailSource, updater 
 			break
 		}
 
-		if page.Total > 0 && result.ProjectsEvaluated+result.ProjectsExcluded >= page.Total {
+		if page.Total > 0 && offset+listed >= page.Total {
 			slog.WarnContext(ctx, "sweep: pagination hit the Total bound while hasMore was still true",
-				"total", page.Total, "projectsEvaluated", result.ProjectsEvaluated, "projectsExcluded", result.ProjectsExcluded)
+				"total", page.Total, "projectsListed", len(projects))
 			break
 		}
 
 		pages++
 		if pages >= maxProjectPages {
-			return result, fmt.Errorf("sweep: project search still reports more pages after %d pages; stopping", maxProjectPages)
+			return nil, fmt.Errorf("sweep: project search still reports more pages after %d pages; stopping", maxProjectPages)
 		}
 		offset += pageSize
 	}
-
-	return result, nil
+	return projects, nil
 }
 
 // skipExcluded reports whether id is in excludedProjectIDs, logging and

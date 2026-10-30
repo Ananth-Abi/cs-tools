@@ -1147,6 +1147,9 @@ func acpTask(entityServiceBaseURL, oauthTokenURL, oauthClientID, oauthClientSecr
 		TestProjectID:          strings.TrimSpace(os.Getenv("ACP_TEST_PROJECT_ID")),
 		ExcludedProjectIDs:     acp.ParseProjectIDs(os.Getenv("ACP_EXCLUDED_PROJECT_IDS")),
 	}
+	if cfg.DryRun && cfg.EmailEnabled {
+		slog.Warn("ACP_DRY_RUN and ACP_EMAIL_SEND_ENABLED are both true: notices are sent for real but not recorded, so the same notices are sent again on every run")
+	}
 	if cfg.EmailEnabled && emailBaseURL == "" {
 		slog.Error("ACP_EMAIL_SEND_ENABLED is true but EMAIL_BASE_URL is not set; refusing to start since no notice could be sent")
 		os.Exit(1)

@@ -446,7 +446,10 @@ both places.
   event shows it renewed or paid, and csm-notification-service sends the "Back to Open state"
   email (each one's CLAUDE.md, "ACP reopen").
 - **Dry run by default** (`ACP_DRY_RUN`, unset or malformed is true): decide and log, write
-  nothing. Notices are only logged unless `ACP_EMAIL_SEND_ENABLED=true` and `ALERTS_ENABLED` is
+  nothing to CSM or Salesforce. **It does not stop emails**: with `ACP_EMAIL_SEND_ENABLED=true`
+  the notices are sent for real, and because the dry run records no notice in CSM the same
+  notices are sent again on every run (startup logs a warning for that combination; test it
+  with a `debug` list). Notices are only logged unless `ACP_EMAIL_SEND_ENABLED=true` and `ALERTS_ENABLED` is
   true (and then `EMAIL_BASE_URL` is required at startup). Addresses outside `@wso2.com` are dropped
   unless `ACP_ALLOW_NON_WSO2_RECIPIENTS=true` (production only). `ACP_STANDING_CC_RECIPIENTS` adds
   the distribution lists to every notice; leave it empty outside production.

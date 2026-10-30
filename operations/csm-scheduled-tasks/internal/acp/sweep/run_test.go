@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -146,7 +147,7 @@ func TestRun_BoundsIterationsByTotalWhenHasMoreNeverFalse(t *testing.T) {
 				if i > 0 {
 					projects = append(projects, ',')
 				}
-				projects = append(projects, []byte(`{"id": "p", "endDate": null}`)...)
+				projects = append(projects, []byte(fmt.Sprintf(`{"id": "p%d-%d", "endDate": null}`, calls, i))...)
 			}
 			return []byte(`{
 				"projects": [` + string(projects) + `],
@@ -382,5 +383,95 @@ func TestRun_StopsAtMaxProjectPagesWhenUpstreamNeverEnds(t *testing.T) {
 	}
 	if calls != maxProjectPages {
 		t.Errorf("SearchProjects called %d times, want %d (the page cap)", calls, maxProjectPages)
+	}
+}
+
+// suspendingDetails stands in for the run's own suspensions: every project it
+// is asked about leaves the Open list the search pages are cut from, as a
+// suspended project does. It records each project it saw and fails it, so no
+// write is attempted.
+type suspendingDetails struct {
+	open *[]string
+	seen map[string]int
+}
+
+func (d suspendingDetails) forProject(ctx context.Context, proj project) (project, entityReader, error) {
+	d.seen[proj.ID]++
+	for i, id := range *d.open {
+		if id == proj.ID {
+			*d.open = append((*d.open)[:i], (*d.open)[i+1:]...)
+			break
+		}
+	}
+	return proj, nil, errors.New("stand-in: suspended")
+}
+
+// TestRun_SuspensionsDoNotMakeTheSweepSkipProjects: the search lists Open
+// projects only, so a project suspended by the run leaves the list. Paging
+// and evaluating together would then skip one project per suspension on the
+// next page, and stop early on the shrinking total. Every project open when
+// the run started must be evaluated exactly once.
+func TestRun_SuspensionsDoNotMakeTheSweepSkipProjects(t *testing.T) {
+	const n = 3*pageSize + 7
+	open := make([]string, n)
+	for i := range open {
+		open[i] = fmt.Sprintf("p%03d", i)
+	}
+	reader := &mockEntityReader{
+		searchProjectsFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			var req searchProjectsRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("parse search request: %v", err)
+			}
+			from := min(req.Pagination.Offset, len(open))
+			to := min(from+req.Pagination.Limit, len(open))
+			var rows []map[string]any
+			for _, id := range open[from:to] {
+				rows = append(rows, map[string]any{"id": id, "endDate": nil})
+			}
+			return json.Marshal(map[string]any{
+				"projects": rows, "total": len(open), "limit": req.Pagination.Limit,
+				"offset": req.Pagination.Offset, "hasMore": to < len(open),
+			})
+		},
+	}
+	details := suspendingDetails{open: &open, seen: map[string]int{}}
+
+	result, err := Run(context.Background(), reader, details, &mockProjectUpdater{}, &mockNotifier{}, time.Now(), "", nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if result.ProjectsEvaluated != n {
+		t.Errorf("ProjectsEvaluated = %d, want %d", result.ProjectsEvaluated, n)
+	}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("p%03d", i)
+		if details.seen[id] != 1 {
+			t.Errorf("project %s evaluated %d times, want 1", id, details.seen[id])
+		}
+	}
+}
+
+// TestRun_APageFetchFailureEvaluatesNothing: the list is complete before any
+// project is evaluated, so a failure on a later page sends and writes nothing.
+func TestRun_APageFetchFailureEvaluatesNothing(t *testing.T) {
+	calls := 0
+	reader := &mockEntityReader{
+		searchProjectsFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			calls++
+			if calls == 2 {
+				return nil, errors.New("upstream down")
+			}
+			return []byte(`{"projects":[{"id":"p1","endDate":null}],"total":2,"hasMore":true}`), nil
+		},
+	}
+	details := suspendingDetails{open: &[]string{}, seen: map[string]int{}}
+
+	result, err := Run(context.Background(), reader, details, &mockProjectUpdater{}, &mockNotifier{}, time.Now(), "", nil)
+	if err == nil {
+		t.Fatal("Run() error = nil, want the page fetch failure")
+	}
+	if result.ProjectsEvaluated != 0 || len(details.seen) != 0 {
+		t.Errorf("evaluated %d projects (%v) before the list was complete, want none", result.ProjectsEvaluated, details.seen)
 	}
 }
