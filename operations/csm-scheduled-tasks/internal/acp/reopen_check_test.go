@@ -49,14 +49,15 @@ func (f *fakeReopenChecker) ReopenCheck(_ context.Context, body []byte) ([]byte,
 
 func TestRunReopenCheck_FollowsTheCursorToTheEnd(t *testing.T) {
 	f := &fakeReopenChecker{pages: []reopenCheckResponse{
-		{Checked: 5, Reopened: 1, NextCursor: "p5"},
-		{Checked: 5, Finished: 1, NextCursor: "p10"},
+		{Checked: 5, Reopened: 1, NextCursor: "p5", More: true},
+		{Checked: 1, Finished: 1, NextCursor: "p6", More: true}, // stopped early, short of time
+		{Checked: 4, NextCursor: "p10", More: true},
 		{Checked: 2},
 	}}
 	if err := RunReopenCheck(f)(context.Background()); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if strings.Join(f.cursors, ",") != ",p5,p10" {
+	if strings.Join(f.cursors, ",") != ",p5,p6,p10" {
 		t.Errorf("cursors = %q", f.cursors)
 	}
 	for _, l := range f.limits {
@@ -68,7 +69,7 @@ func TestRunReopenCheck_FollowsTheCursorToTheEnd(t *testing.T) {
 
 func TestRunReopenCheck_FailuresFailTheRunByProjectID(t *testing.T) {
 	f := &fakeReopenChecker{pages: []reopenCheckResponse{
-		{Checked: 5, Failed: 1, FailedProjectIDs: []string{"p3"}, NextCursor: "p5"},
+		{Checked: 5, Failed: 1, FailedProjectIDs: []string{"p3"}, NextCursor: "p5", More: true},
 		{Checked: 1, Failed: 1, FailedProjectIDs: []string{"p6"}},
 	}}
 	err := RunReopenCheck(f)(context.Background())
@@ -90,7 +91,7 @@ func TestRunReopenCheck_StopsOnAnErrorOrNoProgress(t *testing.T) {
 	if err := RunReopenCheck(f)(context.Background()); err != nil {
 		t.Errorf("an empty first page: err = %v", err)
 	}
-	f = &fakeReopenChecker{pages: []reopenCheckResponse{{Checked: 3, NextCursor: "p3"}, {Checked: 0, NextCursor: "p3"}}}
+	f = &fakeReopenChecker{pages: []reopenCheckResponse{{Checked: 3, NextCursor: "p3", More: true}, {Checked: 0, NextCursor: "p3", More: true}}}
 	if err := RunReopenCheck(f)(context.Background()); err == nil || !strings.Contains(err.Error(), "no progress") {
 		t.Errorf("a page that made no progress: err = %v", err)
 	}

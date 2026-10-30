@@ -51,10 +51,12 @@ type reopenCheckResponse struct {
 	Failed           int      `json:"failed"`
 	FailedProjectIDs []string `json:"failedProjectIds"`
 	NextCursor       string   `json:"nextCursor"`
+	More             bool     `json:"more"`
 }
 
 // RunReopenCheck returns the acp_reopen_check handler: entity-service's daily
-// safety net for ACP suspensions, page by page until it says it is done.
+// safety net for ACP suspensions, page by page while entity-service says
+// there is more (a page short of time stops early with more set).
 // entity-service reopens what an event missed and finishes a project a person
 // set back to Open (its CLAUDE.md, "ACP reopen"); this only drives it. A run
 // in which a project failed returns an error naming it (the engine alerts and
@@ -84,10 +86,10 @@ func RunReopenCheck(client ReopenChecker) func(ctx context.Context) error {
 			total.Finished += r.Finished
 			total.Failed += r.Failed
 			total.FailedProjectIDs = append(total.FailedProjectIDs, r.FailedProjectIDs...)
-			if r.NextCursor == "" {
+			if !r.More && r.NextCursor == "" {
 				break
 			}
-			if r.NextCursor == cursor && r.Checked == 0 {
+			if r.Checked == 0 && (r.NextCursor == cursor || r.NextCursor == "") {
 				return fmt.Errorf("acp reopen check: no progress after %q (entity-service ran out of time before the first project)", cursor)
 			}
 			cursor = r.NextCursor

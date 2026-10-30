@@ -482,8 +482,9 @@ both places.
 
 `acp.RunReopenCheck`, registered as **`acp_reopen_check`** (default `30 3 * * *`, 09:00 Colombo every
 day, half an hour before `acp_closure`; TZ=UTC caveat as above), drives entity-service's daily safety
-net for ACP suspensions: `POST /acp/reopen-check`, `{cursor, limit: 5}`, page after page until
-`nextCursor` is empty. entity-service checks every project ACP's record still shows suspended,
+net for ACP suspensions: `POST /acp/reopen-check`, `{cursor, limit: 5}`, page after page while
+the answer says `more` (a page short of time stops early, after at least one project, with `more`
+set). entity-service checks every project ACP's record still shows suspended,
 reopens the ones whose renewal or payment an event missed, and finishes a project a person set back
 to Open (Salesforce Open, the "Back to Open state" email); see its CLAUDE.md, "ACP reopen". This task
 decides nothing itself. **Off unless `ACP_REOPEN_CHECK_ENABLED=true`**, and it needs entity-service
