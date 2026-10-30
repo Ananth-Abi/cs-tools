@@ -16,11 +16,15 @@
 
 package service
 
-// The Account Closure Process's own rules, copied from
-// integrations/acp-closure-service so the reopen check reopens a track exactly
-// when that service would no longer suspend it. Keep the two copies in step:
-// a rule changed in one and not the other makes the sweep suspend a project
-// the reopen check then reopens, or the reverse.
+// The Account Closure Process's own rules, copied from ACP
+// (operations/csm-scheduled-tasks/internal/acp, the acp_closure sub-cron) so
+// the reopen check reopens a track exactly when ACP would no longer suspend
+// it. Keep the two copies in step: a rule changed in one and not the other
+// makes ACP suspend a project every day and this check reopen it, with a
+// suspension notice and a "Back to Open state" email each time.
+// testdata/acp_rules_parity.json holds the cases both copies must agree on:
+// TestACPRulesParity runs them here, and ACP's own parity tests run the same
+// file against its rules.
 //
 //   - days: closure/decide.go daysBetween
 //   - invoices: sweep/invoice_resolve.go eligibleOpportunity, eligibleInvoice,
@@ -46,7 +50,7 @@ const (
 	acpInvoiceSection = "based_on_due_invoices"
 )
 
-// acpSuspendEventType is the event_type ACP (and the ServiceNow process before
+// acpSuspendEventType is the event_type ACP (and the previous process before
 // it) stores in a track's section when it suspends the project on that track.
 // It is how the reopen check tells a project ACP suspended from one somebody
 // suspended by hand: a manual suspension writes no such record.
@@ -153,10 +157,13 @@ var acpExcludedInvoiceClassifications = map[string]bool{"PP": true, "CO": true, 
 const acpAutoCreatedPSInvoiceName = "Auto Created PS"
 
 // acpOpportunityCounts reports whether an opportunity's invoices count: stage
-// "50 - Closed Won" and a EULA that is set and is not "Customer contract".
+// "50 - Closed Won" and a EULA that is present and is not "Customer contract"
+// (sweep eligibleOpportunity). An empty EULA text counts, as in ACP: were it
+// skipped here, ACP would suspend on its invoices and this check reopen the
+// project every day.
 func acpOpportunityCounts(stage, eulaVersion *string) bool {
 	return stage != nil && *stage == acpClosedWonStage &&
-		eulaVersion != nil && strings.TrimSpace(*eulaVersion) != "" && *eulaVersion != acpCustomerContractEULA
+		eulaVersion != nil && *eulaVersion != acpCustomerContractEULA
 }
 
 // acpEULAVersionPattern and acpEULAVersionDecimal give the EULA version as a

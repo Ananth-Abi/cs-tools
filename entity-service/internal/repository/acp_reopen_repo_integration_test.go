@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -135,7 +136,7 @@ func TestACPReopenRepoIntegration_ReopenWritesAndRecomputes(t *testing.T) {
 			seen = cur
 			return domain.ACPReopenWrite{ReopenEndDate: true, SuspensionProcessState: newBlob}, true, nil
 		},
-		func(_ context.Context, o domain.ACPReopenOutcome) error { committedWith = o; return nil })
+		func(_ context.Context, o domain.ACPReopenOutcome) error { committedWith = o; return nil }, nil)
 	if err != nil || !done {
 		t.Fatalf("Reopen: done=%v err=%v", done, err)
 	}
@@ -166,7 +167,7 @@ func TestACPReopenRepoIntegration_OtherTrackKeepsTheProjectSuspended(t *testing.
 		func(cur domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
 			return domain.ACPReopenWrite{ReopenEndDate: true, SuspensionProcessState: cur.SuspensionProcessState}, true, nil
 		},
-		func(_ context.Context, o domain.ACPReopenOutcome) error { called = true; return nil })
+		func(_ context.Context, o domain.ACPReopenOutcome) error { called = true; return nil }, nil)
 	if err != nil || !done || !called {
 		t.Fatalf("Reopen: done=%v called=%v err=%v", done, called, err)
 	}
@@ -189,7 +190,7 @@ func TestACPReopenRepoIntegration_BeforeCommitFailureRollsBack(t *testing.T) {
 		func(cur domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
 			return domain.ACPReopenWrite{ReopenEndDate: true, SuspensionProcessState: json.RawMessage(`{"x":1}`)}, true, nil
 		},
-		func(context.Context, domain.ACPReopenOutcome) error { return refused })
+		func(context.Context, domain.ACPReopenOutcome) error { return refused }, nil)
 	if !errors.Is(err, refused) || done {
 		t.Fatalf("Reopen: done=%v err=%v, want the beforeCommit error", done, err)
 	}
@@ -212,7 +213,7 @@ func TestACPReopenRepoIntegration_NothingToWrite(t *testing.T) {
 		func(domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
 			return domain.ACPReopenWrite{}, false, nil
 		},
-		func(context.Context, domain.ACPReopenOutcome) error { called = true; return nil })
+		func(context.Context, domain.ACPReopenOutcome) error { called = true; return nil }, nil)
 	if err != nil || done || called {
 		t.Fatalf("done=%v called=%v err=%v, want nothing", done, called, err)
 	}
@@ -225,8 +226,157 @@ func TestACPReopenRepoIntegration_NothingToWrite(t *testing.T) {
 		func(domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
 			t.Error("plan called for a project that does not exist")
 			return domain.ACPReopenWrite{}, false, nil
-		}, nil)
+		}, nil, nil)
 	if err != nil || done {
 		t.Errorf("unknown project: done=%v err=%v", done, err)
+	}
+}
+
+// The notice is queued in the same transaction as the reopen: kept with a
+// committed reopen, gone with a rolled-back one.
+func TestACPReopenRepoIntegration_NoticeIsQueuedWithTheReopen(t *testing.T) {
+	pool := acpReopenPool(t)
+	ctx := context.Background()
+	clean := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM event_outbox WHERE entity_type = $1 AND entity_id = $2`,
+			repository.ACPReactivationOutboxEntityType, acpReopenTestProjectID); err != nil {
+			t.Fatalf("clean outbox: %v", err)
+		}
+	}
+	clean()
+	t.Cleanup(clean)
+	countQueued := func() int {
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM event_outbox WHERE entity_type = $1 AND entity_id = $2 AND published_on IS NULL`,
+			repository.ACPReactivationOutboxEntityType, acpReopenTestProjectID).Scan(&n); err != nil {
+			t.Fatalf("count outbox: %v", err)
+		}
+		return n
+	}
+	repo := repository.NewACPReopenRepository(repository.NewScoped(pool))
+	plan := func(domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
+		return domain.ACPReopenWrite{ReopenEndDate: true, SuspensionProcessState: json.RawMessage(`{"based_on_subscription_end_date":{"event_type":"open"}}`)}, true, nil
+	}
+	notice := func(o domain.ACPReopenOutcome) (json.RawMessage, error) {
+		return json.RawMessage(`{"projectId":"` + acpReopenTestProjectID + `"}`), nil
+	}
+
+	seedACPReopenProject(t, pool, "CLOSED", "OPEN", `{"based_on_subscription_end_date": {"event_type": "suspend"}}`)
+	if _, _, err := repo.Reopen(ctx, acpReopenTestProjectID, plan,
+		func(context.Context, domain.ACPReopenOutcome) error { return errors.New("salesforce refused") }, notice); err == nil {
+		t.Fatal("a beforeCommit failure was not returned")
+	}
+	if n := countQueued(); n != 0 {
+		t.Errorf("a rolled-back reopen left %d queued notices", n)
+	}
+	if _, done, err := repo.Reopen(ctx, acpReopenTestProjectID, plan, nil, notice); err != nil || !done {
+		t.Fatalf("Reopen: done=%v err=%v", done, err)
+	}
+	if n := countQueued(); n != 1 {
+		t.Errorf("queued notices = %d, want 1", n)
+	}
+
+	// The drainer's side: publish, failure, park.
+	outbox := repository.NewACPReactivationOutbox(repository.NewScoped(pool))
+	ids, err := outbox.Pending(ctx, 1000)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	var id int64
+	for _, candidate := range ids {
+		var entity string
+		_ = pool.QueryRow(ctx, `SELECT entity_id::text FROM event_outbox WHERE id = $1`, candidate).Scan(&entity)
+		if entity == acpReopenTestProjectID {
+			id = candidate
+		}
+	}
+	if id == 0 {
+		t.Fatal("the queued notice is not pending")
+	}
+	if _, err := outbox.Process(ctx, id, func(context.Context, string, json.RawMessage) error { return errors.New("event hub down") }); err == nil {
+		t.Fatal("a publish failure was not returned")
+	}
+	if parked, err := outbox.RecordFailure(ctx, id, "event hub down", 2); err != nil || parked {
+		t.Fatalf("first failure: parked=%v err=%v", parked, err)
+	}
+	if n := countQueued(); n != 1 {
+		t.Errorf("a failed publish removed the notice: queued = %d", n)
+	}
+	var gotProject string
+	var gotPayload json.RawMessage
+	if processed, err := outbox.Process(ctx, id, func(_ context.Context, projectID string, payload json.RawMessage) error {
+		gotProject, gotPayload = projectID, payload
+		return nil
+	}); err != nil || !processed {
+		t.Fatalf("Process: processed=%v err=%v", processed, err)
+	}
+	if gotProject != acpReopenTestProjectID || !strings.Contains(string(gotPayload), acpReopenTestProjectID) {
+		t.Errorf("published %s %s", gotProject, gotPayload)
+	}
+	if n := countQueued(); n != 0 {
+		t.Errorf("a published notice is still queued: %d", n)
+	}
+}
+
+// SectionsOnly rewrites the record with no track change: the daily check
+// finishing a project a person set back to Open.
+func TestACPReopenRepoIntegration_SectionsOnly(t *testing.T) {
+	pool := acpReopenPool(t)
+	seedACPReopenProject(t, pool, "OPEN", "OPEN", `{"based_on_subscription_end_date": {"event_type": "suspend"}}`)
+	repo := repository.NewACPReopenRepository(repository.NewScoped(pool))
+	outcome, done, err := repo.Reopen(context.Background(), acpReopenTestProjectID,
+		func(domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error) {
+			return domain.ACPReopenWrite{SectionsOnly: true, SuspensionProcessState: json.RawMessage(`{"based_on_subscription_end_date":{"event_type":"open"}}`)}, true, nil
+		}, nil, nil)
+	if err != nil || !done || !outcome.Open {
+		t.Fatalf("Reopen: done=%v open=%v err=%v", done, outcome.Open, err)
+	}
+	end, _, overall, by, blob := readACPReopenRow(t, pool)
+	if end != "OPEN" || overall != "OPEN" || by != domain.ACPReopenActor || !strings.Contains(string(blob), `"open"`) {
+		t.Errorf("row = end %s overall %s by %s blob %s", end, overall, by, blob)
+	}
+}
+
+// The two queries the event pre-filter and the daily check read.
+func TestACPReopenRepoIntegration_SuspendedListings(t *testing.T) {
+	pool := acpReopenPool(t)
+	ctx := context.Background()
+	repo := repository.NewACPReopenRepository(repository.NewScoped(pool))
+	listed := func() bool {
+		after := ""
+		for {
+			page, err := repo.ListACPNotedProjects(ctx, after, 50)
+			if err != nil {
+				t.Fatalf("ListACPNotedProjects: %v", err)
+			}
+			for _, p := range page {
+				if p.ID == acpReopenTestProjectID {
+					return true
+				}
+			}
+			if len(page) < 50 {
+				return false
+			}
+			after = page[len(page)-1].ID
+		}
+	}
+
+	seedACPReopenProject(t, pool, "OPEN", "SUSPENDED", `{"based_on_due_invoices": {"event_type": "suspend"}}`)
+	if found, err := repo.AnyACPSuspendedInvoiceTrack(ctx); err != nil || !found {
+		t.Errorf("AnyACPSuspendedInvoiceTrack = %v, %v, want true", found, err)
+	}
+	if !listed() {
+		t.Error("an ACP-suspended project is not listed for the daily check")
+	}
+
+	// Suspended by hand: no ACP record, so not listed.
+	seedACPReopenProject(t, pool, "OPEN", "SUSPENDED", `{"based_on_due_invoices": {"event_type": "7_days_notice"}}`)
+	if listed() {
+		t.Error("a project suspended by hand is listed")
+	}
+	// A record that is not an object is never a match.
+	seedACPReopenProject(t, pool, "OPEN", "SUSPENDED", `"suspend"`)
+	if listed() {
+		t.Error("a malformed record is listed")
 	}
 }

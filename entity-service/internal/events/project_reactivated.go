@@ -42,7 +42,7 @@ type ProjectReactivatedPayload struct {
 	ProjectID   string `json:"projectId"`
 	ProjectSfID string `json:"projectSfId"`
 	// ProjectName is the project name as Salesforce had it before the
-	// reopen, "[S]" included, as the ServiceNow email showed it.
+	// reopen, "[S]" included, as the legacy email showed it.
 	ProjectName string `json:"projectName"`
 	ProjectKey  string `json:"projectKey"`
 	// AccountOwnerName greets the email ("Dear <first name>,"); empty when

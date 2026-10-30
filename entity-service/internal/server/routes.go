@@ -427,6 +427,23 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// the WaitGroup at zero, so the wait returns at once.
 	ingestRetryCtx, stopIngestRetry := context.WithCancel(context.Background())
 	var ingestRetryWG sync.WaitGroup
+
+	// snWritebackDispatcher is the single shared SNWritebackDispatcher for
+	// every DATA_SOURCE=postgres-servicenow-dual-write best-effort mirror
+	// write (see SNWritebackDispatcher's own doc comment) -- one dispatcher,
+	// one small worker pool, reused by every entity's mirror rather than each
+	// constructing its own: the ACP reopen and project (immediately below),
+	// and case, call_request, time_card, comment, change_request, and case
+	// tags/watch list (all further below, riding on the case dispatch). nil
+	// in every other mode. Built here, ahead of the Salesforce event wiring,
+	// because the ACP reopen mirrors through it too.
+	var snWritebackDispatcher *service.SNWritebackDispatcher
+	if db != nil && cfg.DataSource == config.DataSourcePostgresServiceNowDualWrite {
+		snWritebackDispatcher = service.NewSNWritebackDispatcher(repository.NewSNWritebackFailureRepository(db))
+	}
+	// acpReopenCheckHandler serves the daily ACP reopen check; set when the
+	// reopen check is on.
+	var acpReopenCheckHandler *handler.ACPReopenCheckHandler
 	// PostgresAuthoritative, not DATA_SOURCE=postgres alone: the dual-write
 	// mode serves memberships from PostgreSQL too, and memberships reach
 	// ServiceNow from Salesforce directly, so nothing here needs its mirror.
@@ -553,14 +570,39 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 			}
 			slog.Info("acp reopen check enabled",
 				"dryRun", cfg.ACPReopenDryRun, "testProjectOnly", cfg.ACPReopenTestProjectSfID != "",
-				"publishes", projectEventPublisher != nil)
-			return service.WithACPReopen(svc, service.ACPReopen{
+				"publishes", projectEventPublisher != nil, "mirrors", snWritebackDispatcher != nil)
+			reopen := service.ACPReopen{
 				Projects:        repository.NewACPReopenRepository(repository.NewScoped(db)),
 				SalesEntity:     salesEntityClient,
-				Publisher:       projectEventPublisher,
+				Notify:          projectEventPublisher != nil,
 				DryRun:          cfg.ACPReopenDryRun,
 				TestProjectSfID: cfg.ACPReopenTestProjectSfID,
-			})
+			}
+			// Dual-write: copy each reopen to the previous system, as PATCH
+			// /projects/{id} copies ACP's suspension.
+			if snWritebackDispatcher != nil && serviceNowIntegrationServiceClient != nil {
+				mirror := service.NewServiceNowProjectUpdateService(serviceNowIntegrationServiceClient)
+				reopen.Mirror = func(ctx context.Context, projectID string, req domain.ProjectUpdateRequest) {
+					snWritebackDispatcher.Dispatch(ctx, "project", projectID, "update", req, func(writeCtx context.Context) error {
+						_, err := mirror.UpdateProject(writeCtx, projectID, req)
+						return err
+					})
+				}
+			}
+			acpReopenCheckHandler = handler.NewACPReopenCheckHandler(&reopen)
+			// The queued "Back to Open state" notices are published from
+			// event_outbox, retried until Event Hub takes them. Stopped with
+			// the ingest retry worker, before the producers close.
+			if projectEventPublisher != nil {
+				drainer := service.NewProjectReactivationDrainer(repository.NewACPReactivationOutbox(repository.NewScoped(db)),
+					projectEventPublisher, cfg.IncidentReportPollInterval, service.ProjectReactivationMaxAttempts)
+				ingestRetryWG.Add(1)
+				go func() {
+					defer ingestRetryWG.Done()
+					drainer.Run(repository.WithSystemIdentity(ingestRetryCtx))
+				}()
+			}
+			return service.WithACPReopen(svc, reopen)
 		}
 		if cfg.CSMMigrationSalesforceMembershipIngestEnabled {
 			// The membership branch (Project_Contact__c / Contact envelopes)
@@ -783,11 +825,6 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// list (all further below, riding on the case dispatch). nil in every
 	// other mode. Originally constructed only inline for the case pilot;
 	// hoisted here once a second entity (project) needed the same instance.
-	var snWritebackDispatcher *service.SNWritebackDispatcher
-	if cfg.DataSource == config.DataSourcePostgresServiceNowDualWrite {
-		snWritebackDispatcher = service.NewSNWritebackDispatcher(repository.NewSNWritebackFailureRepository(db))
-	}
-
 	projectRepo := repository.NewProjectRepository(repository.NewScoped(db))
 	pgProjectSvc := service.NewProjectService(projectRepo, accessSvc)
 	var activeProjectSvc service.ProjectService
@@ -2006,6 +2043,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 
 	if salesforceEventHandler != nil {
 		mux.HandleFunc("POST /salesforce/events", salesforceEventHandler.HandleEvent)
+	}
+	if acpReopenCheckHandler != nil {
+		// The daily ACP reopen check (csm-scheduled-tasks): internal only.
+		mux.HandleFunc("POST /acp/reopen-check", internalOnly(accessSvc, acpReopenCheckHandler.Check))
 	}
 	if salesforcePartnerHandler != nil {
 		mux.HandleFunc("POST /salesforce/accounts/{sfId}/refresh-partners", salesforcePartnerHandler.RefreshPartners)

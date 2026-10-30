@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,10 @@ type acpFakeRepo struct {
 	underLock *domain.ACPReopenProject
 	reopens   int
 	getErr    error
+	// notices are the "Back to Open state" notices queued with a reopen.
+	notices []events.ProjectReactivatedPayload
+	// invoiceTrackChecks counts AnyACPSuspendedInvoiceTrack calls.
+	invoiceTrackChecks int
 }
 
 func (r *acpFakeRepo) GetProjectBySfID(_ context.Context, sfID string) (*domain.ACPReopenProject, error) {
@@ -64,6 +69,7 @@ func (r *acpFakeRepo) GetProjectBySfID(_ context.Context, sfID string) (*domain.
 func (r *acpFakeRepo) Reopen(ctx context.Context, projectID string,
 	plan func(domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error),
 	beforeCommit func(context.Context, domain.ACPReopenOutcome) error,
+	notice func(domain.ACPReopenOutcome) (json.RawMessage, error),
 ) (domain.ACPReopenOutcome, bool, error) {
 	r.reopens++
 	var stored *domain.ACPReopenProject
@@ -105,8 +111,48 @@ func (r *acpFakeRepo) Reopen(ctx context.Context, projectID string,
 			return domain.ACPReopenOutcome{}, false, err
 		}
 	}
+	if notice != nil {
+		raw, err := notice(outcome)
+		if err != nil {
+			return domain.ACPReopenOutcome{}, false, err
+		}
+		if raw != nil {
+			var pl events.ProjectReactivatedPayload
+			if err := json.Unmarshal(raw, &pl); err != nil {
+				return domain.ACPReopenOutcome{}, false, err
+			}
+			r.notices = append(r.notices, pl)
+		}
+	}
 	*stored = next
 	return outcome, true, nil
+}
+
+func (r *acpFakeRepo) AnyACPSuspendedInvoiceTrack(context.Context) (bool, error) {
+	r.invoiceTrackChecks++
+	for _, p := range r.projects {
+		ev, _ := acpSectionEventType(p.SuspensionProcessState, acpInvoiceSection)
+		if strings.HasPrefix(acpLabel(p.InvoiceDueDateClosureState), "SUSPENDED") && ev == acpSuspendEventType {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *acpFakeRepo) ListACPNotedProjects(_ context.Context, afterID string, limit int) ([]domain.ACPReopenProject, error) {
+	var out []domain.ACPReopenProject
+	for _, p := range r.projects {
+		end, _ := acpSectionEventType(p.SuspensionProcessState, acpEndDateSection)
+		inv, _ := acpSectionEventType(p.SuspensionProcessState, acpInvoiceSection)
+		if p.ID > afterID && p.SfID != "" && (end == acpSuspendEventType || inv == acpSuspendEventType) {
+			out = append(out, *p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func acpLabel(v *string) string {
@@ -220,8 +266,11 @@ func acpRenewedSF() *acpFakeSF {
 	}
 }
 
+// newACPTestService builds the reopen check with notices on when pub is set
+// (pub itself is not called: the notice is queued in the repository).
 func newACPTestService(repo *acpFakeRepo, sf *acpFakeSF, pub EventPublisherService, mod func(*ACPReopen)) *salesforceEventService {
-	r := ACPReopen{Projects: repo, SalesEntity: sf, Publisher: pub, Now: func() time.Time { return acpTestNow }}
+	r := ACPReopen{Projects: repo, SalesEntity: sf, Notify: pub != nil, InternalDomain: "@example.com",
+		Now: func() time.Time { return acpTestNow }}
 	if mod != nil {
 		mod(&r)
 	}
@@ -252,10 +301,10 @@ func TestACPReopen_RenewalReopensTheProject(t *testing.T) {
 	if !reflect.DeepEqual(sf.statusCalls, []string{acpTestSfID + "=Open"}) {
 		t.Errorf("Salesforce status writes = %v", sf.statusCalls)
 	}
-	if len(pub.payloads) != 1 || pub.types[0] != events.TypeProjectReactivated || pub.ids[0] != acpTestProjectID {
-		t.Fatalf("published = %v %v", pub.types, pub.ids)
+	if len(repo.notices) != 1 || repo.notices[0].ProjectID != acpTestProjectID {
+		t.Fatalf("queued notices = %+v", repo.notices)
 	}
-	got := pub.payloads[0]
+	got := repo.notices[0]
 	want := events.ProjectReactivatedPayload{
 		ProjectID: acpTestProjectID, ProjectSfID: acpTestSfID, ProjectName: "[S] ACP Test Project", ProjectKey: "APPSUB",
 		AccountOwnerName: "Alex Owner", AccountOwnerEmail: "owner@example.com",
@@ -277,8 +326,8 @@ func TestACPReopen_EndDateStillPastLeavesItSuspended(t *testing.T) {
 	if err := newACPTestService(repo, sf, pub, nil).HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
 		t.Fatal(err)
 	}
-	if repo.reopens != 0 || len(sf.statusCalls) != 0 || len(pub.payloads) != 0 {
-		t.Errorf("reopens=%d status=%v published=%d, want nothing", repo.reopens, sf.statusCalls, len(pub.payloads))
+	if repo.reopens != 0 || len(sf.statusCalls) != 0 || len(repo.notices) != 0 {
+		t.Errorf("reopens=%d status=%v published=%d, want nothing", repo.reopens, sf.statusCalls, len(repo.notices))
 	}
 }
 
@@ -317,8 +366,8 @@ func TestACPReopen_DryRunWritesNothing(t *testing.T) {
 	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
 		t.Fatal(err)
 	}
-	if repo.reopens != 0 || len(sf.statusCalls) != 0 || len(pub.payloads) != 0 {
-		t.Errorf("dry run wrote: reopens=%d status=%v published=%d", repo.reopens, sf.statusCalls, len(pub.payloads))
+	if repo.reopens != 0 || len(sf.statusCalls) != 0 || len(repo.notices) != 0 {
+		t.Errorf("dry run wrote: reopens=%d status=%v published=%d", repo.reopens, sf.statusCalls, len(repo.notices))
 	}
 }
 
@@ -363,26 +412,28 @@ func TestACPReopen_SalesforceRefusalRollsBackAndIsRetried(t *testing.T) {
 	sf.statusErr = errors.New("sales-entity-service unavailable")
 	pub := &acpFakePublisher{}
 	svc := newACPTestService(repo, sf, pub, nil)
-	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err == nil {
-		t.Fatal("a Salesforce failure was not returned, so the event would not be retried")
+	// The failure is logged and left to the daily check: the event itself,
+	// whose ingest succeeded, is not failed.
+	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
+		t.Fatalf("a reopen failure failed the event: %v", err)
 	}
-	if acpLabel(repo.projects[acpTestSfID].EndDateClosureState) != "CLOSED" || len(pub.payloads) != 0 {
-		t.Errorf("the reopen was kept: end=%s published=%d", acpLabel(repo.projects[acpTestSfID].EndDateClosureState), len(pub.payloads))
+	if acpLabel(repo.projects[acpTestSfID].EndDateClosureState) != "CLOSED" || len(repo.notices) != 0 {
+		t.Errorf("the reopen was kept: end=%s published=%d", acpLabel(repo.projects[acpTestSfID].EndDateClosureState), len(repo.notices))
 	}
 	// The retry (Salesforce back) reopens it.
 	sf.statusErr = nil
 	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
 		t.Fatal(err)
 	}
-	if acpLabel(repo.projects[acpTestSfID].EndDateClosureState) != "OPEN" || len(pub.payloads) != 1 {
-		t.Errorf("retry: end=%s published=%d", acpLabel(repo.projects[acpTestSfID].EndDateClosureState), len(pub.payloads))
+	if acpLabel(repo.projects[acpTestSfID].EndDateClosureState) != "OPEN" || len(repo.notices) != 1 {
+		t.Errorf("retry: end=%s published=%d", acpLabel(repo.projects[acpTestSfID].EndDateClosureState), len(repo.notices))
 	}
 	// A duplicate event afterwards does nothing more.
 	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
 		t.Fatal(err)
 	}
-	if len(pub.payloads) != 1 || len(sf.statusCalls) != 1 {
-		t.Errorf("duplicate event: published=%d status=%v", len(pub.payloads), sf.statusCalls)
+	if len(repo.notices) != 1 || len(sf.statusCalls) != 1 {
+		t.Errorf("duplicate event: published=%d status=%v", len(repo.notices), sf.statusCalls)
 	}
 }
 
@@ -396,8 +447,8 @@ func TestACPReopen_ChangedUnderTheLockIsNotReopened(t *testing.T) {
 	if err := newACPTestService(repo, sf, pub, nil).HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
 		t.Fatal(err)
 	}
-	if len(sf.statusCalls) != 0 || len(pub.payloads) != 0 {
-		t.Errorf("status=%v published=%d, want nothing", sf.statusCalls, len(pub.payloads))
+	if len(sf.statusCalls) != 0 || len(repo.notices) != 0 {
+		t.Errorf("status=%v published=%d, want nothing", sf.statusCalls, len(repo.notices))
 	}
 }
 
@@ -421,9 +472,9 @@ func TestACPReopen_OneTrackFixedKeepsTheProjectSuspended(t *testing.T) {
 	if acpLabel(stored.EndDateClosureState) != "OPEN" || acpLabel(stored.InvoiceDueDateClosureState) != "SUSPENDED" {
 		t.Errorf("tracks = end %s invoice %s, want OPEN / SUSPENDED", acpLabel(stored.EndDateClosureState), acpLabel(stored.InvoiceDueDateClosureState))
 	}
-	if acpLabel(stored.ClosureState) != "SUSPENDED" || len(sf.statusCalls) != 0 || len(pub.payloads) != 0 {
+	if acpLabel(stored.ClosureState) != "SUSPENDED" || len(sf.statusCalls) != 0 || len(repo.notices) != 0 {
 		t.Errorf("overall=%s status=%v published=%d: the project must stay suspended with no email",
-			acpLabel(stored.ClosureState), sf.statusCalls, len(pub.payloads))
+			acpLabel(stored.ClosureState), sf.statusCalls, len(repo.notices))
 	}
 }
 
@@ -453,11 +504,11 @@ func TestACPReopen_InvoicePaidReopensForEveryLinkedProject(t *testing.T) {
 	if repo.reopens != 1 {
 		t.Errorf("reopens = %d, want 1 (the test project, once)", repo.reopens)
 	}
-	if acpLabel(repo.projects[acpTestSfID].InvoiceDueDateClosureState) != "OPEN" || len(pub.payloads) != 1 {
-		t.Fatalf("invoice track = %s published = %d", acpLabel(repo.projects[acpTestSfID].InvoiceDueDateClosureState), len(pub.payloads))
+	if acpLabel(repo.projects[acpTestSfID].InvoiceDueDateClosureState) != "OPEN" || len(repo.notices) != 1 {
+		t.Fatalf("invoice track = %s published = %d", acpLabel(repo.projects[acpTestSfID].InvoiceDueDateClosureState), len(repo.notices))
 	}
-	if !reflect.DeepEqual(pub.payloads[0].Reasons, []string{events.ProjectReactivatedReasonInvoicePaid}) {
-		t.Errorf("reasons = %v", pub.payloads[0].Reasons)
+	if !reflect.DeepEqual(repo.notices[0].Reasons, []string{events.ProjectReactivatedReasonInvoicePaid}) {
+		t.Errorf("reasons = %v", repo.notices[0].Reasons)
 	}
 }
 
@@ -477,16 +528,26 @@ func TestACPReopen_PartnerWithoutPrimaryPartnerHasNoInvoiceTrack(t *testing.T) {
 	}
 }
 
-func TestACPReopen_ErrorsThatARetryCanFixAreReturned(t *testing.T) {
+// A failure a retry can fix is returned by the check itself (the daily check
+// counts it), but never fails the Salesforce event: its ingest succeeded.
+func TestACPReopen_FailuresAreReportedButNeverFailTheEvent(t *testing.T) {
 	repo := &acpFakeRepo{projects: map[string]*domain.ACPReopenProject{acpTestSfID: acpSuspendedProject()}}
 	sf := acpRenewedSF()
 	sf.getProjectErr = errors.New("salesforce down")
-	if err := newACPTestService(repo, sf, nil, nil).HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err == nil {
-		t.Error("a Salesforce read failure was swallowed")
+	svc := newACPTestService(repo, sf, nil, nil)
+	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
+		t.Errorf("a Salesforce read failure failed the event: %v", err)
+	}
+	if _, err := svc.acpReopen.reopenProject(context.Background(), acpTestSfID); err == nil {
+		t.Error("a Salesforce read failure was not reported by the check")
 	}
 	repo.getErr = errors.New("database down")
-	if err := newACPTestService(repo, acpRenewedSF(), nil, nil).HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err == nil {
-		t.Error("a database failure was swallowed")
+	svc = newACPTestService(repo, acpRenewedSF(), nil, nil)
+	if err := svc.HandleEvent(context.Background(), acpProjectEvent(domain.SalesforceEventUpdated)); err != nil {
+		t.Errorf("a database failure failed the event: %v", err)
+	}
+	if _, err := svc.acpReopen.reopenProject(context.Background(), acpTestSfID); err == nil {
+		t.Error("a database failure was not reported by the check")
 	}
 }
 
@@ -523,7 +584,7 @@ func TestACPReopen_OffMeansNothing(t *testing.T) {
 func TestBuildProjectReactivatedPayload_FallsBackToCSM(t *testing.T) {
 	p := domain.ACPReopenProject{ID: "pid", SfID: "sfid", Name: "CSM Name -[S]", Key: "KEY"}
 	got := buildProjectReactivatedPayload(p, salesentity.Project{}, nil,
-		domain.ACPReopenWrite{ReopenEndDate: true, ReopenInvoice: true}, acpTestNow)
+		domain.ACPReopenWrite{ReopenEndDate: true, ReopenInvoice: true}, acpTestNow, "@example.com")
 	if got.ProjectName != "CSM Name -[S]" || got.ProjectKey != "KEY" || got.ProjectSfID != "sfid" {
 		t.Errorf("payload = %+v", got)
 	}

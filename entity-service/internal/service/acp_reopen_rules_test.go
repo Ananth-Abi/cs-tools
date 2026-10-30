@@ -95,7 +95,7 @@ func TestACPOpportunityCounts(t *testing.T) {
 		{acpStr("40 - Negotiation"), acpStr("EULA 3.3"), false},
 		{nil, acpStr("EULA 3.3"), false},
 		{acpStr("50 - Closed Won"), nil, false},
-		{acpStr("50 - Closed Won"), acpStr("  "), false},
+		{acpStr("50 - Closed Won"), acpStr("  "), true}, // present, as in ACP
 		{acpStr("50 - Closed Won"), acpStr("Customer contract"), false},
 	}
 	for _, c := range cases {

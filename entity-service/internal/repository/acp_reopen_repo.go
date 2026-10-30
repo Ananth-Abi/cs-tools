@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -42,14 +43,30 @@ type ACPReopenRepository interface {
 	// (ok false: nothing to write, nothing changes). The write sets the
 	// chosen tracks to OPEN and stores the suspensionProcessState plan gave,
 	// then recomputes the overall closure state with the same rule as
-	// UpdateProject. beforeCommit runs last, inside the transaction, with the
-	// outcome: an error from it rolls everything back. done reports whether
-	// anything was written.
+	// UpdateProject. beforeCommit runs next, inside the transaction, with the
+	// outcome: an error from it rolls everything back. notice runs last: a
+	// payload it returns is queued in event_outbox, in the same transaction,
+	// for ACPReactivationOutbox to publish as project.reactivated (nil: no
+	// notice). done reports whether anything was written.
 	Reopen(ctx context.Context, projectID string,
 		plan func(current domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error),
 		beforeCommit func(ctx context.Context, outcome domain.ACPReopenOutcome) error,
+		notice func(outcome domain.ACPReopenOutcome) (json.RawMessage, error),
 	) (outcome domain.ACPReopenOutcome, done bool, err error)
+	// AnyACPSuspendedInvoiceTrack reports whether any project has its invoice
+	// track suspended by ACP. An invoice event can only reopen such a
+	// project, so without one it needs no Salesforce call at all.
+	AnyACPSuspendedInvoiceTrack(ctx context.Context) (bool, error)
+	// ListACPNotedProjects returns, in id order after afterID ("" for the
+	// start), up to limit projects with a Salesforce id whose
+	// suspensionProcessState still records an ACP suspension on a track
+	// ("suspend"): the projects the daily check looks at.
+	ListACPNotedProjects(ctx context.Context, afterID string, limit int) ([]domain.ACPReopenProject, error)
 }
+
+// ACPReactivationOutboxEntityType is the event_outbox entity_type of a queued
+// "Back to Open state" notice. Every other drainer reads only its own types.
+const ACPReactivationOutboxEntityType = "project_reactivated"
 
 type acpReopenRepo struct {
 	db *Scoped
@@ -108,6 +125,7 @@ const acpReopenUpdate = `
 func (r *acpReopenRepo) Reopen(ctx context.Context, projectID string,
 	plan func(current domain.ACPReopenProject) (domain.ACPReopenWrite, bool, error),
 	beforeCommit func(ctx context.Context, outcome domain.ACPReopenOutcome) error,
+	notice func(outcome domain.ACPReopenOutcome) (json.RawMessage, error),
 ) (domain.ACPReopenOutcome, bool, error) {
 	ctx = WithSystemIdentity(ctx)
 	var outcome domain.ACPReopenOutcome
@@ -125,7 +143,7 @@ func (r *acpReopenRepo) Reopen(ctx context.Context, projectID string,
 		if err != nil || !ok {
 			return err
 		}
-		if !write.ReopenEndDate && !write.ReopenInvoice {
+		if !write.ReopenEndDate && !write.ReopenInvoice && !write.SectionsOnly {
 			return nil
 		}
 		if _, err := tx.Exec(ctx, acpReopenUpdate, projectID, write.ReopenEndDate, write.ReopenInvoice,
@@ -143,6 +161,19 @@ func (r *acpReopenRepo) Reopen(ctx context.Context, projectID string,
 				return err
 			}
 		}
+		if notice != nil {
+			payload, err := notice(outcome)
+			if err != nil {
+				return err
+			}
+			if payload != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO event_outbox (entity_type, entity_id, changes, snapshot)
+					VALUES ($1, $2::uuid, '{}'::jsonb, $3::jsonb)`,
+					ACPReactivationOutboxEntityType, projectID, string(payload)); err != nil {
+					return fmt.Errorf("acp reopen: queue the reactivation notice: %w", err)
+				}
+			}
+		}
 		done = true
 		return nil
 	})
@@ -150,4 +181,49 @@ func (r *acpReopenRepo) Reopen(ctx context.Context, projectID string,
 		return domain.ACPReopenOutcome{}, false, err
 	}
 	return outcome, done, nil
+}
+
+// acpSectionSuspended is true when a project's suspensionProcessState records
+// ACP's suspension (event_type "suspend") in the section named by $key. A
+// section that is not an object reads as NULL, never as a match.
+func acpSectionSuspended(key string) string {
+	return `COALESCE(p.suspension_process_state -> '` + key + `' ->> 'event_type', '') = 'suspend'`
+}
+
+// AnyACPSuspendedInvoiceTrack implements ACPReopenRepository.
+func (r *acpReopenRepo) AnyACPSuspendedInvoiceTrack(ctx context.Context) (bool, error) {
+	ctx = WithSystemIdentity(ctx)
+	var found bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM project p
+		WHERE p.invoice_due_date_closure_state::TEXT LIKE 'SUSPENDED%' AND `+acpSectionSuspended("based_on_due_invoices")+`)`).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("acp reopen: look for an ACP-suspended invoice track: %w", err)
+	}
+	return found, nil
+}
+
+// ListACPNotedProjects implements ACPReopenRepository.
+func (r *acpReopenRepo) ListACPNotedProjects(ctx context.Context, afterID string, limit int) ([]domain.ACPReopenProject, error) {
+	ctx = WithSystemIdentity(ctx)
+	if afterID == "" {
+		afterID = "00000000-0000-0000-0000-000000000000"
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+acpReopenProjectColumns+` FROM project p
+		WHERE p.id > $1::uuid AND COALESCE(p.sf_id, '') <> ''
+		  AND (`+acpSectionSuspended("based_on_subscription_end_date")+` OR `+acpSectionSuspended("based_on_due_invoices")+`)
+		ORDER BY p.id
+		LIMIT $2`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("acp reopen: list projects ACP suspended: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.ACPReopenProject
+	for rows.Next() {
+		p, err := scanACPReopenProject(rows)
+		if err != nil {
+			return nil, fmt.Errorf("acp reopen: scan project: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
