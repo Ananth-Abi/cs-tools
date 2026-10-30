@@ -627,6 +627,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		} else {
 			salesforceEventHandler = handler.NewSalesforceEventHandler(withACPReopen(withPartnerIngest(withOpportunityIngest(service.NewSalesforceEventService(accountIngestRepo, salesEntityClient, ingestSupport)))))
 		}
+	} else if cfg.ACPReopenEnabled {
+		// The reopen check is wired only inside the block above, so without its
+		// prerequisites the flag would otherwise be ignored without a word.
+		log.Printf("CSM_ACP_REOPEN_ENABLED is set but the ACP reopen check needs a database, a Postgres-authoritative DATA_SOURCE and the SALES_ENTITY_* client; it stays off")
 	}
 
 	// POST /users/me/memberships/register (H-0 of the customer onboarding flow).
