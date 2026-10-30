@@ -110,6 +110,12 @@ func (c *Client) GetInvoice(ctx context.Context, id string) ([]byte, error) {
 	return c.do(ctx, http.MethodGet, fmt.Sprintf("/invoices/%s", url.PathEscape(id)), nil)
 }
 
+// ReopenCheck calls POST /acp/reopen-check, one page of entity-service's
+// daily ACP reopen check. Response is returned as raw JSON.
+func (c *Client) ReopenCheck(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/acp/reopen-check", body)
+}
+
 // SearchProjectOpportunityLinks calls POST /project-opportunity-links/search.
 // No by-id fetch exists for this resource — a project can link to more than
 // one opportunity, so the underlying data has no single-record shape.

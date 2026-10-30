@@ -66,6 +66,9 @@ type Config struct {
 	// Scopes is CUSTOMER_ENTITY_SERVICE_SCOPES, shared with this
 	// component's other entity-service clients.
 	Scopes []string
+	// Timeout bounds one call; zero is 25 seconds. The reopen check's pages
+	// take longer (one Salesforce round per project).
+	Timeout time.Duration
 }
 
 // Client is an HTTP client authenticated to entity-service via the
@@ -111,6 +114,9 @@ func NewClient(cfg Config) (*Client, error) {
 	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
+	if cfg.Timeout > 0 {
+		httpClient.Timeout = cfg.Timeout
+	}
 	// oauth2.Transport reattaches the Authorization bearer token to every
 	// request it processes, including a followed redirect to a different
 	// host. Refuse to follow so the token can never leak to wherever

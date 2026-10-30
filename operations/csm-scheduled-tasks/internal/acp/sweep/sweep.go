@@ -793,21 +793,34 @@ func suspend(ctx context.Context, updater projectUpdater, proj project) error {
 		return fmt.Errorf("marshal update request: %w", err)
 	}
 
-	if _, err := updater.UpdateProject(ctx, proj.ID, body); err != nil {
+	if err := suspendInSalesforce(ctx, updater, proj); err != nil {
 		return err
 	}
-	return suspendInSalesforce(ctx, updater, proj)
+	if _, err := updater.UpdateProject(ctx, proj.ID, body); err != nil {
+		return fmt.Errorf("Salesforce State__c set to Suspended, but suspending the CSM project failed (the next run tries again): %w", err)
+	}
+	return nil
 }
 
 // suspendInSalesforce sets the project's Salesforce State__c to Suspended,
-// after suspend or suspendInvoice wrote the CSM suspension — ACP writes both
-// itself; nothing syncs CSM to Salesforce. A failure leaves CSM suspended and
-// fails the project, so the run exits non-zero: the next run won't retry it
-// (the project is no longer Open in CSM), so State__c must then be set by
-// hand. ACP never reopens, so it never writes Open.
+// before suspend or suspendInvoice writes the CSM suspension — ACP writes
+// both itself; nothing syncs CSM to Salesforce. Salesforce goes first:
+//
+//   - A failure here fails the project with nothing written in CSM, so the
+//     project is still Open there and the next run tries both writes again.
+//     (Written second, a failure left CSM suspended, which the next run never
+//     lists again, so State__c had to be set by hand.)
+//   - entity-service's reopen check reopens only what CSM shows ACP
+//     suspended. Run between the two writes, it now finds nothing to reopen
+//     and the project ends suspended everywhere (if it was in fact renewed or
+//     paid, the reopen's daily check reopens it). Written CSM first, a reopen
+//     in between could set the project Open, and this write then set
+//     Salesforce back to Suspended after the "Back to Open" email went out.
+//
+// ACP never reopens, so it never writes Open.
 func suspendInSalesforce(ctx context.Context, updater projectUpdater, proj project) error {
 	if err := updater.SuspendInSalesforce(ctx, stringValue(proj.SfID)); err != nil {
-		return fmt.Errorf("CSM suspended, but setting Salesforce State__c to Suspended failed: %w", err)
+		return fmt.Errorf("setting Salesforce State__c to Suspended failed, CSM left as it was (the next run tries again): %w", err)
 	}
 	return nil
 }

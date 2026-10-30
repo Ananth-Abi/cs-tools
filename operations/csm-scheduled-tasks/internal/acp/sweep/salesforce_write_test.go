@@ -45,14 +45,14 @@ var day0Now = time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 
 func strPtr(s string) *string { return &s }
 
-// TestSuspend_WritesSalesforceAfterCSM: an end-date suspension sets
-// Salesforce State__c too, by the project's Salesforce id, and only after the
-// CSM suspension was written.
-func TestSuspend_WritesSalesforceAfterCSM(t *testing.T) {
+// TestSuspend_WritesSalesforceBeforeCSM: an end-date suspension sets
+// Salesforce State__c too, by the project's Salesforce id, before the CSM
+// suspension is written (see suspendInSalesforce for why).
+func TestSuspend_WritesSalesforceBeforeCSM(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	updater.sfSuspendFn = func(_ context.Context, _ string) error {
-		if len(updater.calls) != 1 {
-			t.Errorf("Salesforce written after %d CSM writes, want after the CSM suspension", len(updater.calls))
+		if len(updater.calls) != 0 {
+			t.Errorf("Salesforce written after %d CSM writes, want before the CSM suspension", len(updater.calls))
 		}
 		return nil
 	}
@@ -95,9 +95,9 @@ func TestSuspendInvoice_WritesSalesforce(t *testing.T) {
 	}
 }
 
-// TestSuspend_CSMFailureSkipsSalesforce: Salesforce never shows a suspension
-// CSM doesn't have.
-func TestSuspend_CSMFailureSkipsSalesforce(t *testing.T) {
+// TestSuspend_CSMFailureFailsTheProject: the CSM failure is reported, after
+// Salesforce was already written.
+func TestSuspend_CSMFailureFailsTheProject(t *testing.T) {
 	updater := &mockProjectUpdater{
 		updateProjectFn: func(context.Context, string, []byte) ([]byte, error) { return nil, errors.New("csm down") },
 	}
@@ -106,14 +106,16 @@ func TestSuspend_CSMFailureSkipsSalesforce(t *testing.T) {
 	if err == nil {
 		t.Fatal("processProject() error = nil, want the CSM failure")
 	}
-	if len(updater.sfSuspendCalls) != 0 {
-		t.Errorf("SuspendInSalesforce calls = %v, want none", updater.sfSuspendCalls)
+	// Salesforce was written first; the project stays Open in CSM, so the
+	// next run writes both again (State__c Suspended again is harmless).
+	if len(updater.sfSuspendCalls) != 1 {
+		t.Errorf("SuspendInSalesforce calls = %v, want one, before the CSM write", updater.sfSuspendCalls)
 	}
 }
 
-// TestSuspend_SalesforceFailureFailsTheProject: CSM stays suspended, and the
-// project is reported as failed so the run exits non-zero and someone sets
-// State__c by hand (the next run won't retry: the project is no longer Open).
+// TestSuspend_SalesforceFailureFailsTheProject: the project is reported as
+// failed with nothing written in CSM, so it is still Open there and the next
+// run tries again.
 func TestSuspend_SalesforceFailureFailsTheProject(t *testing.T) {
 	updater := &mockProjectUpdater{
 		sfSuspendFn: func(context.Context, string) error { return errors.New("sales-entity down") },
@@ -126,8 +128,8 @@ func TestSuspend_SalesforceFailureFailsTheProject(t *testing.T) {
 	if !strings.Contains(err.Error(), "Salesforce") {
 		t.Errorf("error = %q, want it to say the Salesforce write failed", err)
 	}
-	if len(updater.calls) != 1 {
-		t.Errorf("CSM writes = %d, want 1 (the suspension, kept)", len(updater.calls))
+	if len(updater.calls) != 0 {
+		t.Errorf("CSM writes = %d, want none (the project stays Open for the next run)", len(updater.calls))
 	}
 }
 

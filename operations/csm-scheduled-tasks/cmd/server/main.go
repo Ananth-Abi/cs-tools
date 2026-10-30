@@ -1035,6 +1035,16 @@ func main() {
 		tasks = append(tasks, acpTask(entityServiceBaseURL, oauthTokenURL, oauthClientID, oauthClientSecret,
 			entityServiceScopes, emailClient, emailBaseURL, alertsEnabled, scheduleOverrides, recipientOverrides))
 	}
+	// entity-service's daily ACP reopen check -- see internal/acp's
+	// RunReopenCheck and this component's CLAUDE.md, "ACP reopen check". OFF
+	// unless ACP_REOPEN_CHECK_ENABLED=true; it needs entity-service with
+	// CSM_ACP_REOPEN_ENABLED=true (else POST /acp/reopen-check is a 404 and
+	// the run fails and alerts). Whether anything is written is
+	// entity-service's own dry run (CSM_ACP_REOPEN_DRY_RUN), not a setting here.
+	if envBool("ACP_REOPEN_CHECK_ENABLED", false) {
+		tasks = append(tasks, acpReopenCheckTask(entityServiceBaseURL, oauthTokenURL, oauthClientID, oauthClientSecret,
+			entityServiceScopes, scheduleOverrides, recipientOverrides))
+	}
 
 	var tasksWithRecipients []string
 	for _, t := range tasks {
@@ -1097,6 +1107,43 @@ func main() {
 
 // acpTaskName is the acp_closure sub-cron's ledger key.
 const acpTaskName = "acp_closure"
+
+// acpReopenCheckTaskName is the acp_reopen_check sub-cron's ledger key.
+const acpReopenCheckTaskName = "acp_reopen_check"
+
+// acpReopenCheckCallTimeout bounds one page of the reopen check: longer than
+// the client's usual 25 seconds, since entity-service checks several
+// projects (a few Salesforce calls each) per page.
+const acpReopenCheckCallTimeout = 2 * time.Minute
+
+// acpReopenCheckTask builds the acp_reopen_check task. Called only when
+// ACP_REOPEN_CHECK_ENABLED=true.
+func acpReopenCheckTask(entityServiceBaseURL, oauthTokenURL, oauthClientID, oauthClientSecret string, entityServiceScopes []string,
+	scheduleOverrides map[string]string, recipientOverrides map[string]subCronRecipients) registry.Task {
+	client, err := acpentity.NewClient(acpentity.Config{
+		BaseURL:      entityServiceBaseURL,
+		TokenURL:     oauthTokenURL,
+		ClientID:     oauthClientID,
+		ClientSecret: oauthClientSecret,
+		Scopes:       entityServiceScopes,
+		Timeout:      acpReopenCheckCallTimeout,
+	})
+	if err != nil {
+		slog.Error("invalid entity-service configuration for the ACP reopen check; refusing to start", "err", err)
+		os.Exit(1)
+	}
+	to, cc := recipientsFor(recipientOverrides, acpReopenCheckTaskName)
+	return registry.Task{
+		// 03:30 UTC is 09:00 in Colombo, every day: half an hour before
+		// acp_closure, so a project reopened here is not sent a reminder.
+		Name:         acpReopenCheckTaskName,
+		Schedule:     scheduleFor(scheduleOverrides, acpReopenCheckTaskName, "30 3 * * *"),
+		Handler:      acp.RunReopenCheck(client),
+		RetryBackoff: acpRetryBackoff,
+		To:           to,
+		Cc:           cc,
+	}
+}
 
 // acpRetryBackoff is how long a failed ACP run waits before it is retried.
 // Longer than the driver's hour on purpose: a retry re-sends a notice whose

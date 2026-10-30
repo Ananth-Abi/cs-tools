@@ -206,10 +206,13 @@ func suspendInvoice(ctx context.Context, updater projectUpdater, proj project) e
 		return fmt.Errorf("marshal update request: %w", err)
 	}
 
-	if _, err := updater.UpdateProject(ctx, proj.ID, body); err != nil {
+	if err := suspendInSalesforce(ctx, updater, proj); err != nil {
 		return err
 	}
-	return suspendInSalesforce(ctx, updater, proj)
+	if _, err := updater.UpdateProject(ctx, proj.ID, body); err != nil {
+		return fmt.Errorf("Salesforce State__c set to Suspended, but suspending the CSM project failed (the next run tries again): %w", err)
+	}
+	return nil
 }
 
 // listedInvoices turns the resolved due invoices into the lines the internal
